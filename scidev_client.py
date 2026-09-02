@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QDir, QEvent, QModelIndex, QObject, QPoint, QRect, QRegularExpression, Qt, QSortFilterProxyModel, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QSyntaxHighlighter, QTextCharFormat, QTextFormat
+from PySide6.QtGui import QColor, QFont, QKeyEvent, QLinearGradient, QPainter, QPainterPath, QPen, QSyntaxHighlighter, QTextCharFormat, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSizeGrip,
     QSplitter,
+    QStackedWidget,
     QStatusBar,
     QTabWidget,
     QTextEdit,
@@ -89,6 +90,40 @@ QFrame#ChatHeader {
 QFrame#Composer {
     background: #181818;
     border-top: 1px solid #2b2b2b;
+}
+QFrame#GitPage {
+    background: #1e1e1e;
+}
+QFrame#DevelopmentTree {
+    background: #1e1e1e;
+    border: none;
+}
+QScrollArea#TreeScroll {
+    background: #1e1e1e;
+    border: none;
+}
+QFrame#GitPageHeader {
+    background: #1e1e1e;
+    border-bottom: 1px solid #2b2b2b;
+}
+QFrame#GitDetails {
+    background: #252526;
+    border-left: 1px solid #3a3a3a;
+}
+QFrame#MetricCard {
+    background: #252526;
+    border: 1px solid #3a3a3a;
+    border-radius: 5px;
+}
+QFrame#GitEntry {
+    background: #252526;
+    border: 1px solid #3f3f46;
+    border-left: 3px solid #4ec9b0;
+    border-radius: 4px;
+}
+QFrame#GitEntry:hover {
+    background: #2d2d30;
+    border-color: #5a5a64;
 }
 QLabel#AppTitle {
     color: #f2f2f2;
@@ -182,6 +217,22 @@ QPushButton#Primary {
     font-weight: 600;
 }
 QPushButton#Primary:hover { background: #1177bb; }
+QPushButton#GitPrimary {
+    background: #2d7d72;
+    color: #ffffff;
+    border: 1px solid #4ec9b0;
+    font-weight: 600;
+}
+QPushButton#GitPrimary:hover { background: #3b988a; }
+QPushButton#GitEntryButton {
+    background: transparent;
+    color: #d7fff5;
+    border: none;
+    border-radius: 3px;
+    text-align: left;
+    padding: 8px 10px;
+}
+QPushButton#GitEntryButton:hover { background: #34343a; }
 QPushButton#Quiet, QToolButton#Quiet {
     background: transparent;
     border: 1px solid transparent;
@@ -286,6 +337,10 @@ QLabel#BubbleRole { color: #a8a8a8; font-size: 9pt; font-weight: 600; }
 QLabel#BubbleText { color: #e1e1e1; font-size: 10pt; }
 QLabel#ToolText { color: #b7d7bf; font-family: "Cascadia Mono", "Consolas", monospace; font-size: 9pt; }
 QLabel#Chip { color: #9cdcfe; background: #252526; border: 1px solid #3c3c3c; border-radius: 3px; padding: 3px 7px; }
+QLabel#MetricValue { color: #f2f2f2; font-size: 14pt; font-weight: 600; }
+QLabel#GitDetailTitle { color: #f2f2f2; font-size: 12pt; font-weight: 600; }
+QLabel#GitDetailStatus { color: #4ec9b0; font-size: 10pt; font-weight: 600; }
+QLabel#TreeLegend { color: #9d9d9d; }
 QDialog { background: #252526; color: #cccccc; }
 QTreeWidget { background: #1e1e1e; color: #cccccc; border: 1px solid #3c3c3c; }
 QHeaderView::section { background: #252526; color: #cccccc; border: none; border-bottom: 1px solid #3c3c3c; padding: 6px; }
@@ -459,6 +514,206 @@ class WindowTitleBar(QFrame):
         super().mouseDoubleClickEvent(event)
 
 
+class DevelopmentTreeView(QFrame):
+    """Paint a readable development-attempt tree without pretending it is Git branches."""
+
+    node_selected = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("DevelopmentTree")
+        self.setMinimumHeight(420)
+        self.setMouseTracking(True)
+        self.nodes: list[dict[str, Any]] = []
+        self.selected_id: str | None = None
+        self._hit_boxes: list[tuple[QRect, dict[str, Any]]] = []
+
+    def set_nodes(self, nodes: list[dict[str, Any]]) -> None:
+        self.nodes = nodes
+        main_count = max(1, sum(node.get("lane") == "main" for node in nodes))
+        attempts_by_parent: dict[str, int] = {}
+        for node in nodes:
+            if node.get("lane") == "attempt":
+                parent_id = str(node.get("parent_id") or "root")
+                attempts_by_parent[parent_id] = attempts_by_parent.get(parent_id, 0) + 1
+        extra_height = sum(max(0, count - 1) * 72 for count in attempts_by_parent.values())
+        self.setMinimumHeight(max(420, 150 + main_count * 118 + extra_height))
+        ids = {node["id"] for node in nodes}
+        if self.selected_id not in ids:
+            self.selected_id = nodes[0]["id"] if nodes else None
+        self.update()
+        selected = next((node for node in nodes if node["id"] == self.selected_id), None)
+        if selected is not None:
+            self.node_selected.emit(selected)
+
+    def _positions(self) -> tuple[dict[str, tuple[int, int, QRect]], dict[str, tuple[int, int]]]:
+        main_nodes = [node for node in self.nodes if node.get("lane") == "main"]
+        if not main_nodes:
+            return {}, {}
+        card_width = min(270, max(180, int(self.width() * 0.31)))
+        trunk_x = self.width() // 2
+        top = 78
+        row_height = 118
+        cards: dict[str, tuple[int, int, QRect]] = {}
+        dots: dict[str, tuple[int, int]] = {}
+        attempts_by_parent: dict[str, int] = {}
+        for node in (item for item in self.nodes if item.get("lane") == "attempt"):
+            parent_id = str(node.get("parent_id") or main_nodes[-1]["id"])
+            attempts_by_parent[parent_id] = attempts_by_parent.get(parent_id, 0) + 1
+        main_y: dict[str, int] = {}
+        y = top
+        for node in main_nodes:
+            main_y[node["id"]] = y
+            y += row_height + max(0, attempts_by_parent.get(node["id"], 0) - 1) * 72
+        for node in main_nodes:
+            y = main_y[node["id"]]
+            dots[node["id"]] = (trunk_x, y)
+            card_x = max(12, trunk_x - card_width - 58)
+            cards[node["id"]] = (trunk_x, y, QRect(card_x, y - 31, card_width, 62))
+
+        children_count: dict[str, int] = {}
+        for node in (item for item in self.nodes if item.get("lane") == "attempt"):
+            parent_id = node.get("parent_id") or main_nodes[-1]["id"]
+            parent_x, parent_y = dots.get(parent_id, dots[main_nodes[-1]["id"]])
+            slot = children_count.get(parent_id, 0)
+            children_count[parent_id] = slot + 1
+            side = 1
+            branch_y = parent_y + 49 + slot * 72
+            branch_x = parent_x + side * 78
+            if side > 0:
+                card_x = min(self.width() - card_width - 12, branch_x + 24)
+            else:
+                card_x = max(12, branch_x - card_width - 24)
+            cards[node["id"]] = (branch_x, branch_y, QRect(card_x, branch_y - 31, card_width, 62))
+            dots[node["id"]] = (branch_x, branch_y)
+        return cards, dots
+
+    @staticmethod
+    def _accent(node: dict[str, Any]) -> QColor:
+        if node.get("lane") == "main":
+            return QColor("#4ec9b0")
+        return {
+            "failed": QColor("#f48771"),
+            "retry": QColor("#e5c07b"),
+            "active": QColor("#569cd6"),
+        }.get(node.get("status"), QColor("#9d9d9d"))
+
+    @staticmethod
+    def _status_text(node: dict[str, Any]) -> str:
+        if node.get("lane") == "main":
+            return "当前主线"
+        return {
+            "failed": "已取消 / 失败",
+            "retry": "等待重试",
+            "active": "进行中",
+        }.get(node.get("status"), "尝试方向")
+
+    def paintEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(event.rect(), QColor("#1e1e1e"))
+
+        for x in range(18, self.width(), 32):
+            painter.setPen(QPen(QColor("#242424"), 1))
+            painter.drawLine(x, 48, x, self.height())
+        for y in range(48, self.height(), 32):
+            painter.drawLine(0, y, self.width(), y)
+
+        cards, dots = self._positions()
+        self._hit_boxes = []
+        main_nodes = [node for node in self.nodes if node.get("lane") == "main"]
+        if not main_nodes:
+            painter.setPen(QColor("#9d9d9d"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "还没有开发记录")
+            return
+
+        trunk_x = self.width() // 2
+        first_y = dots[main_nodes[0]["id"]][1]
+        last_y = dots[main_nodes[-1]["id"]][1]
+        painter.setPen(QPen(QColor("#0d1117"), 10, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(trunk_x, first_y, trunk_x, last_y)
+        painter.setPen(QPen(QColor("#397f72"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(trunk_x, first_y, trunk_x, last_y)
+
+        main_by_id = {node["id"]: node for node in main_nodes}
+        for node in (item for item in self.nodes if item.get("lane") == "attempt"):
+            parent = dots.get(node.get("parent_id"), dots[main_nodes[-1]["id"]])
+            current = dots[node["id"]]
+            side = 1 if current[0] > parent[0] else -1
+            path = QPainterPath()
+            path.moveTo(parent[0], parent[1])
+            path.cubicTo(parent[0] + side * 46, parent[1], current[0] - side * 36, current[1], current[0], current[1])
+            painter.setPen(QPen(QColor("#5a626e"), 2))
+            painter.drawPath(path)
+
+        for node in self.nodes:
+            if node["id"] not in dots:
+                continue
+            x, y = dots[node["id"]]
+            rect = cards[node["id"]][2]
+            accent = self._accent(node)
+            selected = node["id"] == self.selected_id
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 80))
+            painter.drawEllipse(x - 10, y - 7, 20, 20)
+            painter.setBrush(QColor("#1e1e1e"))
+            painter.setPen(QPen(accent, 3))
+            painter.drawEllipse(x - 8, y - 8, 16, 16)
+            painter.setBrush(accent)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(x - 3, y - 3, 6, 6)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 70))
+            painter.drawRoundedRect(rect.adjusted(0, 4, 0, 4), 6, 6)
+            gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
+            gradient.setColorAt(0.0, QColor("#2a2a2d"))
+            gradient.setColorAt(1.0, QColor("#242426"))
+            painter.setBrush(gradient)
+            painter.setPen(QPen(QColor("#45454a" if not selected else accent), 1))
+            painter.drawRoundedRect(rect, 6, 6)
+            painter.setBrush(accent)
+            painter.drawRoundedRect(QRect(rect.left(), rect.top(), 3, rect.height()), 2, 2)
+
+            text_rect = rect.adjusted(12, 8, -10, -8)
+            painter.setPen(QColor("#f2f2f2"))
+            title_font = QFont("Segoe UI", 10)
+            title_font.setWeight(QFont.Weight.DemiBold)
+            painter.setFont(title_font)
+            title = painter.fontMetrics().elidedText(str(node.get("title", "")), Qt.TextElideMode.ElideRight, text_rect.width())
+            painter.drawText(text_rect.left(), text_rect.top() + 14, title)
+            painter.setPen(accent)
+            status_font = QFont("Segoe UI", 8)
+            painter.setFont(status_font)
+            painter.drawText(text_rect.left(), text_rect.top() + 33, self._status_text(node))
+            painter.setPen(QColor("#9d9d9d"))
+            meta = str(node.get("meta", ""))
+            meta = painter.fontMetrics().elidedText(meta, Qt.TextElideMode.ElideRight, text_rect.width())
+            painter.drawText(text_rect.left(), text_rect.top() + 49, meta)
+            self._hit_boxes.append((rect, node))
+
+        painter.setPen(QColor("#c5c5c5"))
+        header_font = QFont("Segoe UI", 10)
+        header_font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(header_font)
+        painter.drawText(18, 24, "开发尝试树")
+        painter.setPen(QColor("#858585"))
+        painter.setFont(QFont("Segoe UI", 9))
+        painter.drawText(18, 42, "主干 = 当前编码主线  ·  分支 = 已取消、失败或等待中的尝试方向")
+
+    def mousePressEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        if event.button() == Qt.MouseButton.LeftButton:
+            for rect, node in self._hit_boxes:
+                if rect.contains(event.position().toPoint()):
+                    self.selected_id = node["id"]
+                    self.node_selected.emit(node)
+                    self.update()
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
+
 class MessageBubble(QFrame):
     def __init__(self, speaker: str, message: str, kind: str):
         super().__init__()
@@ -526,7 +781,12 @@ class ClientWindow(QMainWindow):
         workbench.setChildrenCollapsible(False)
         workbench.setHandleWidth(1)
         workbench.addWidget(self._build_left_panel())
-        workbench.addWidget(self._build_workspace())
+        self.workspace_stack = QStackedWidget()
+        self.workspace_page = self._build_workspace()
+        self.git_page = self._build_git_page()
+        self.workspace_stack.addWidget(self.workspace_page)
+        self.workspace_stack.addWidget(self.git_page)
+        workbench.addWidget(self.workspace_stack)
         workbench.addWidget(self._build_chat_panel())
         workbench.setSizes([370, 1, 430])
         workbench.setStretchFactor(0, 0)
@@ -582,7 +842,11 @@ class ClientWindow(QMainWindow):
         new_button.setObjectName("Primary")
         new_button.clicked.connect(self.new_coding_task)
         layout.addWidget(new_button)
-        for text, command in (("任务历史", self.show_tasks), ("Git", self.show_git), ("刷新", self.refresh_all)):
+        git_button = QPushButton("版本树")
+        git_button.setObjectName("GitPrimary")
+        git_button.clicked.connect(self.show_git)
+        layout.addWidget(git_button)
+        for text, command in (("刷新", self.refresh_all),):
             button = QPushButton(text)
             button.setObjectName("Quiet")
             button.clicked.connect(command)
@@ -731,6 +995,16 @@ class ClientWindow(QMainWindow):
         project_row.addStretch(1)
         explorer_layout.addLayout(project_row)
 
+        git_entry = QFrame()
+        git_entry.setObjectName("GitEntry")
+        git_entry_layout = QHBoxLayout(git_entry)
+        git_entry_layout.setContentsMargins(0, 0, 0, 0)
+        git_entry_button = QPushButton("⌁  开发版本树\n    查看主线与尝试方向")
+        git_entry_button.setObjectName("GitEntryButton")
+        git_entry_button.clicked.connect(self.show_git)
+        git_entry_layout.addWidget(git_entry_button)
+        explorer_layout.addWidget(git_entry)
+
         self.file_model = QFileSystemModel(self)
         self.file_model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         source_root = self.file_model.setRootPath(str(self.project_root))
@@ -845,6 +1119,223 @@ class ClientWindow(QMainWindow):
         self.code_editor.document().modificationChanged.connect(lambda _changed: self._update_editor_tab())
         self.code_editor.installEventFilter(self)
         return workspace
+
+    def _build_git_page(self) -> QWidget:
+        page = QFrame()
+        page.setObjectName("GitPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QFrame()
+        header.setObjectName("GitPageHeader")
+        header.setFixedHeight(68)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(18, 0, 14, 0)
+        icon = QLabel("⌁")
+        icon.setObjectName("AgentLogo")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setFixedSize(32, 32)
+        header_layout.addWidget(icon)
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        title = QLabel("开发版本树")
+        title.setObjectName("AppTitle")
+        subtitle = QLabel("记录主线与被取消的尝试方向 · 不等同于 Git branch")
+        subtitle.setObjectName("Subtle")
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        header_layout.addLayout(title_box)
+        header_layout.addStretch(1)
+        back = QPushButton("返回编码工作区")
+        back.setObjectName("Quiet")
+        back.clicked.connect(self.show_workspace)
+        header_layout.addWidget(back)
+        refresh = QPushButton("刷新树")
+        refresh.setObjectName("Quiet")
+        refresh.clicked.connect(self._refresh_development_tree)
+        header_layout.addWidget(refresh)
+        init = QPushButton("初始化 Git")
+        init.setObjectName("GitPrimary")
+        init.clicked.connect(self.init_git)
+        header_layout.addWidget(init)
+        layout.addWidget(header)
+
+        metrics = QHBoxLayout()
+        metrics.setContentsMargins(18, 12, 18, 12)
+        metrics.setSpacing(10)
+        self.git_main_value = self._metric_card(metrics, "当前主线", "0")
+        self.git_attempt_value = self._metric_card(metrics, "尝试方向", "0")
+        self.git_failed_value = self._metric_card(metrics, "已取消 / 失败", "0")
+        self.git_head_value = self._metric_card(metrics, "Git HEAD", "暂无")
+        layout.addLayout(metrics)
+
+        tree_splitter = QSplitter(Qt.Orientation.Horizontal)
+        tree_splitter.setChildrenCollapsible(False)
+        tree_splitter.setHandleWidth(1)
+        self.git_tree = DevelopmentTreeView()
+        self.git_tree.node_selected.connect(self._handle_git_node_selected)
+        tree_scroll = QScrollArea()
+        tree_scroll.setObjectName("TreeScroll")
+        tree_scroll.setWidgetResizable(True)
+        tree_scroll.setWidget(self.git_tree)
+        tree_splitter.addWidget(tree_scroll)
+
+        details = QFrame()
+        details.setObjectName("GitDetails")
+        details.setMinimumWidth(260)
+        details.setMaximumWidth(360)
+        detail_layout = QVBoxLayout(details)
+        detail_layout.setContentsMargins(18, 20, 18, 16)
+        detail_layout.setSpacing(9)
+        detail_label = QLabel("节点详情")
+        detail_label.setObjectName("Overline")
+        detail_layout.addWidget(detail_label)
+        self.git_detail_title = QLabel("当前主线")
+        self.git_detail_title.setObjectName("GitDetailTitle")
+        self.git_detail_title.setWordWrap(True)
+        detail_layout.addWidget(self.git_detail_title)
+        self.git_detail_status = QLabel("当前主线")
+        self.git_detail_status.setObjectName("GitDetailStatus")
+        detail_layout.addWidget(self.git_detail_status)
+        self.git_detail_description = QLabel("这里会显示选中开发节点的说明。")
+        self.git_detail_description.setObjectName("Subtle")
+        self.git_detail_description.setWordWrap(True)
+        self.git_detail_description.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        detail_layout.addWidget(self.git_detail_description)
+        detail_layout.addSpacing(8)
+        meta_label = QLabel("记录")
+        meta_label.setObjectName("Overline")
+        detail_layout.addWidget(meta_label)
+        self.git_detail_meta = QLabel("暂无开发记录")
+        self.git_detail_meta.setObjectName("Subtle")
+        self.git_detail_meta.setWordWrap(True)
+        self.git_detail_meta.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        detail_layout.addWidget(self.git_detail_meta)
+        self.git_retry_button = QPushButton("重新尝试这个方向")
+        self.git_retry_button.setObjectName("Primary")
+        self.git_retry_button.setEnabled(False)
+        self.git_retry_button.clicked.connect(self.retry_selected_node)
+        detail_layout.addWidget(self.git_retry_button)
+        detail_layout.addStretch(1)
+        note = QLabel("树上的分支是编码过程中的尝试方向。取消或失败的方向会保留在这里，方便以后回看；只有 Agent 完成的修改才会进入主线。")
+        note.setObjectName("Hint")
+        note.setWordWrap(True)
+        detail_layout.addWidget(note)
+        tree_splitter.addWidget(details)
+        tree_splitter.setSizes([1, 300])
+        tree_splitter.setStretchFactor(0, 1)
+        tree_splitter.setStretchFactor(1, 0)
+        layout.addWidget(tree_splitter, 1)
+        return page
+
+    @staticmethod
+    def _metric_card(parent_layout: QHBoxLayout, label_text: str, value_text: str) -> QLabel:
+        card = QFrame()
+        card.setObjectName("MetricCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 9, 12, 9)
+        card_layout.setSpacing(2)
+        value = QLabel(value_text)
+        value.setObjectName("MetricValue")
+        card_layout.addWidget(value)
+        label = QLabel(label_text)
+        label.setObjectName("Subtle")
+        card_layout.addWidget(label)
+        parent_layout.addWidget(card, 1)
+        return value
+
+    def _development_nodes(self) -> list[dict[str, Any]]:
+        branch = self.git.branch()
+        head = self.git.head_sha()
+        nodes: list[dict[str, Any]] = [{
+            "id": "root",
+            "lane": "main",
+            "status": "main",
+            "title": "当前主线",
+            "description": "项目当前持续发展的编码主线。成功完成的编码任务会接在这里。",
+            "meta": f"Git {branch} · HEAD {head[:10] if head else '暂无'}",
+        }]
+        current_main = "root"
+        for item in reversed(self.ledger.list_tasks(limit=100)):
+            raw_payload = item.get("payload", {})
+            if isinstance(raw_payload, str):
+                try:
+                    raw_payload = json.loads(raw_payload)
+                except json.JSONDecodeError:
+                    raw_payload = {}
+            prompt = str(raw_payload.get("prompt", "")) if isinstance(raw_payload, dict) else ""
+            title = prompt.splitlines()[0].strip() or str(item.get("kind", "编码任务"))
+            if title.startswith("编码目标："):
+                title = title.removeprefix("编码目标：").strip()
+            task_id = str(item.get("task_id", new_id("node")))
+            status = str(item.get("status", ""))
+            meta = f"{item.get('updated_at') or item.get('created_at') or '未知时间'} · {item.get('attempts', 0)} 次尝试"
+            if status == "succeeded":
+                node = {
+                    "id": task_id,
+                    "lane": "main",
+                    "status": "main",
+                    "parent_id": current_main,
+                    "title": title,
+                    "description": "该编码任务已完成，修改结果进入当前主线。",
+                    "meta": meta,
+                }
+                nodes.append(node)
+                current_main = task_id
+            else:
+                attempt_status = "failed" if status == "failed" else "retry" if status == "retry_wait" else "active"
+                if status == "queued":
+                    description = "任务已排队，尚未成为主线的一部分。"
+                elif status == "running":
+                    description = "Agent 正在尝试这个方向。"
+                else:
+                    description = str(item.get("last_error") or "这个方向没有进入当前主线。")
+                nodes.append({
+                    "id": task_id,
+                    "lane": "attempt",
+                    "status": attempt_status,
+                    "parent_id": current_main,
+                    "title": title,
+                    "description": description,
+                    "meta": meta,
+                })
+        return nodes
+
+    def _refresh_development_tree(self) -> None:
+        if not hasattr(self, "git_tree"):
+            return
+        nodes = self._development_nodes()
+        self.git_tree.set_nodes(nodes)
+        main_count = sum(node.get("lane") == "main" for node in nodes) - 1
+        attempts = [node for node in nodes if node.get("lane") == "attempt"]
+        failed_count = sum(node.get("status") == "failed" for node in attempts)
+        self.git_main_value.setText(str(max(0, main_count)))
+        self.git_attempt_value.setText(str(len(attempts)))
+        self.git_failed_value.setText(str(failed_count))
+        head = self.git.head_sha()
+        self.git_head_value.setText(head[:8] if head else "暂无")
+
+    def _handle_git_node_selected(self, node: dict[str, Any]) -> None:
+        self.git_detail_title.setText(str(node.get("title", "未命名节点")))
+        self.git_detail_status.setText(DevelopmentTreeView._status_text(node))
+        self.git_detail_status.setStyleSheet(f"color: {DevelopmentTreeView._accent(node).name()};")
+        self.git_detail_description.setText(str(node.get("description", "暂无说明")))
+        self.git_detail_meta.setText(str(node.get("meta", "暂无记录")))
+        can_retry = node.get("lane") == "attempt" and node.get("status") in {"failed", "retry"}
+        self.git_retry_button.setEnabled(can_retry)
+        self.git_retry_button.setProperty("task_id", node.get("id", ""))
+
+    def retry_selected_node(self) -> None:
+        task_id = str(self.git_retry_button.property("task_id") or "")
+        if not task_id or not self.ledger.retry_now(task_id):
+            return
+        self.active_task_id = task_id
+        self.worker.wake()
+        self._set_state(self.chat_status, "排队中 · 正在重新尝试", "StateWorking")
+        self._set_state(self.workspace_state, "● 排队中", "StateWorking")
+        self._append_chat("系统", f"已重新尝试开发方向：{task_id}", "meta")
+        self._refresh_development_tree()
 
     def _build_chat_panel(self) -> QWidget:
         chat = QFrame()
@@ -968,6 +1459,7 @@ class ClientWindow(QMainWindow):
         self._append_log(self._worker_message(event, payload))
         self.refresh_git_status()
         self.refresh_task_history()
+        self._refresh_development_tree()
 
     @staticmethod
     def _set_state(widget: QLabel, text: str, name: str) -> None:
@@ -991,6 +1483,7 @@ class ClientWindow(QMainWindow):
             sha = payload.get("git_result_sha") or "无新提交"
             self._append_chat("系统", f"任务完成 · Git commit: {sha[:12]}", "meta")
             self.refresh_git_status()
+            self._refresh_development_tree()
 
     @staticmethod
     def _worker_message(event: str, payload: dict[str, Any]) -> str:
@@ -1017,6 +1510,7 @@ class ClientWindow(QMainWindow):
         self.refresh_git_status()
         self.connection_label.setText(self._provider_state())
         self.refresh_task_history()
+        self._refresh_development_tree()
 
     def refresh_git_status(self) -> None:
         status = self.git.status().replace("\n", "  ")
@@ -1126,6 +1620,7 @@ class ClientWindow(QMainWindow):
         if self.active_task_id:
             self._append_chat("系统", "当前任务仍在执行，暂时不能新建会话。", "meta")
             return
+        self.show_workspace()
         self.current_session_id = None
         self._show_welcome()
         self.task_goal.clear()
@@ -1135,41 +1630,8 @@ class ClientWindow(QMainWindow):
         self.task_goal.setFocus()
 
     def show_tasks(self) -> None:
-        if self.task_dialog is not None and self.task_dialog.isVisible():
-            self.task_dialog.raise_()
-            self.task_dialog.activateWindow()
-            return
-        dialog = QDialog(self)
-        dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        dialog.setWindowTitle("任务历史 · SciDevHarness")
-        dialog.resize(780, 430)
-        self.task_dialog = dialog
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(0, 0, 14, 14)
-        layout.setSpacing(10)
-        layout.addWidget(self._dialog_title_bar(dialog, "编码任务历史"))
-        tree = QTreeWidget()
-        tree.setHeaderLabels(["类型", "状态", "尝试", "错误 / 详情"])
-        tree.setColumnWidth(0, 100)
-        tree.setColumnWidth(1, 110)
-        tree.setColumnWidth(2, 70)
-        tree.setColumnWidth(3, 440)
-        self.task_history_tree = tree
-        layout.addWidget(tree, 1)
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        retry = QPushButton("手动重试")
-        retry.setObjectName("Primary")
-        retry.clicked.connect(self.retry_selected)
-        actions.addWidget(retry)
-        close = QPushButton("关闭")
-        close.clicked.connect(dialog.close)
-        actions.addWidget(close)
-        layout.addLayout(actions)
-        dialog.finished.connect(lambda _result: self._clear_task_dialog(dialog))
-        self.refresh_task_history()
-        dialog.show()
+        self.show_git()
+        self._append_log("任务历史已收进开发版本树")
 
     def _clear_task_dialog(self, dialog: QDialog) -> None:
         if self.task_dialog is dialog:
@@ -1196,43 +1658,25 @@ class ClientWindow(QMainWindow):
             self.refresh_task_history()
 
     def show_git(self) -> None:
-        dialog = QDialog(self)
-        dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        dialog.setWindowTitle("Git 状态 · SciDevHarness")
-        dialog.resize(780, 520)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(0, 0, 14, 14)
-        layout.setSpacing(10)
-        layout.addWidget(self._dialog_title_bar(dialog, "Git 工作区"))
-        text = QPlainTextEdit()
-        text.setReadOnly(True)
-        text.setPlainText(
-            f"仓库：{self.project_root}\n"
-            f"分支：{self.git.branch()}\n"
-            f"当前提交：{self.git.head_sha() or '暂无'}\n\n"
-            f"工作区：\n{self.git.status()}\n\n"
-            f"提交记录：\n{self.git.log()}"
-        )
-        layout.addWidget(text, 1)
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        init = QPushButton("初始化 Git")
-        init.setObjectName("Primary")
-        init.clicked.connect(self.init_git)
-        actions.addWidget(init)
-        layout.addLayout(actions)
-        dialog.show()
+        self.workspace_stack.setCurrentWidget(self.git_page)
+        self._refresh_development_tree()
+        self._append_log("已打开开发版本树")
 
     def init_git(self) -> None:
         try:
             self.git.init()
             self._append_log("Git 已准备好；编码任务完成后会自动提交。")
             self.refresh_git_status()
+            self._refresh_development_tree()
         except Exception as exc:  # noqa: BLE001
             self._show_message("Git 错误", str(exc))
 
+    def show_workspace(self) -> None:
+        self.workspace_stack.setCurrentWidget(self.workspace_page)
+        self._append_log("已返回编码工作区")
+
     def focus_explorer(self) -> None:
+        self.show_workspace()
         self.file_tree.setFocus()
 
     def _handle_coding(self, task: dict[str, Any]) -> dict[str, Any]:
