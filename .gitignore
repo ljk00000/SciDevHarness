@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.research/events.jsonl
+.research/runs.db
+.research/runs.db-*
+.research/requests/
+.research/sessions/
+.research/*.png
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+dist/
+build/
+*.spec
