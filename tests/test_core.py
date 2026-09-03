@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_core import CodingAgent, CodingToolbox, EventLedger, GitManager, RetryQueue, RetryableError
+from scidev_core import CodingAgent, CodingToolbox, EventLedger, GitManager, RetryQueue, RetryableError, SummarySettings
 
 
 class FakeCodingProvider:
@@ -83,11 +84,77 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(result["session_id"], "session_smoke")
             self.assertTrue((root / "hello.py").exists())
             self.assertTrue(result["git_result_sha"])
+            self.assertTrue(result["summary"])
+            self.assertTrue(result["summary_path"])
+            summary_files = list((root / ".research" / "summaries").glob("*.json"))
+            self.assertEqual(len(summary_files), 1)
             self.assertTrue(git.is_repo())
             events = (root / ".research" / "events.jsonl").read_text(encoding="utf-8")
             self.assertIn("file_changed", events)
             self.assertIn("git_commit_created", events)
             self.assertIn("coding_session_completed", events)
+
+    def test_summary_settings_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings = SummarySettings(
+                enabled=False,
+                model="summary-model",
+                max_tokens=1200,
+                context_chars=8000,
+                retries=1,
+                instruction="只保留实验结论",
+            )
+            settings.save(root)
+            loaded = SummarySettings.load(root)
+            self.assertFalse(loaded.enabled)
+            self.assertEqual(loaded.model, "summary-model")
+            self.assertEqual(loaded.max_tokens, 1200)
+            self.assertEqual(loaded.context_chars, 8000)
+            self.assertEqual(loaded.interval_turns, 4)
+            self.assertEqual(loaded.instruction, "只保留实验结论")
+            settings.config_path(root).write_text(json.dumps({"summary_enabled": "false"}), encoding="utf-8")
+            self.assertFalse(SummarySettings.load(root).enabled)
+            with patch.dict(os.environ, {"SCIDEV_SUMMARY_ENABLED": ""}, clear=False):
+                self.assertFalse(SummarySettings.load(root).enabled)
+
+    def test_summary_checkpoint_runs_every_configured_turns(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            settings = SummarySettings(interval_turns=1)
+            agent = CodingAgent(root, ledger, git, summary_settings=settings)
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=FakeCodingProvider()):
+                agent.run({"payload": {"session_id": "session_checkpoint", "prompt": "创建 hello.py"}})
+            records = [json.loads(path.read_text(encoding="utf-8")) for path in (root / ".research" / "summaries").glob("*.json")]
+            self.assertEqual(len(records), 2)
+            self.assertEqual({record["phase"] for record in records}, {"checkpoint", "final"})
+
+    def test_git_diff_includes_tracked_and_untracked_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            git = GitManager(root)
+            tracked = root / "tracked.py"
+            tracked.write_text("value = 1\n", encoding="utf-8")
+            git.commit_changes("initial")
+            tracked.write_text("value = 2\n", encoding="utf-8")
+            self.assertIn("tracked.py", git.diff(tracked))
+            git._run(["add", "tracked.py"], check=True)
+            self.assertIn("tracked.py", git.diff(tracked))
+            untracked = root / "new.py"
+            untracked.write_text("print('new')\n", encoding="utf-8")
+            self.assertIn("new.py", git.diff(untracked))
+            self.assertTrue(any(entry["path"] == "new.py" for entry in git.status_entries()))
+            git.stage_path(untracked)
+            self.assertTrue(any(entry["path"] == "new.py" and entry["code"].startswith("A") for entry in git.status_entries()))
+            git.unstage_path(untracked)
+            self.assertTrue(any(entry["path"] == "new.py" and entry["code"] == "??" for entry in git.status_entries()))
+            toolbox = CodingToolbox(root, EventLedger(root))
+            whole_diff = toolbox.git_diff()
+            self.assertIn("tracked.py", whole_diff)
+            self.assertIn("new.py", whole_diff)
 
     def test_toolbox_rejects_path_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -95,6 +162,13 @@ class CoreTests(unittest.TestCase):
             toolbox = CodingToolbox(root, EventLedger(root))
             with self.assertRaises(Exception):
                 toolbox.read_file("../outside.txt")
+
+    def test_git_probe_is_safe_when_git_cli_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            git = GitManager(Path(temp))
+            with patch("scidev_core.subprocess.run", side_effect=FileNotFoundError("git not found")):
+                self.assertFalse(git.is_repo())
+                self.assertEqual(git.status(), "Git 不可用：请安装 Git CLI")
 
 
 if __name__ == "__main__":

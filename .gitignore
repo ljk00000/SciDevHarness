@@ -6,6 +6,9 @@
 .research/runs.db-*
 .research/requests/
 .research/sessions/
+.research/settings.json
+.research/summaries/
+.research/tree_layout.json
 .research/*.png
 .venv/
 __pycache__/

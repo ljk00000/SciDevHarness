@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import difflib
 import os
 import sqlite3
 import subprocess
@@ -353,19 +354,35 @@ class RetryQueue:
 
 
 class GitManager:
+    MAX_UNTRACKED_DIFF_BYTES = 240_000
+
     def __init__(self, project_root: Path):
         self.project_root = Path(project_root).resolve()
 
     def _run(self, args: list[str], check: bool = False) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["git", *args],
-            cwd=self.project_root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=check,
-        )
+        command = ["git", *args]
+        try:
+            return subprocess.run(
+                command,
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=check,
+            )
+        except OSError as exc:
+            # A desktop client should still open when Git is not installed.
+            # Read-only probes then behave like an unavailable repository;
+            # mutating calls keep a useful, conventional command error.
+            if check:
+                raise subprocess.CalledProcessError(
+                    127,
+                    command,
+                    output="",
+                    stderr=str(exc),
+                ) from exc
+            return subprocess.CompletedProcess(command, 127, "", str(exc))
 
     def is_repo(self) -> bool:
         result = self._run(["rev-parse", "--is-inside-work-tree"])
@@ -393,16 +410,143 @@ class GitManager:
         return result.stdout.strip() or "(detached)"
 
     def status(self) -> str:
-        if not self.is_repo():
+        probe = self._run(["rev-parse", "--is-inside-work-tree"])
+        if probe.returncode == 127:
+            return "Git 不可用：请安装 Git CLI"
+        if probe.returncode != 0 or probe.stdout.strip() != "true":
             return "未初始化 Git 仓库"
         result = self._run(["status", "--short"])
         return result.stdout.strip() or "工作区干净"
+
+    def status_entries(self) -> list[dict[str, str]]:
+        """Return machine-readable porcelain entries for the source-control view."""
+        if not self.is_repo():
+            return []
+        result = self._run(["status", "--porcelain=v1", "-uall"])
+        entries: list[dict[str, str]] = []
+        for line in result.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            code = line[:2]
+            raw_path = line[3:]
+            path = raw_path.split(" -> ", 1)[-1]
+            entries.append({"code": code, "path": path, "raw": raw_path})
+        return entries
+
+    def stage_all(self) -> None:
+        self.init()
+        self._run(["add", "-A"], check=True)
+
+    def stage_path(self, path: Path) -> None:
+        self.init()
+        relative = self._relative_path(path)
+        self._run(["add", "--", relative], check=True)
+
+    def unstage_all(self) -> None:
+        if not self.is_repo():
+            return
+        if self.head_sha():
+            self._run(["reset", "HEAD", "--"], check=True)
+        else:
+            self._run(["reset"], check=True)
+
+    def unstage_path(self, path: Path) -> None:
+        if not self.is_repo():
+            return
+        relative = self._relative_path(path)
+        if self.head_sha():
+            self._run(["reset", "HEAD", "--", relative], check=True)
+        else:
+            self._run(["reset", "--", relative], check=True)
+
+    def _relative_path(self, path: Path) -> str:
+        target = Path(path).resolve()
+        if not target.is_relative_to(self.project_root):
+            raise ValueError("path must be inside the project")
+        return target.relative_to(self.project_root).as_posix()
 
     def log(self, limit: int = 20) -> str:
         if not self.is_repo() or not self.head_sha():
             return "暂无提交"
         result = self._run(["log", f"-{limit}", "--oneline", "--decorate"])
         return result.stdout.strip()
+
+    def diff(self, path: Path | None = None) -> str:
+        """Return a reviewable diff for the whole worktree or one file."""
+        if not self.is_repo():
+            return "Git 尚未初始化"
+        args = ["diff", "--no-ext-diff"]
+        has_head = bool(self.head_sha())
+        if has_head:
+            # Comparing with HEAD includes both staged and unstaged changes,
+            # which is what an IDE's file diff should show.
+            args.append("HEAD")
+        relative = ""
+        if path is not None:
+            target = Path(path).resolve()
+            if not target.is_relative_to(self.project_root):
+                return "拒绝读取项目目录之外的文件"
+            relative = target.relative_to(self.project_root).as_posix()
+            args.extend(["--", relative])
+        result = self._run(args)
+        diff_text = result.stdout
+        if not has_head:
+            staged_args = ["diff", "--cached", "--no-ext-diff"]
+            if relative:
+                staged_args.extend(["--", relative])
+            staged = self._run(staged_args)
+            diff_text += staged.stdout
+        if path is None:
+            # ``git diff`` does not include untracked files. The Agent needs
+            # their content in its review context, otherwise a newly-created
+            # file can be invisible until the first commit.
+            untracked = self._run(["ls-files", "--others", "--exclude-standard", "-z"])
+            for raw_relative in untracked.stdout.split("\x00"):
+                relative_path = raw_relative
+                if not relative_path:
+                    continue
+                unresolved = self.project_root / Path(relative_path)
+                if unresolved.is_symlink():
+                    continue
+                candidate = unresolved.resolve()
+                if (
+                    not candidate.is_relative_to(self.project_root)
+                    or not candidate.is_file()
+                ):
+                    continue
+                try:
+                    raw_content = candidate.read_bytes()
+                except OSError:
+                    continue
+                if len(raw_content) > self.MAX_UNTRACKED_DIFF_BYTES or b"\x00" in raw_content:
+                    continue
+                content = raw_content.decode("utf-8", errors="replace").splitlines(keepends=True)
+                diff_text += "".join(
+                    difflib.unified_diff(
+                        [],
+                        content,
+                        fromfile="/dev/null",
+                        tofile=relative_path,
+                    )
+                )
+        if diff_text.strip():
+            return diff_text
+        if path is not None and relative:
+            status = self._run(["status", "--short", "--", relative]).stdout.strip()
+            if status.startswith("??"):
+                try:
+                    content = Path(path).read_text(encoding="utf-8").splitlines(keepends=True)
+                except (OSError, UnicodeError):
+                    return f"{relative}\n\n新文件无法以文本 diff 展示"
+                return "".join(
+                    difflib.unified_diff(
+                        [],
+                        content,
+                        fromfile="/dev/null",
+                        tofile=relative,
+                    )
+                )
+        return ""
 
     def commit_changes(self, message: str) -> str:
         self.init()
@@ -414,6 +558,86 @@ class GitManager:
         return self.head_sha()
 
 
+@dataclass
+class SummarySettings:
+    """Project-local policy for the automatic end-of-conversation summary."""
+
+    enabled: bool = True
+    model: str = ""
+    max_tokens: int = 900
+    context_chars: int = 18000
+    retries: int = 2
+    interval_turns: int = 4
+    instruction: str = "请用中文总结本次编码对话，包含：目标、实际修改、验证结果、未完成事项和下一步建议。不要编造没有发生的事实。"
+
+    @classmethod
+    def config_path(cls, project_root: Path) -> Path:
+        return Path(project_root).resolve() / ".research" / "settings.json"
+
+    @classmethod
+    def load(cls, project_root: Path) -> "SummarySettings":
+        path = cls.config_path(project_root)
+        data: dict[str, Any] = {}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                data = raw
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        enabled = data.get("summary_enabled", cls.enabled)
+        if isinstance(enabled, str):
+            enabled = enabled.strip().lower() not in {"0", "false", "no", "off", ""}
+        if os.getenv("SCIDEV_SUMMARY_ENABLED") is not None:
+            enabled = os.getenv("SCIDEV_SUMMARY_ENABLED", "").strip().lower() not in {"", "0", "false", "no", "off"}
+        model = str(os.getenv("SCIDEV_SUMMARY_MODEL") or data.get("summary_model") or "").strip()
+        max_tokens = data.get("summary_max_tokens", cls.max_tokens)
+        context_chars = data.get("summary_context_chars", cls.context_chars)
+        retries = data.get("summary_retries", cls.retries)
+        interval_turns = data.get("summary_interval_turns", cls.interval_turns)
+        try:
+            max_tokens = max(200, min(4000, int(max_tokens)))
+        except (TypeError, ValueError):
+            max_tokens = cls.max_tokens
+        try:
+            context_chars = max(4000, min(50000, int(context_chars)))
+        except (TypeError, ValueError):
+            context_chars = cls.context_chars
+        try:
+            retries = max(0, min(3, int(retries)))
+        except (TypeError, ValueError):
+            retries = cls.retries
+        if os.getenv("SCIDEV_SUMMARY_INTERVAL_TURNS") is not None:
+            interval_turns = os.getenv("SCIDEV_SUMMARY_INTERVAL_TURNS", "").strip()
+        try:
+            interval_turns = max(0, min(32, int(interval_turns)))
+        except (TypeError, ValueError):
+            interval_turns = cls.interval_turns
+        instruction = str(data.get("summary_instruction") or cls.instruction).strip() or cls.instruction
+        return cls(bool(enabled), model, max_tokens, context_chars, retries, interval_turns, instruction)
+
+    def save(self, project_root: Path) -> None:
+        path = self.config_path(project_root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "summary_enabled": self.enabled,
+                    "summary_model": self.model,
+                    "summary_max_tokens": self.max_tokens,
+                    "summary_context_chars": self.context_chars,
+                    "summary_retries": self.retries,
+                    "summary_interval_turns": self.interval_turns,
+                    "summary_instruction": self.instruction,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+
 class OpenAICompatibleProvider:
     """OpenAI-compatible Chat Completions adapter with function/tool calling."""
 
@@ -422,6 +646,9 @@ class OpenAICompatibleProvider:
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+
+    def with_model(self, model: str) -> "OpenAICompatibleProvider":
+        return type(self)(self.base_url, self.api_key, model.strip() or self.model, self.timeout)
 
     @classmethod
     def from_env(cls) -> "OpenAICompatibleProvider":
@@ -703,24 +930,9 @@ class CodingToolbox:
         return f"退出码：{process.returncode}\n{output}".rstrip()
 
     def git_diff(self) -> str:
-        result = subprocess.run(
-            ["git", "status", "--short"],
-            cwd=self.project_root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        diff = subprocess.run(
-            ["git", "diff", "--no-ext-diff"],
-            cwd=self.project_root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        status = result.stdout.strip() or "工作区干净或尚未初始化 Git"
-        changes = diff.stdout.strip() or "（没有已跟踪文件的 diff；新文件请结合 git status 判断）"
+        manager = GitManager(self.project_root)
+        status = manager.status()
+        changes = manager.diff().strip() or "（工作区没有可展示的文本 diff）"
         return f"状态：\n{status}\n\nDiff：\n{changes[-30000:]}"
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
@@ -760,11 +972,13 @@ class CodingAgent:
         ledger: EventLedger,
         git: GitManager,
         event_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        summary_settings: SummarySettings | None = None,
     ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
         self.git = git
         self.event_callback = event_callback
+        self.summary_settings = summary_settings or SummarySettings.load(self.project_root)
         self.toolbox = CodingToolbox(self.project_root, ledger)
 
     def _emit(self, event: str, data: dict[str, Any]) -> None:
@@ -839,6 +1053,157 @@ class CodingAgent:
             return "\n".join(chunks)
         return str(content or "")
 
+    def _summary_source(self, session: dict[str, Any]) -> str:
+        """Build a compact, role-labelled transcript for the summary request."""
+        chunks: list[str] = []
+        for message in session.get("messages", []):
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "message")
+            if role == "system":
+                continue
+            content = self._text_content(message.get("content")).strip()
+            if content:
+                chunks.append(f"[{role}]\n{content}")
+            for call in message.get("tool_calls") or []:
+                if isinstance(call, dict):
+                    function = call.get("function") or {}
+                    if isinstance(function, dict):
+                        name = str(function.get("name") or "unknown")
+                        chunks.append(f"[tool_call] {name}")
+        source = "\n\n".join(chunks)
+        limit = self.summary_settings.context_chars
+        if len(source) <= limit:
+            return source
+        head = max(1200, limit // 3)
+        tail = max(1200, limit - head)
+        return source[:head] + "\n\n[中间内容已折叠]\n\n" + source[-tail:]
+
+    def _summarize_session(
+        self,
+        provider: Any,
+        session: dict[str, Any],
+        phase: str = "final",
+        turn: int | None = None,
+    ) -> str:
+        """Create and persist a checkpoint/final summary without blocking completion."""
+        settings = self.summary_settings
+        session_id = str(session["session_id"])
+        if not settings.enabled:
+            self.ledger.append(
+                "conversation_summary_skipped",
+                {"session_id": session_id, "reason": "disabled", "phase": phase, "turn": turn},
+            )
+            return ""
+
+        self.ledger.append(
+            "conversation_summary_started",
+            {
+                "session_id": session_id,
+                "model": settings.model or getattr(provider, "model", "default"),
+                "phase": phase,
+                "turn": turn,
+            },
+        )
+        self._emit("summary_started", {"session_id": session_id, "phase": phase, "turn": turn})
+        summary_provider = provider
+        if settings.model and hasattr(provider, "with_model"):
+            summary_provider = provider.with_model(settings.model)
+        summary_messages = [
+            {
+                "role": "system",
+                "content": "你是科研编码项目的会话记录器。只根据给定对话总结已经发生的事实，禁止臆测。输出简洁、可检索的中文 Markdown。",
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"{settings.instruction}\n\n"
+                    f"会话 ID：{session_id}\n"
+                    f"Git 结果提交：{session.get('git_result_sha') or '无'}\n\n"
+                    f"对话记录：\n{self._summary_source(session)}"
+                ),
+            },
+        ]
+        attempts = settings.retries + 1
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                message = summary_provider.chat(
+                    summary_messages,
+                    max_tokens=settings.max_tokens,
+                    request_id=f"{session_id}-summary",
+                )
+                text = self._text_content(message.get("content")).strip()
+                if not text:
+                    raise PermanentError("总结模型返回了空内容")
+                summary_id = new_id("summary")
+                summary_path = self.project_root / ".research" / "summaries" / f"{session_id}_{summary_id}.json"
+                record = {
+                    "summary_id": summary_id,
+                    "session_id": session_id,
+                    "created_at": now_iso(),
+                    "phase": phase,
+                    "turn": turn,
+                    "model": getattr(summary_provider, "model", settings.model or "default"),
+                    "text": text,
+                    "config": {
+                        "max_tokens": settings.max_tokens,
+                        "context_chars": settings.context_chars,
+                        "instruction": settings.instruction,
+                    },
+                }
+                summary_path.parent.mkdir(parents=True, exist_ok=True)
+                summary_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                relative_path = summary_path.relative_to(self.project_root).as_posix()
+                session.setdefault("summaries", []).append(
+                    {"summary_id": summary_id, "created_at": record["created_at"], "path": relative_path, "text": text}
+                )
+                session["summary"] = text
+                session["summary_path"] = relative_path
+                session["summary_created_at"] = record["created_at"]
+                self.ledger.append(
+                    "conversation_summary_created",
+                    {
+                        "session_id": session_id,
+                        "summary_id": summary_id,
+                        "path": relative_path,
+                        "phase": phase,
+                        "turn": turn,
+                        "text": text[:4000],
+                    },
+                )
+                self._emit(
+                    "summary_completed",
+                    {
+                        "session_id": session_id,
+                        "summary_id": summary_id,
+                        "path": relative_path,
+                        "phase": phase,
+                        "turn": turn,
+                        "model": record["model"],
+                        "text": text,
+                    },
+                )
+                return text
+            except RetryableError as exc:
+                last_error = exc
+                if attempt + 1 < attempts:
+                    time.sleep(min(2.0, 0.5 * (attempt + 1)))
+            except Exception as exc:  # Summary is auxiliary; a failed summary must not erase completed code work.
+                last_error = exc
+                break
+
+        detail = str(last_error or "未知错误")
+        self.ledger.append(
+            "conversation_summary_failed",
+            {"session_id": session_id, "error": detail[:1000], "attempts": attempts, "phase": phase, "turn": turn},
+        )
+        self._emit(
+            "summary_failed",
+            {"session_id": session_id, "error": detail[:1000], "phase": phase, "turn": turn},
+        )
+        return ""
+
     def run(self, task: dict[str, Any]) -> dict[str, Any]:
         payload = task["payload"]
         session_id = payload["session_id"]
@@ -884,6 +1249,7 @@ class CodingAgent:
                 session["final_message"] = content
                 session["git_result_sha"] = self.git.commit_changes(f"[codex] {summary}")
                 session["updated_at"] = now_iso()
+                conversation_summary = self._summarize_session(provider, session, phase="final", turn=turn)
                 self._save_session(session)
                 if session["git_result_sha"]:
                     self.ledger.append(
@@ -894,8 +1260,23 @@ class CodingAgent:
                     "coding_session_completed",
                     {"session_id": session_id, "git_result_sha": session["git_result_sha"]},
                 )
-                self._emit("completed", {"session_id": session_id, "text": content, "git_result_sha": session["git_result_sha"]})
-                return {"session_id": session_id, "git_result_sha": session["git_result_sha"], "text": content}
+                self._emit(
+                    "completed",
+                    {
+                        "session_id": session_id,
+                        "text": content,
+                        "git_result_sha": session["git_result_sha"],
+                        "summary": conversation_summary,
+                        "summary_path": session.get("summary_path", ""),
+                    },
+                )
+                return {
+                    "session_id": session_id,
+                    "git_result_sha": session["git_result_sha"],
+                    "text": content,
+                    "summary": conversation_summary,
+                    "summary_path": session.get("summary_path", ""),
+                }
 
             for call in tool_calls:
                 function = call.get("function", {}) if isinstance(call, dict) else {}
@@ -917,6 +1298,12 @@ class CodingAgent:
                     {"session_id": session_id, "name": name, "result": result[:3000]},
                 )
                 self._emit("tool_result", {"session_id": session_id, "name": name, "result": result})
+                self._save_session(session)
+
+            interval = self.summary_settings.interval_turns
+            if self.summary_settings.enabled and interval > 0 and turn % interval == 0:
+                session["updated_at"] = now_iso()
+                self._summarize_session(provider, session, phase="checkpoint", turn=turn)
                 self._save_session(session)
 
         session["status"] = "failed"

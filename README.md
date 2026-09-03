@@ -20,7 +20,7 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 
 客户端包含：
 
-- 编码会话：输入任务，Agent 自主读取文件、写代码、修复错误
+- 编码会话：在右侧 Agent 对话栏输入任务，Agent 自主读取文件、写代码、修复错误
 - 工具调用：`list_files`、`read_file`、`write_file`、`replace_in_file`、`run_command`、`git_diff`
 - 本地任务队列：网络失败时指数退避并定时重试，进程重启后可恢复会话
 - Git 集成：查看状态和提交记录，编码任务完成后自动提交
@@ -42,7 +42,7 @@ $env:SCIDEV_MODEL="your-model"
 ## 测试
 
 ```powershell
-python -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 当前版本先把 Codex 式编码闭环跑通：

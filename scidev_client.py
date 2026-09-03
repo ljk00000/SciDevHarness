@@ -10,30 +10,40 @@ from __future__ import annotations
 
 import json
 import os
+import ast
+import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QDir, QEvent, QModelIndex, QObject, QPoint, QRect, QRegularExpression, Qt, QSortFilterProxyModel, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QKeyEvent, QLinearGradient, QPainter, QPainterPath, QPen, QSyntaxHighlighter, QTextCharFormat, QTextFormat
+from PySide6.QtCore import QDir, QEvent, QModelIndex, QObject, QPoint, QPointF, QProcess, QProcessEnvironment, QRect, QRegularExpression, QStringListModel, Qt, QSortFilterProxyModel, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QKeyEvent, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QShortcut, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QCompleter,
     QDialog,
     QFileSystemModel,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QSizePolicy,
     QSizeGrip,
     QSplitter,
     QStackedWidget,
     QStatusBar,
+    QTabBar,
     QTabWidget,
     QTextEdit,
     QToolButton,
@@ -44,12 +54,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from scidev_core import CodingAgent, CodingToolbox, EventLedger, GitManager, RetryQueue, new_id
+from scidev_core import CodingAgent, CodingToolbox, EventLedger, GitManager, RetryQueue, SummarySettings, new_id
 
 
 THEME = """
 * {
-    font-family: "Segoe UI";
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI";
     font-size: 10pt;
 }
 QMainWindow, QWidget#Root {
@@ -79,10 +89,6 @@ QFrame#WorkspaceToolbar, QFrame#EditorToolbar {
     background: #1e1e1e;
     border-bottom: 1px solid #2b2b2b;
 }
-QFrame#TaskPanel {
-    background: #252526;
-    border-bottom: 1px solid #3a3a3a;
-}
 QFrame#ChatHeader {
     background: #181818;
     border-bottom: 1px solid #2b2b2b;
@@ -91,6 +97,29 @@ QFrame#Composer {
     background: #181818;
     border-top: 1px solid #2b2b2b;
 }
+QFrame#SummarySettings {
+    background: #222223;
+    border-bottom: 1px solid #3a3a3a;
+}
+QLabel#SummarySettingsTitle { color: #e6e6e6; font-weight: 600; }
+QLabel#SummaryState { color: #73c991; }
+QCheckBox { color: #cccccc; spacing: 6px; }
+QCheckBox::indicator { width: 14px; height: 14px; }
+QCheckBox::indicator:unchecked { background: #2b2b2b; border: 1px solid #5a5a5a; border-radius: 3px; }
+QCheckBox::indicator:checked { background: #2d7d72; border: 1px solid #4ec9b0; border-radius: 3px; }
+QFrame#SummarySettings QLabel { color: #c8c8c8; }
+QFrame#SummarySettings QLabel#SummarySettingsTitle { color: #e6e6e6; }
+QFrame#SummarySettings QLabel#SummaryState { color: #73c991; }
+QFrame#SummarySettings QLabel#Hint { color: #9d9d9d; }
+QSpinBox {
+    min-height: 26px;
+    padding: 2px 5px;
+    background: #1f1f1f;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+}
+QSpinBox:focus { border: 1px solid #007acc; }
 QFrame#GitPage {
     background: #1e1e1e;
 }
@@ -101,6 +130,13 @@ QFrame#DevelopmentTree {
 QScrollArea#TreeScroll {
     background: #1e1e1e;
     border: none;
+}
+QScrollArea#GitDetailsScroll {
+    background: #252526;
+    border: none;
+}
+QScrollArea#GitDetailsScroll > QWidget {
+    background: #252526;
 }
 QFrame#GitPageHeader {
     background: #1e1e1e;
@@ -196,6 +232,51 @@ QPlainTextEdit#CodeEditor {
     border-radius: 0px;
     padding: 14px 18px;
 }
+QFrame#FindBar {
+    background: #252526;
+    border-bottom: 1px solid #3a3a3a;
+}
+QFrame#FindBar QLineEdit {
+    min-height: 25px;
+    padding: 4px 7px;
+    border-radius: 3px;
+}
+QLabel#FindStatus { color: #9d9d9d; min-width: 72px; }
+QTabWidget#BottomTabs::pane {
+    border-top: 1px solid #3a3a3a;
+    background: #181818;
+}
+QTabWidget#BottomTabs QTabBar::tab {
+    min-width: 0px;
+    padding: 7px 14px;
+    background: #181818;
+}
+QPlainTextEdit#TerminalOutput, QPlainTextEdit#ProblemsOutput {
+    background: #181818;
+    color: #d4d4d4;
+    border: none;
+    border-radius: 0px;
+    padding: 9px 12px;
+    font-family: "Cascadia Mono", "Cascadia Code", "Consolas", monospace;
+    font-size: 9pt;
+}
+QLineEdit#TerminalInput {
+    background: #252526;
+    border: none;
+    border-top: 1px solid #3a3a3a;
+    border-radius: 0px;
+    padding: 7px 10px;
+    font-family: "Cascadia Mono", "Cascadia Code", "Consolas", monospace;
+}
+QMenu {
+    background: #252526;
+    color: #d4d4d4;
+    border: 1px solid #454545;
+    padding: 4px;
+}
+QMenu::item { padding: 6px 24px 6px 10px; border-radius: 3px; }
+QMenu::item:selected { background: #094771; color: #ffffff; }
+QMenu::separator { height: 1px; background: #3a3a3a; margin: 4px 8px; }
 QPushButton, QToolButton {
     background: #2d2d2d;
     color: #cccccc;
@@ -210,6 +291,11 @@ QPushButton:hover, QToolButton:hover {
 QPushButton:pressed, QToolButton:pressed {
     background: #333333;
 }
+QPushButton:disabled, QToolButton:disabled {
+    background: #242424;
+    color: #666666;
+    border-color: #303030;
+}
 QPushButton#Primary {
     background: #0e639c;
     color: #ffffff;
@@ -217,6 +303,11 @@ QPushButton#Primary {
     font-weight: 600;
 }
 QPushButton#Primary:hover { background: #1177bb; }
+QPushButton#Primary:disabled, QPushButton#GitPrimary:disabled {
+    background: #242424;
+    color: #666666;
+    border-color: #303030;
+}
 QPushButton#GitPrimary {
     background: #2d7d72;
     color: #ffffff;
@@ -261,6 +352,16 @@ QToolButton#IconButton {
     padding: 2px 5px;
 }
 QToolButton#IconButton:hover { background: #2a2d2e; color: #ffffff; }
+QToolButton#TabCloseButton {
+    background: transparent;
+    color: #858585;
+    border: none;
+    border-radius: 3px;
+    padding: 0px;
+    font-size: 12pt;
+}
+QToolButton#TabCloseButton:hover { background: #3a3d41; color: #ffffff; }
+QToolButton#TabCloseButton:pressed { background: #4a4d51; color: #ffffff; }
 QToolButton#WindowButton {
     background: transparent;
     color: #bdbdbd;
@@ -305,6 +406,8 @@ QTabBar::tab:selected {
 }
 QSplitter::handle { background: #2b2b2b; }
 QSplitter::handle:hover { background: #3f3f46; }
+QSplitter#Workbench::handle { background: #252526; }
+QSplitter#Workbench::handle:hover { background: #007acc; }
 QScrollArea, QScrollArea#ChatScroll, QScrollArea#ChatScroll > QWidget, QWidget#ChatContent {
     background: #181818;
     border: none;
@@ -328,13 +431,17 @@ QStatusBar {
     border: none;
 }
 QStatusBar::item { border: none; }
+QStatusBar QLabel { color: #ffffff; padding: 0 4px; }
 QStatusBar QLabel#StatusText { color: #ffffff; }
 QFrame#UserBubble { background: #264f78; border: 1px solid #3b6e9e; border-radius: 5px; }
 QFrame#AgentBubble { background: #252526; border: 1px solid #3b3b3b; border-radius: 5px; }
 QFrame#ToolBubble { background: #202b24; border: 1px solid #395241; border-radius: 5px; }
 QFrame#MetaBubble { background: transparent; border: none; }
+QFrame#SummaryBubble { background: #20353d; border: 1px solid #2f6176; border-radius: 5px; }
 QLabel#BubbleRole { color: #a8a8a8; font-size: 9pt; font-weight: 600; }
 QLabel#BubbleText { color: #e1e1e1; font-size: 10pt; }
+QFrame#SummaryBubble QLabel#BubbleRole { color: #7fcef0; }
+QFrame#SummaryBubble QLabel#BubbleText { color: #e5f7ff; }
 QLabel#ToolText { color: #b7d7bf; font-family: "Cascadia Mono", "Consolas", monospace; font-size: 9pt; }
 QLabel#Chip { color: #9cdcfe; background: #252526; border: 1px solid #3c3c3c; border-radius: 3px; padding: 3px 7px; }
 QLabel#MetricValue { color: #f2f2f2; font-size: 14pt; font-weight: 600; }
@@ -384,12 +491,81 @@ class CodeEditor(QPlainTextEdit):
         editor_font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(editor_font)
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
+        self.completer = QCompleter(self)
+        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.completion_model = QStringListModel(self)
+        self.completer.setModel(self.completion_model)
+        self.completer.setWidget(self)
+        self.completer.activated.connect(self._insert_completion)
         self.line_number_area = LineNumberArea(self)
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Space and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.show_completions()
+            event.accept()
+            return
+        if self.completer.popup().isVisible():
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
+                completion = self.completer.currentCompletion()
+                if completion:
+                    self._insert_completion(completion)
+                    event.accept()
+                    return
+            if event.key() == Qt.Key.Key_Escape:
+                self.completer.popup().hide()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+        if not self.isReadOnly() and (event.text().isalnum() or event.text() == "_"):
+            self.show_completions()
+
+    def show_completions(self) -> None:
+        if self.isReadOnly():
+            return
+        cursor = self.textCursor()
+        before_cursor = cursor.block().text()[:cursor.positionInBlock()]
+        match = re.search(r"[A-Za-z_]\w*$", before_cursor)
+        prefix = match.group(0) if match else ""
+        if not prefix:
+            self.completer.popup().hide()
+            return
+        keywords = {
+            "and", "as", "assert", "async", "await", "break", "case", "class", "continue",
+            "def", "elif", "else", "except", "False", "finally", "for", "from", "global",
+            "if", "import", "in", "is", "lambda", "None", "not", "or", "pass", "raise",
+            "return", "True", "try", "while", "with", "yield",
+        }
+        words = set(re.findall(r"\b[A-Za-z_]\w*\b", self.toPlainText())) | keywords
+        suggestions = sorted(word for word in words if word.casefold().startswith(prefix.casefold()) and word != prefix)
+        self.completion_model.setStringList(suggestions[:100])
+        if not suggestions:
+            self.completer.popup().hide()
+            return
+        self.completer.setCompletionPrefix(prefix)
+        popup = self.completer.popup()
+        popup.setCurrentIndex(self.completion_model.index(0, 0))
+        rect = self.cursorRect()
+        rect.setWidth(min(360, max(180, popup.sizeHintForColumn(0) + 30)))
+        self.completer.complete(rect)
+
+    def _insert_completion(self, completion: str) -> None:
+        if self.isReadOnly() or not completion:
+            return
+        cursor = self.textCursor()
+        before_cursor = cursor.block().text()[:cursor.positionInBlock()]
+        match = re.search(r"[A-Za-z_]\w*$", before_cursor)
+        prefix = match.group(0) if match else ""
+        if prefix:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, len(prefix))
+        cursor.insertText(completion)
+        self.setTextCursor(cursor)
+        self.completer.popup().hide()
 
     def line_number_area_width(self) -> int:
         digits = max(2, len(str(max(1, self.blockCount()))))
@@ -519,7 +695,7 @@ class DevelopmentTreeView(QFrame):
 
     node_selected = Signal(object)
 
-    def __init__(self):
+    def __init__(self, layout_path: Path | None = None):
         super().__init__()
         self.setObjectName("DevelopmentTree")
         self.setMinimumHeight(420)
@@ -527,6 +703,44 @@ class DevelopmentTreeView(QFrame):
         self.nodes: list[dict[str, Any]] = []
         self.selected_id: str | None = None
         self._hit_boxes: list[tuple[QRect, dict[str, Any]]] = []
+        self._layout_path = Path(layout_path).resolve() if layout_path is not None else None
+        self._node_offsets: dict[str, QPointF] = {}
+        self._pan = QPointF(0, 0)
+        self._zoom = 1.0
+        self._press_pos = QPointF()
+        self._press_pan = QPointF()
+        self._press_node: dict[str, Any] | None = None
+        self._press_node_offset = QPointF()
+        self._drag_mode = "pan"
+        self._dragging = False
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self._load_layout()
+
+    def _load_layout(self) -> None:
+        if self._layout_path is None or not self._layout_path.exists():
+            return
+        try:
+            raw = json.loads(self._layout_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(raw, dict):
+            return
+        for node_id, value in raw.items():
+            if isinstance(value, dict):
+                try:
+                    self._node_offsets[str(node_id)] = QPointF(float(value.get("x", 0)), float(value.get("y", 0)))
+                except (TypeError, ValueError):
+                    continue
+
+    def _save_layout(self) -> None:
+        if self._layout_path is None:
+            return
+        try:
+            self._layout_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {node_id: {"x": round(offset.x(), 1), "y": round(offset.y(), 1)} for node_id, offset in self._node_offsets.items()}
+            self._layout_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            return
 
     def set_nodes(self, nodes: list[dict[str, Any]]) -> None:
         self.nodes = nodes
@@ -539,6 +753,12 @@ class DevelopmentTreeView(QFrame):
         extra_height = sum(max(0, count - 1) * 72 for count in attempts_by_parent.values())
         self.setMinimumHeight(max(420, 150 + main_count * 118 + extra_height))
         ids = {node["id"] for node in nodes}
+        self._node_offsets = {node_id: offset for node_id, offset in self._node_offsets.items() if node_id in ids}
+        offset_bottom = max(
+            (max(0, int(offset.y())) for node_id, offset in self._node_offsets.items() if node_id in ids),
+            default=0,
+        )
+        self.setMinimumHeight(max(self.minimumHeight(), 150 + main_count * 118 + extra_height + offset_bottom))
         if self.selected_id not in ids:
             self.selected_id = nodes[0]["id"] if nodes else None
         self.update()
@@ -578,8 +798,9 @@ class DevelopmentTreeView(QFrame):
             slot = children_count.get(parent_id, 0)
             children_count[parent_id] = slot + 1
             side = 1
-            branch_y = parent_y + 49 + slot * 72
-            branch_x = parent_x + side * 78
+            offset = self._node_offsets.get(str(node["id"]), QPointF())
+            branch_y = int(parent_y + 49 + slot * 72 + offset.y())
+            branch_x = int(parent_x + side * 78 + offset.x())
             if side > 0:
                 card_x = min(self.width() - card_width - 12, branch_x + 24)
             else:
@@ -608,6 +829,20 @@ class DevelopmentTreeView(QFrame):
             "active": "进行中",
         }.get(node.get("status"), "尝试方向")
 
+    def _screen_rect(self, rect: QRect) -> QRect:
+        return QRect(
+            int(rect.left() * self._zoom + self._pan.x()),
+            int(rect.top() * self._zoom + self._pan.y()),
+            max(1, int(rect.width() * self._zoom)),
+            max(1, int(rect.height() * self._zoom)),
+        )
+
+    def _node_at(self, point: QPoint) -> dict[str, Any] | None:
+        for rect, node in reversed(self._hit_boxes):
+            if rect.contains(point):
+                return node
+        return None
+
     def paintEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -622,7 +857,11 @@ class DevelopmentTreeView(QFrame):
         cards, dots = self._positions()
         self._hit_boxes = []
         main_nodes = [node for node in self.nodes if node.get("lane") == "main"]
+        painter.save()
+        painter.translate(self._pan)
+        painter.scale(self._zoom, self._zoom)
         if not main_nodes:
+            painter.restore()
             painter.setPen(QColor("#9d9d9d"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "还没有开发记录")
             return
@@ -643,6 +882,8 @@ class DevelopmentTreeView(QFrame):
             path = QPainterPath()
             path.moveTo(parent[0], parent[1])
             path.cubicTo(parent[0] + side * 46, parent[1], current[0] - side * 36, current[1], current[0], current[1])
+            painter.setPen(QPen(QColor(90, 98, 110, 35), 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.drawPath(path)
             painter.setPen(QPen(QColor("#5a626e"), 2))
             painter.drawPath(path)
 
@@ -665,16 +906,24 @@ class DevelopmentTreeView(QFrame):
             painter.drawEllipse(x - 3, y - 3, 6, 6)
 
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0, 0, 0, 70))
-            painter.drawRoundedRect(rect.adjusted(0, 4, 0, 4), 6, 6)
+            for depth, color in ((8, QColor(8, 10, 13, 110)), (5, QColor(15, 20, 24, 170)), (2, QColor(25, 31, 36, 220))):
+                painter.setBrush(color)
+                painter.drawRoundedRect(rect.translated(0, depth), 7, 7)
             gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
             gradient.setColorAt(0.0, QColor("#2a2a2d"))
-            gradient.setColorAt(1.0, QColor("#242426"))
+            gradient.setColorAt(0.48, QColor("#292d32"))
+            gradient.setColorAt(1.0, QColor("#202328"))
             painter.setBrush(gradient)
-            painter.setPen(QPen(QColor("#45454a" if not selected else accent), 1))
-            painter.drawRoundedRect(rect, 6, 6)
+            painter.setPen(QPen(QColor("#505860" if not selected else accent), 1.2))
+            painter.drawRoundedRect(rect, 7, 7)
+            painter.setPen(QPen(QColor(255, 255, 255, 22), 1))
+            painter.drawLine(rect.left() + 10, rect.top() + 1, rect.right() - 10, rect.top() + 1)
             painter.setBrush(accent)
             painter.drawRoundedRect(QRect(rect.left(), rect.top(), 3, rect.height()), 2, 2)
+            if node.get("lane") == "attempt":
+                painter.setBrush(QColor(210, 220, 225, 90))
+                for grip_y in (rect.top() + 23, rect.top() + 29, rect.top() + 35):
+                    painter.drawEllipse(rect.right() - 14, grip_y, 3, 3)
 
             text_rect = rect.adjusted(12, 8, -10, -8)
             painter.setPen(QColor("#f2f2f2"))
@@ -691,8 +940,9 @@ class DevelopmentTreeView(QFrame):
             meta = str(node.get("meta", ""))
             meta = painter.fontMetrics().elidedText(meta, Qt.TextElideMode.ElideRight, text_rect.width())
             painter.drawText(text_rect.left(), text_rect.top() + 49, meta)
-            self._hit_boxes.append((rect, node))
+            self._hit_boxes.append((self._screen_rect(rect), node))
 
+        painter.restore()
         painter.setPen(QColor("#c5c5c5"))
         header_font = QFont("Segoe UI", 10)
         header_font.setWeight(QFont.Weight.DemiBold)
@@ -700,24 +950,102 @@ class DevelopmentTreeView(QFrame):
         painter.drawText(18, 24, "开发尝试树")
         painter.setPen(QColor("#858585"))
         painter.setFont(QFont("Segoe UI", 9))
+        helper_rect = QRect(18, 10, max(100, self.width() - 36), 20)
+        painter.drawText(
+            helper_rect,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            f"{int(self._zoom * 100)}%  ·  拖动分支 / 平移画布",
+        )
         painter.drawText(18, 42, "主干 = 当前编码主线  ·  分支 = 已取消、失败或等待中的尝试方向")
 
     def mousePressEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         if event.button() == Qt.MouseButton.LeftButton:
-            for rect, node in self._hit_boxes:
-                if rect.contains(event.position().toPoint()):
-                    self.selected_id = node["id"]
-                    self.node_selected.emit(node)
-                    self.update()
-                    event.accept()
-                    return
+            self._press_pos = event.position()
+            self._press_pan = QPointF(self._pan)
+            self._press_node = self._node_at(event.position().toPoint())
+            self._drag_mode = "node" if self._press_node and self._press_node.get("lane") == "attempt" else "pan"
+            self._press_node_offset = QPointF(
+                self._node_offsets.get(str(self._press_node["id"]), QPointF())
+                if self._press_node is not None
+                else QPointF()
+            )
+            self._dragging = False
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            delta = event.position() - self._press_pos
+            if not self._dragging and (abs(delta.x()) > 5 or abs(delta.y()) > 5):
+                self._dragging = True
+            if self._dragging:
+                if self._drag_mode == "node" and self._press_node is not None:
+                    node_id = str(self._press_node["id"])
+                    self._node_offsets[node_id] = QPointF(
+                        self._press_node_offset.x() + delta.x() / self._zoom,
+                        self._press_node_offset.y() + delta.y() / self._zoom,
+                    )
+                    self.setMinimumHeight(max(self.minimumHeight(), int(self.height() + delta.y())))
+                else:
+                    self._pan = QPointF(self._press_pan.x() + delta.x(), self._press_pan.y() + delta.y())
+                self.update()
+            event.accept()
+            return
+        node = self._node_at(event.position().toPoint())
+        if node and node.get("lane") == "attempt":
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        elif node:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._press_node is not None and (not self._dragging or self._drag_mode == "node"):
+                self.selected_id = self._press_node["id"]
+                self.node_selected.emit(self._press_node)
+                self.update()
+            if self._dragging and self._drag_mode == "node":
+                self._save_layout()
+            self._press_node = None
+            self._drag_mode = "pan"
+            self._dragging = False
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        delta = event.angleDelta().y()
+        if not delta:
+            event.ignore()
+            return
+        old_zoom = self._zoom
+        factor = 1.12 if delta > 0 else 1 / 1.12
+        self._zoom = max(0.65, min(1.8, old_zoom * factor))
+        cursor = event.position()
+        logical_x = (cursor.x() - self._pan.x()) / old_zoom
+        logical_y = (cursor.y() - self._pan.y()) / old_zoom
+        self._pan = QPointF(cursor.x() - logical_x * self._zoom, cursor.y() - logical_y * self._zoom)
+        self.update()
+        event.accept()
 
 
 class MessageBubble(QFrame):
     def __init__(self, speaker: str, message: str, kind: str):
         super().__init__()
-        self.setObjectName({"user": "UserBubble", "agent": "AgentBubble", "tool": "ToolBubble", "meta": "MetaBubble"}.get(kind, "AgentBubble"))
+        self.setObjectName(
+            {
+                "user": "UserBubble",
+                "agent": "AgentBubble",
+                "tool": "ToolBubble",
+                "meta": "MetaBubble",
+                "summary": "SummaryBubble",
+            }.get(kind, "AgentBubble")
+        )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 9)
         layout.setSpacing(4)
@@ -745,16 +1073,41 @@ class ClientWindow(QMainWindow):
         self.ledger = EventLedger(self.project_root)
         self.git = GitManager(self.project_root)
         self.toolbox = CodingToolbox(self.project_root, self.ledger)
+        self.summary_settings = SummarySettings.load(self.project_root)
         self.signals = AppSignals()
         self.current_session_id: str | None = None
         self.active_task_id: str | None = None
         self.current_file: Path | None = None
+        self._editor_paths: dict[QWidget, Path] = {}
+        self._editor_titles: dict[QWidget, str] = {}
+        self._editor_highlighters: dict[QWidget, PythonHighlighter] = {}
+        self._pinned_editors: set[QWidget] = set()
+        self._preview_editor: QWidget | None = None
+        self.welcome_editor: CodeEditor | None = None
         self._closing = False
         self.task_dialog: QDialog | None = None
         self.task_history_tree: QTreeWidget | None = None
         self.window_max_button: QToolButton | None = None
+        self.terminal_process: QProcess | None = None
+        self._terminal_buffer = ""
+        self.terminal_cwd = self.project_root
+        self._entry_parent = self.project_root
+        self._explorer_entry_mode = "create"
+        self._rename_target: Path | None = None
+        self._navigation_back: list[tuple[Path, int, int]] = []
+        self._navigation_forward: list[tuple[Path, int, int]] = []
+        self._workspace_search_whole_word = False
+        self._workbench_user_resized = False
+        self._workbench_adapting = False
+        self._workbench_adapt_pending = False
 
-        self.agent = CodingAgent(self.project_root, self.ledger, self.git, event_callback=self._emit_agent)
+        self.agent = CodingAgent(
+            self.project_root,
+            self.ledger,
+            self.git,
+            event_callback=self._emit_agent,
+            summary_settings=self.summary_settings,
+        )
         self.worker = RetryQueue(
             self.ledger,
             {"coding": self._handle_coding},
@@ -764,9 +1117,10 @@ class ClientWindow(QMainWindow):
         self.signals.agent_event.connect(self._handle_agent_event)
         self.signals.worker_event.connect(self._handle_worker_event)
         self._build_ui()
+        self._install_shortcuts()
         self.worker.start()
         self.refresh_all()
-        self._append_chat("系统", "准备好了。填写中间的编码任务，或直接在右侧告诉 Agent 要修改什么。", "meta")
+        self._append_chat("系统", "准备好了。打开项目文件开始编辑，或直接在右侧告诉 Agent 要修改什么。", "meta")
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -777,9 +1131,10 @@ class ClientWindow(QMainWindow):
         root_layout.addWidget(self._build_title_bar())
 
         workbench = QSplitter(Qt.Orientation.Horizontal)
+        self.workbench = workbench
         workbench.setObjectName("Workbench")
         workbench.setChildrenCollapsible(False)
-        workbench.setHandleWidth(1)
+        workbench.setHandleWidth(5)
         workbench.addWidget(self._build_left_panel())
         self.workspace_stack = QStackedWidget()
         self.workspace_page = self._build_workspace()
@@ -792,20 +1147,86 @@ class ClientWindow(QMainWindow):
         workbench.setStretchFactor(0, 0)
         workbench.setStretchFactor(1, 1)
         workbench.setStretchFactor(2, 0)
+        workbench.splitterMoved.connect(self._on_workbench_splitter_moved)
         root_layout.addWidget(workbench, 1)
         self.setCentralWidget(root)
         self.command_search.textChanged.connect(self.file_proxy.set_filter_text)
+        self.command_search.textChanged.connect(self._update_command_suggestions)
+        self.command_search.returnPressed.connect(self._open_quick_search)
 
         status = QStatusBar()
         self.status_label = QLabel("就绪")
         self.status_label.setObjectName("StatusText")
         status.addWidget(self.status_label, 1)
         self.status_branch = QLabel("Git · 未初始化")
+        self.status_branch.setObjectName("StatusBranch")
+        self.status_branch.setMinimumWidth(0)
+        self.status_branch.setMaximumWidth(300)
+        self.status_branch.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         status.addPermanentWidget(self.status_branch)
+        self.status_position = QLabel("Ln 1, Col 1")
+        status.addPermanentWidget(self.status_position)
         status.addPermanentWidget(QLabel("UTF-8"))
-        status.addPermanentWidget(QLabel("Python"))
+        self.status_language = QLabel("Plain Text")
+        status.addPermanentWidget(self.status_language)
         status.addPermanentWidget(QSizeGrip(self))
         self.setStatusBar(status)
+
+    def _install_shortcuts(self) -> None:
+        """Install workbench-wide shortcuts expected from a code editor."""
+        self.quick_open_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        self.quick_open_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.quick_open_shortcut.activated.connect(self._focus_quick_search)
+
+        self.command_palette_shortcut = QShortcut(QKeySequence("Ctrl+Shift+P"), self)
+        self.command_palette_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.command_palette_shortcut.activated.connect(self._focus_command_palette)
+
+        self.find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self.find_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.find_shortcut.activated.connect(lambda: self._show_find_bar(False))
+
+        self.workspace_search_shortcut = QShortcut(QKeySequence("Ctrl+Shift+F"), self)
+        self.workspace_search_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.workspace_search_shortcut.activated.connect(self._show_workspace_search)
+
+        self.outline_shortcut = QShortcut(QKeySequence("Ctrl+Shift+O"), self)
+        self.outline_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.outline_shortcut.activated.connect(self._show_outline)
+
+        self.definition_shortcut = QShortcut(QKeySequence("F12"), self)
+        self.definition_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.definition_shortcut.activated.connect(self._go_to_definition)
+
+        self.references_shortcut = QShortcut(QKeySequence("Shift+F12"), self)
+        self.references_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.references_shortcut.activated.connect(self._find_symbol_references)
+
+        self.back_navigation_shortcut = QShortcut(QKeySequence("Alt+Left"), self)
+        self.back_navigation_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.back_navigation_shortcut.activated.connect(self._navigate_back)
+
+        self.forward_navigation_shortcut = QShortcut(QKeySequence("Alt+Right"), self)
+        self.forward_navigation_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.forward_navigation_shortcut.activated.connect(self._navigate_forward)
+
+        self.format_shortcut = QShortcut(QKeySequence("Shift+Alt+F"), self)
+        self.format_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.format_shortcut.activated.connect(self._format_current_document)
+
+        self.replace_shortcut = QShortcut(QKeySequence("Ctrl+H"), self)
+        self.replace_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.replace_shortcut.activated.connect(lambda: self._show_find_bar(True))
+
+        self.close_find_shortcut = QShortcut(QKeySequence("Escape"), self)
+        self.close_find_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.close_find_shortcut.activated.connect(
+            lambda: self._close_find_bar() if self.find_bar.isVisible() else None
+        )
+
+        self.terminal_shortcut = QShortcut(QKeySequence("Ctrl+`"), self)
+        self.terminal_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.terminal_shortcut.activated.connect(lambda: self._toggle_bottom_panel(1))
 
     def _build_title_bar(self) -> QFrame:
         title_bar = WindowTitleBar(self)
@@ -834,11 +1255,22 @@ class ClientWindow(QMainWindow):
         search.setMinimumWidth(190)
         search.setMaximumWidth(340)
         search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.command_completer = QCompleter(self)
+        self.command_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.command_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.command_completer.setModel(
+            QStringListModel(
+                ["> terminal", "> problems", "> search", "> replace", "> outline", "> git", "> explorer"],
+                self.command_completer,
+            )
+        )
+        self.command_completer.setWidget(search)
+        self.command_completer.activated.connect(self._run_command_completion)
         layout.addStretch(1)
         layout.addWidget(search)
         layout.addStretch(1)
 
-        new_button = QPushButton("新建任务")
+        new_button = QPushButton("新会话")
         new_button.setObjectName("Primary")
         new_button.clicked.connect(self.new_coding_task)
         layout.addWidget(new_button)
@@ -948,6 +1380,7 @@ class ClientWindow(QMainWindow):
         rail_layout = QVBoxLayout(rail)
         rail_layout.setContentsMargins(0, 10, 0, 8)
         rail_layout.setSpacing(2)
+        self.activity_buttons: list[QToolButton] = []
         for index, (symbol, tip, command) in enumerate((
             ("⌂", "资源管理器", self.focus_explorer),
             ("▣", "文件", self.focus_explorer),
@@ -959,10 +1392,12 @@ class ClientWindow(QMainWindow):
             button.setText(symbol)
             button.setToolTip(tip)
             button.setCheckable(True)
+            button.setAutoExclusive(True)
             button.setChecked(index == 0)
             button.setFixedHeight(50)
             button.clicked.connect(command)
             rail_layout.addWidget(button)
+            self.activity_buttons.append(button)
         rail_layout.addStretch(1)
         logo_bottom = QLabel("S")
         logo_bottom.setObjectName("Logo")
@@ -980,13 +1415,20 @@ class ClientWindow(QMainWindow):
         overline.setObjectName("Overline")
         heading.addWidget(overline)
         heading.addStretch(1)
-        for symbol, tip in (("+", "新建文件"), ("…", "更多操作")):
+        for symbol, tip in (("+", "新建文件"), ("…", "刷新资源管理器")):
             action = QToolButton()
             action.setObjectName("IconButton")
             action.setText(symbol)
             action.setToolTip(tip)
+            action.clicked.connect(self.start_new_file_entry if symbol == "+" else self.refresh_file_tree)
             heading.addWidget(action)
         explorer_layout.addLayout(heading)
+
+        self.new_file_entry = QLineEdit()
+        self.new_file_entry.setPlaceholderText("输入相对路径，例如 src/new_module.py，回车创建")
+        self.new_file_entry.setVisible(False)
+        self.new_file_entry.returnPressed.connect(self.create_new_file)
+        explorer_layout.addWidget(self.new_file_entry)
 
         project_row = QHBoxLayout()
         project = QLabel(f"⌄  {self.project_root.name.upper()}")
@@ -1021,7 +1463,15 @@ class ClientWindow(QMainWindow):
         self.file_tree.setSelectionMode(QTreeView.SelectionMode.SingleSelection)
         for column in (1, 2, 3):
             self.file_tree.hideColumn(column)
+        self.file_tree.clicked.connect(self._on_file_preview)
         self.file_tree.doubleClicked.connect(self._on_file_selected)
+        self.file_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.file_tree.customContextMenuRequested.connect(self._show_explorer_menu)
+        self.explorer_rename_shortcut = QShortcut(QKeySequence("F2"), self.file_tree)
+        self.explorer_rename_shortcut.activated.connect(self.start_rename_entry)
+        self.explorer_delete_shortcut = QShortcut(QKeySequence("Delete"), self.file_tree)
+        self.explorer_delete_shortcut.activated.connect(lambda: self.delete_explorer_path(self._explorer_path()))
+        self.file_tree.viewport().installEventFilter(self)
         explorer_layout.addWidget(self.file_tree, 1)
 
         hint = QLabel("本地工作区  ·  .research 已启用")
@@ -1031,6 +1481,75 @@ class ClientWindow(QMainWindow):
         layout.addWidget(explorer, 1)
         self.explorer = explorer
         return shell
+
+    def _create_editor_group(self) -> QTabWidget:
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.setTabsClosable(True)
+        tabs.setMovable(True)
+        tabs.setUsesScrollButtons(True)
+        tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        tabs.tabBar().customContextMenuRequested.connect(
+            lambda point, group=tabs: self._show_editor_tab_menu(point, group)
+        )
+        tabs.tabCloseRequested.connect(
+            lambda index, group=tabs: self._close_editor_tab(index, group)
+        )
+        tabs.currentChanged.connect(
+            lambda index, group=tabs: self._on_editor_tab_changed(index, group)
+        )
+        return tabs
+
+    def _install_tab_close_button(self, group: QTabWidget, index: int, editor: QWidget) -> None:
+        close = QToolButton(group.tabBar())
+        close.setObjectName("TabCloseButton")
+        close.setText("×")
+        close.setToolTip("关闭标签")
+        close.setFixedSize(20, 20)
+        close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close.clicked.connect(
+            lambda _checked=False, target_group=group, target_editor=editor: self._close_editor_tab(
+                target_group.indexOf(target_editor), target_group
+            )
+        )
+        group.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close)
+
+    def _editor_groups(self) -> list[QTabWidget]:
+        groups = [self.editor_tabs]
+        if self.secondary_editor_tabs is not None:
+            groups.append(self.secondary_editor_tabs)
+        return groups
+
+    def _editor_group_for(self, editor: QWidget | None) -> QTabWidget | None:
+        if editor is None:
+            return None
+        for group in self._editor_groups():
+            if group.indexOf(editor) >= 0:
+                return group
+        return None
+
+    def _split_current_editor(self) -> None:
+        editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if path is None:
+            self._append_log("请先打开一个项目文件，再进行编辑器分栏")
+            return
+        if self.secondary_editor_tabs is None:
+            self.secondary_editor_tabs = self._create_editor_group()
+            self.editor_splitter.addWidget(self.secondary_editor_tabs)
+            self.editor_splitter.setSizes([1, 1])
+        self.secondary_editor_tabs.setVisible(True)
+        self._open_file(path, preview=False, group=self.secondary_editor_tabs)
+        self._append_log(f"已在右侧编辑器组打开 {path.name}")
+
+    def _toggle_editor_split(self) -> None:
+        if self.secondary_editor_tabs is not None and self.secondary_editor_tabs.isVisible():
+            self.secondary_editor_tabs.setVisible(False)
+            self._active_editor_group = self.editor_tabs
+            self.editor_tabs.setFocus()
+            self._append_log("已关闭编辑器分栏")
+            return
+        self._split_current_editor()
 
     def _build_workspace(self) -> QWidget:
         workspace = QFrame()
@@ -1044,7 +1563,7 @@ class ClientWindow(QMainWindow):
         workspace_toolbar.setFixedHeight(36)
         toolbar_layout = QHBoxLayout(workspace_toolbar)
         toolbar_layout.setContentsMargins(14, 0, 12, 0)
-        self.breadcrumb = QLabel("项目  /  新建编码任务")
+        self.breadcrumb = QLabel("项目  /  欢迎页")
         self.breadcrumb.setObjectName("Subtle")
         toolbar_layout.addWidget(self.breadcrumb)
         toolbar_layout.addStretch(1)
@@ -1052,46 +1571,6 @@ class ClientWindow(QMainWindow):
         self.workspace_state.setObjectName("StateReady")
         toolbar_layout.addWidget(self.workspace_state)
         layout.addWidget(workspace_toolbar)
-
-        task_panel = QFrame()
-        task_panel.setObjectName("TaskPanel")
-        task_layout = QGridLayout(task_panel)
-        task_layout.setContentsMargins(16, 12, 16, 12)
-        task_layout.setHorizontalSpacing(10)
-        task_layout.setVerticalSpacing(7)
-
-        heading = QLabel("开始一个编码任务")
-        heading.setObjectName("SectionTitle")
-        task_layout.addWidget(heading, 0, 0, 1, 1)
-        description = QLabel("描述目标，Agent 会先阅读项目，再通过工具修改代码并保留 Git 轨迹。")
-        description.setObjectName("Subtle")
-        task_layout.addWidget(description, 0, 1, 1, 3)
-
-        goal_label = self._field_label("目标")
-        task_layout.addWidget(goal_label, 1, 0)
-        self.task_goal = PromptEdit()
-        self.task_goal.setPlaceholderText("例如：给现有项目增加配置文件读取功能")
-        self.task_goal.setFixedHeight(52)
-        self.task_goal.send_requested.connect(self.submit_questionnaire)
-        task_layout.addWidget(self.task_goal, 1, 1, 1, 3)
-
-        task_layout.addWidget(self._field_label("范围"), 2, 0)
-        self.task_scope = QLineEdit()
-        self.task_scope.setPlaceholderText("例如：只修改 Python 源码，不新增第三方依赖")
-        task_layout.addWidget(self.task_scope, 2, 1, 1, 1)
-        task_layout.addWidget(self._field_label("验收"), 2, 2)
-        self.task_verify = QLineEdit()
-        self.task_verify.setPlaceholderText("例如：运行现有单元测试")
-        task_layout.addWidget(self.task_verify, 2, 3)
-
-        start = QPushButton("开始编码  Ctrl+Enter")
-        start.setObjectName("Primary")
-        start.setMinimumWidth(145)
-        start.clicked.connect(self.submit_questionnaire)
-        task_layout.addWidget(start, 3, 3, 1, 1, Qt.AlignmentFlag.AlignRight)
-        task_layout.setColumnStretch(1, 1)
-        task_layout.setColumnStretch(3, 1)
-        layout.addWidget(task_panel)
 
         editor_toolbar = QFrame()
         editor_toolbar.setObjectName("EditorToolbar")
@@ -1102,23 +1581,289 @@ class ClientWindow(QMainWindow):
         editor_label.setObjectName("Overline")
         editor_layout.addWidget(editor_label)
         editor_layout.addStretch(1)
-        save = QPushButton("保存  Ctrl+S")
+        save = QPushButton("保存")
         save.setObjectName("Quiet")
+        save.setToolTip("保存当前文件（Ctrl+S）")
         save.clicked.connect(self.save_current_file)
         editor_layout.addWidget(save)
+        find = QPushButton("查找")
+        find.setObjectName("Quiet")
+        find.clicked.connect(lambda: self._show_find_bar(False))
+        editor_layout.addWidget(find)
+        search = QPushButton("搜索")
+        search.setObjectName("Quiet")
+        search.clicked.connect(self._show_workspace_search)
+        editor_layout.addWidget(search)
+        outline = QPushButton("大纲")
+        outline.setObjectName("Quiet")
+        outline.clicked.connect(self._show_outline)
+        editor_layout.addWidget(outline)
+        terminal = QPushButton("终端")
+        terminal.setObjectName("Quiet")
+        terminal.clicked.connect(lambda: self._toggle_bottom_panel(1))
+        editor_layout.addWidget(terminal)
+        problems = QPushButton("问题")
+        problems.setObjectName("Quiet")
+        problems.clicked.connect(lambda: self._toggle_bottom_panel(2))
+        editor_layout.addWidget(problems)
+        diff = QPushButton("差异")
+        diff.setObjectName("Quiet")
+        diff.clicked.connect(self._show_current_diff)
+        editor_layout.addWidget(diff)
+        split = QPushButton("分栏")
+        split.setObjectName("Quiet")
+        split.setToolTip("在右侧编辑器组打开当前文件")
+        split.clicked.connect(self._toggle_editor_split)
+        editor_layout.addWidget(split)
         layout.addWidget(editor_toolbar)
 
-        self.editor_tabs = QTabWidget()
-        self.editor_tabs.setDocumentMode(True)
-        self.editor_tabs.setTabsClosable(False)
-        self.code_editor = CodeEditor()
-        self.highlighter = PythonHighlighter(self.code_editor.document())
-        self.editor_tabs.addTab(self.code_editor, "欢迎页")
-        layout.addWidget(self.editor_tabs, 1)
+        self.find_bar = self._build_find_bar()
+        layout.addWidget(self.find_bar)
+
+        self.editor_tabs = self._create_editor_group()
+        self._active_editor_group = self.editor_tabs
+        self.secondary_editor_tabs: QTabWidget | None = None
+        self.welcome_editor = CodeEditor()
+        self.welcome_editor.setReadOnly(True)
+        self.welcome_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.welcome_editor.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._configure_editor(self.welcome_editor)
+        self.code_editor = self.welcome_editor
+        welcome_index = self.editor_tabs.addTab(self.welcome_editor, "欢迎页")
+        self.editor_tabs.tabBar().setTabButton(welcome_index, QTabBar.ButtonPosition.RightSide, None)
+        self.editor_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.editor_splitter.setObjectName("EditorSplitter")
+        self.editor_splitter.setChildrenCollapsible(False)
+        self.editor_splitter.setHandleWidth(1)
+        self.editor_splitter.addWidget(self.editor_tabs)
+        layout.addWidget(self.editor_splitter, 1)
+        self.bottom_tabs = self._build_bottom_panel()
+        layout.addWidget(self.bottom_tabs)
         self._show_welcome()
-        self.code_editor.document().modificationChanged.connect(lambda _changed: self._update_editor_tab())
-        self.code_editor.installEventFilter(self)
         return workspace
+
+    def _on_workbench_splitter_moved(self, _position: int, _index: int) -> None:
+        if not self._workbench_adapting:
+            self._workbench_user_resized = True
+
+    def _adapt_workbench_layout(self) -> None:
+        self._workbench_adapt_pending = False
+        if self._workbench_user_resized or not hasattr(self, "workbench"):
+            return
+        total = self.workbench.width()
+        if total <= 0:
+            return
+        left = min(440, max(340, int(total * 0.24)))
+        chat = min(500, max(360, int(total * 0.27)))
+        center = total - left - chat
+        if center < 420:
+            deficit = 420 - center
+            chat_reduction = min(deficit, max(0, chat - 360))
+            chat -= chat_reduction
+            deficit -= chat_reduction
+            left -= min(deficit, max(0, left - 340))
+            center = total - left - chat
+        self._workbench_adapting = True
+        try:
+            self.workbench.setSizes([left, max(1, center), chat])
+        finally:
+            self._workbench_adapting = False
+
+    def resizeEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        super().resizeEvent(event)
+        if hasattr(self, "workbench") and not self._workbench_adapt_pending:
+            self._workbench_adapt_pending = True
+            QTimer.singleShot(0, self._adapt_workbench_layout)
+        if hasattr(self, "git_tree_splitter"):
+            QTimer.singleShot(0, self._adapt_git_layout)
+
+    def _adapt_git_layout(self) -> None:
+        if not hasattr(self, "git_tree_splitter"):
+            return
+        narrow = self.git_tree_splitter.width() < 700
+        if hasattr(self, "git_page_subtitle"):
+            self.git_page_subtitle.setText(
+                "主线与尝试方向"
+                if narrow
+                else "记录主线与被取消的尝试方向 · 不等同于 Git 分支"
+            )
+        orientation = Qt.Orientation.Vertical if narrow else Qt.Orientation.Horizontal
+        if self.git_tree_splitter.orientation() == orientation:
+            return
+        self.git_tree_splitter.setOrientation(orientation)
+        if narrow:
+            self.git_tree_splitter.setStretchFactor(0, 1)
+            self.git_tree_splitter.setStretchFactor(1, 1)
+            self.git_details.setMinimumWidth(0)
+            self.git_details.setMaximumWidth(16777215)
+            self.git_details_scroll.setMinimumWidth(0)
+            self.git_details_scroll.setMaximumWidth(16777215)
+            self.git_tree_scroll.setMinimumHeight(220)
+            self.git_details_scroll.setMinimumHeight(220)
+            split_height = max(440, self.git_tree_splitter.height())
+            self.git_tree_splitter.setSizes([int(split_height * 0.48), int(split_height * 0.52)])
+        else:
+            self.git_tree_splitter.setStretchFactor(0, 1)
+            self.git_tree_splitter.setStretchFactor(1, 0)
+            self.git_details.setMinimumWidth(260)
+            self.git_details.setMaximumWidth(360)
+            self.git_details_scroll.setMinimumWidth(260)
+            self.git_details_scroll.setMaximumWidth(360)
+            self.git_tree_scroll.setMinimumHeight(0)
+            self.git_details_scroll.setMinimumHeight(0)
+            self.git_tree_splitter.setSizes([1, 300])
+
+    def _build_find_bar(self) -> QFrame:
+        bar = QFrame()
+        bar.setObjectName("FindBar")
+        bar.setVisible(False)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(10, 5, 8, 5)
+        row.setSpacing(6)
+
+        find_label = QLabel("查找")
+        find_label.setObjectName("Overline")
+        row.addWidget(find_label)
+        self.find_input = QLineEdit()
+        self.find_input.setPlaceholderText("查找当前文件")
+        self.find_input.setMinimumWidth(170)
+        self.find_input.textChanged.connect(self._on_find_text_changed)
+        self.find_input.returnPressed.connect(self._find_next)
+        row.addWidget(self.find_input)
+
+        self.replace_input = QLineEdit()
+        self.replace_input.setPlaceholderText("替换为")
+        self.replace_input.setMinimumWidth(150)
+        self.replace_input.returnPressed.connect(self._replace_current)
+        self.replace_input.setVisible(False)
+        row.addWidget(self.replace_input)
+
+        self.find_case_checkbox = QCheckBox("区分大小写")
+        self.find_case_checkbox.toggled.connect(lambda _checked: self._on_find_text_changed(self.find_input.text()))
+        row.addWidget(self.find_case_checkbox)
+        self.find_word_checkbox = QCheckBox("全字匹配")
+        self.find_word_checkbox.toggled.connect(lambda _checked: self._on_find_text_changed(self.find_input.text()))
+        row.addWidget(self.find_word_checkbox)
+
+        previous = QToolButton()
+        previous.setObjectName("IconButton")
+        previous.setText("↑")
+        previous.setToolTip("上一个匹配")
+        previous.clicked.connect(self._find_previous)
+        row.addWidget(previous)
+        following = QToolButton()
+        following.setObjectName("IconButton")
+        following.setText("↓")
+        following.setToolTip("下一个匹配")
+        following.clicked.connect(self._find_next)
+        row.addWidget(following)
+
+        replace = QPushButton("替换")
+        replace.setObjectName("Quiet")
+        replace.clicked.connect(self._replace_current)
+        self.replace_button = replace
+        row.addWidget(replace)
+        replace_all = QPushButton("全部替换")
+        replace_all.setObjectName("Quiet")
+        replace_all.clicked.connect(self._replace_all)
+        self.replace_all_button = replace_all
+        row.addWidget(replace_all)
+
+        self.find_status = QLabel("")
+        self.find_status.setObjectName("FindStatus")
+        row.addWidget(self.find_status)
+        row.addStretch(1)
+        close = QToolButton()
+        close.setObjectName("IconButton")
+        close.setText("×")
+        close.setToolTip("关闭查找")
+        close.clicked.connect(self._close_find_bar)
+        row.addWidget(close)
+        return bar
+
+    def _build_bottom_panel(self) -> QTabWidget:
+        tabs = QTabWidget()
+        tabs.setObjectName("BottomTabs")
+        tabs.setDocumentMode(True)
+        tabs.setMaximumHeight(250)
+        tabs.setVisible(False)
+
+        search_page = QWidget()
+        search_layout = QVBoxLayout(search_page)
+        search_layout.setContentsMargins(10, 8, 10, 8)
+        search_layout.setSpacing(6)
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(0, 0, 0, 0)
+        self.workspace_search_input = QLineEdit()
+        self.workspace_search_input.setPlaceholderText("搜索整个项目中的文本")
+        self.workspace_search_input.returnPressed.connect(self._search_workspace)
+        search_row.addWidget(self.workspace_search_input, 1)
+        search_button = QPushButton("搜索")
+        search_button.setObjectName("Primary")
+        search_button.clicked.connect(self._search_workspace)
+        search_row.addWidget(search_button)
+        search_layout.addLayout(search_row)
+        self.workspace_search_results = QTreeWidget()
+        self.workspace_search_results.setHeaderHidden(True)
+        self.workspace_search_results.setRootIsDecorated(False)
+        self.workspace_search_results.itemDoubleClicked.connect(self._open_search_result)
+        search_layout.addWidget(self.workspace_search_results, 1)
+        tabs.addTab(search_page, "搜索")
+
+        terminal_page = QWidget()
+        terminal_layout = QVBoxLayout(terminal_page)
+        terminal_layout.setContentsMargins(0, 0, 0, 0)
+        terminal_layout.setSpacing(0)
+        self.terminal_output = QPlainTextEdit()
+        self.terminal_output.setObjectName("TerminalOutput")
+        self.terminal_output.setReadOnly(True)
+        self.terminal_output.setPlaceholderText("在项目目录中运行命令，输出会保留在当前会话")
+        terminal_layout.addWidget(self.terminal_output, 1)
+        terminal_row = QHBoxLayout()
+        terminal_row.setContentsMargins(0, 0, 0, 0)
+        terminal_row.setSpacing(0)
+        self.terminal_input = QLineEdit()
+        self.terminal_input.setObjectName("TerminalInput")
+        self.terminal_input.setPlaceholderText("输入命令并按 Enter 运行")
+        self.terminal_input.returnPressed.connect(self._run_terminal_command)
+        terminal_row.addWidget(self.terminal_input, 1)
+        run = QPushButton("运行")
+        run.setObjectName("Quiet")
+        run.clicked.connect(self._run_terminal_command)
+        terminal_row.addWidget(run)
+        terminal_layout.addLayout(terminal_row)
+        tabs.addTab(terminal_page, "终端")
+
+        problems_page = QWidget()
+        problems_layout = QVBoxLayout(problems_page)
+        problems_layout.setContentsMargins(0, 0, 0, 0)
+        self.problems_tree = QTreeWidget()
+        self.problems_tree.setHeaderHidden(True)
+        self.problems_tree.setRootIsDecorated(False)
+        self.problems_tree.setMaximumHeight(104)
+        self.problems_tree.setToolTip("双击问题跳转到文件和行列")
+        self.problems_tree.itemDoubleClicked.connect(self._open_problem)
+        problems_layout.addWidget(self.problems_tree)
+        self.problems_output = QPlainTextEdit()
+        self.problems_output.setObjectName("ProblemsOutput")
+        self.problems_output.setReadOnly(True)
+        self.problems_output.setPlaceholderText("任务、终端和 Git 检查产生的问题会显示在这里")
+        problems_layout.addWidget(self.problems_output)
+        tabs.addTab(problems_page, "问题")
+
+        outline_page = QWidget()
+        outline_layout = QVBoxLayout(outline_page)
+        outline_layout.setContentsMargins(10, 8, 10, 8)
+        outline_hint = QLabel("当前文件中的类、函数和主要符号")
+        outline_hint.setObjectName("Hint")
+        outline_layout.addWidget(outline_hint)
+        self.outline_tree = QTreeWidget()
+        self.outline_tree.setHeaderHidden(True)
+        self.outline_tree.setRootIsDecorated(False)
+        self.outline_tree.itemDoubleClicked.connect(self._open_outline_result)
+        outline_layout.addWidget(self.outline_tree, 1)
+        tabs.addTab(outline_page, "大纲")
+        return tabs
 
     def _build_git_page(self) -> QWidget:
         page = QFrame()
@@ -1141,8 +1886,10 @@ class ClientWindow(QMainWindow):
         title_box.setSpacing(2)
         title = QLabel("开发版本树")
         title.setObjectName("AppTitle")
-        subtitle = QLabel("记录主线与被取消的尝试方向 · 不等同于 Git branch")
+        subtitle = QLabel("记录主线与被取消的尝试方向 · 不等同于 Git 分支")
         subtitle.setObjectName("Subtle")
+        subtitle.setToolTip("记录主线与被取消的尝试方向 · 不等同于 Git 分支")
+        self.git_page_subtitle = subtitle
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         header_layout.addLayout(title_box)
@@ -1158,6 +1905,7 @@ class ClientWindow(QMainWindow):
         init = QPushButton("初始化 Git")
         init.setObjectName("GitPrimary")
         init.clicked.connect(self.init_git)
+        self.git_init_button = init
         header_layout.addWidget(init)
         layout.addWidget(header)
 
@@ -1173,12 +1921,15 @@ class ClientWindow(QMainWindow):
         tree_splitter = QSplitter(Qt.Orientation.Horizontal)
         tree_splitter.setChildrenCollapsible(False)
         tree_splitter.setHandleWidth(1)
-        self.git_tree = DevelopmentTreeView()
+        self.git_tree = DevelopmentTreeView(self.project_root / ".research" / "tree_layout.json")
         self.git_tree.node_selected.connect(self._handle_git_node_selected)
         tree_scroll = QScrollArea()
         tree_scroll.setObjectName("TreeScroll")
         tree_scroll.setWidgetResizable(True)
+        tree_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tree_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         tree_scroll.setWidget(self.git_tree)
+        self.git_tree_scroll = tree_scroll
         tree_splitter.addWidget(tree_scroll)
 
         details = QFrame()
@@ -1217,15 +1968,66 @@ class ClientWindow(QMainWindow):
         self.git_retry_button.setEnabled(False)
         self.git_retry_button.clicked.connect(self.retry_selected_node)
         detail_layout.addWidget(self.git_retry_button)
+        changes_label = QLabel("工作区变更")
+        changes_label.setObjectName("Overline")
+        detail_layout.addWidget(changes_label)
+        self.git_changes_tree = QTreeWidget()
+        self.git_changes_tree.setHeaderHidden(True)
+        self.git_changes_tree.setRootIsDecorated(False)
+        self.git_changes_tree.setMaximumHeight(132)
+        self.git_changes_tree.setToolTip("双击文件查看 Git diff")
+        self.git_changes_tree.itemDoubleClicked.connect(self._open_git_change)
+        detail_layout.addWidget(self.git_changes_tree)
+        change_actions = QHBoxLayout()
+        change_actions.setContentsMargins(0, 0, 0, 0)
+        change_actions.setSpacing(6)
+        stage_selected = QPushButton("暂存选中")
+        stage_selected.setObjectName("Quiet")
+        stage_selected.clicked.connect(self.stage_selected_change)
+        change_actions.addWidget(stage_selected)
+        unstage_selected = QPushButton("取消暂存")
+        unstage_selected.setObjectName("Quiet")
+        unstage_selected.clicked.connect(self.unstage_selected_change)
+        change_actions.addWidget(unstage_selected)
+        stage_all = QPushButton("暂存全部")
+        stage_all.setObjectName("Quiet")
+        stage_all.clicked.connect(self.stage_all_changes)
+        change_actions.addWidget(stage_all)
+        detail_layout.addLayout(change_actions)
+        workspace_label = QLabel("Git 状态")
+        workspace_label.setObjectName("Overline")
+        detail_layout.addWidget(workspace_label)
+        self.git_status_output = QPlainTextEdit()
+        self.git_status_output.setObjectName("ProblemsOutput")
+        self.git_status_output.setReadOnly(True)
+        self.git_status_output.setMaximumHeight(92)
+        detail_layout.addWidget(self.git_status_output)
+        self.git_commit_input = QLineEdit()
+        self.git_commit_input.setPlaceholderText("提交说明")
+        self.git_commit_input.returnPressed.connect(self.commit_workspace)
+        detail_layout.addWidget(self.git_commit_input)
+        commit = QPushButton("提交当前工作区")
+        commit.setObjectName("GitPrimary")
+        commit.clicked.connect(self.commit_workspace)
+        detail_layout.addWidget(commit)
         detail_layout.addStretch(1)
         note = QLabel("树上的分支是编码过程中的尝试方向。取消或失败的方向会保留在这里，方便以后回看；只有 Agent 完成的修改才会进入主线。")
         note.setObjectName("Hint")
         note.setWordWrap(True)
         detail_layout.addWidget(note)
-        tree_splitter.addWidget(details)
+        details_scroll = QScrollArea()
+        details_scroll.setObjectName("GitDetailsScroll")
+        details_scroll.setWidgetResizable(True)
+        details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        details_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        details_scroll.setWidget(details)
+        self.git_details = details
+        self.git_details_scroll = details_scroll
+        tree_splitter.addWidget(details_scroll)
         tree_splitter.setSizes([1, 300])
         tree_splitter.setStretchFactor(0, 1)
         tree_splitter.setStretchFactor(1, 0)
+        self.git_tree_splitter = tree_splitter
         layout.addWidget(tree_splitter, 1)
         return page
 
@@ -1327,6 +2129,9 @@ class ClientWindow(QMainWindow):
         self.git_retry_button.setProperty("task_id", node.get("id", ""))
 
     def retry_selected_node(self) -> None:
+        if self.active_task_id:
+            self._append_chat("系统", "当前任务仍在执行，请等待 Agent 完成后再重试其他方向。", "meta")
+            return
         task_id = str(self.git_retry_button.property("task_id") or "")
         if not task_id or not self.ledger.retry_now(task_id):
             return
@@ -1371,7 +2176,76 @@ class ClientWindow(QMainWindow):
         more.setText("…")
         more.setToolTip("Agent 设置")
         header_layout.addWidget(more)
+        more.clicked.connect(self.toggle_summary_settings)
         layout.addWidget(header)
+
+        self.summary_settings_panel = QFrame()
+        self.summary_settings_panel.setObjectName("SummarySettings")
+        self.summary_settings_panel.setVisible(False)
+        settings_layout = QGridLayout(self.summary_settings_panel)
+        settings_layout.setContentsMargins(12, 9, 12, 9)
+        settings_layout.setHorizontalSpacing(8)
+        settings_layout.setVerticalSpacing(6)
+        settings_title = QLabel("会话总结")
+        settings_title.setObjectName("SummarySettingsTitle")
+        settings_layout.addWidget(settings_title, 0, 0, 1, 4)
+        self.summary_enabled_checkbox = QCheckBox("每次编码对话结束自动总结")
+        self.summary_enabled_checkbox.setChecked(self.summary_settings.enabled)
+        self.summary_enabled_checkbox.toggled.connect(lambda _checked: self._persist_summary_settings())
+        settings_layout.addWidget(self.summary_enabled_checkbox, 1, 0, 1, 2)
+        self.summary_state_label = QLabel(self._summary_status_text())
+        self.summary_state_label.setObjectName("SummaryState")
+        settings_layout.addWidget(self.summary_state_label, 1, 2, 1, 2, alignment=Qt.AlignmentFlag.AlignRight)
+        settings_layout.addWidget(QLabel("模型"), 2, 0)
+        self.summary_model_edit = QLineEdit(self.summary_settings.model)
+        self.summary_model_edit.setPlaceholderText("跟随主模型")
+        self.summary_model_edit.setToolTip("留空表示使用主 Agent 模型")
+        self.summary_model_edit.editingFinished.connect(self._persist_summary_settings)
+        settings_layout.addWidget(self.summary_model_edit, 2, 1, 1, 3)
+        settings_layout.addWidget(QLabel("最大输出"), 3, 0)
+        self.summary_tokens_spin = QSpinBox()
+        self.summary_tokens_spin.setRange(200, 4000)
+        self.summary_tokens_spin.setSingleStep(100)
+        self.summary_tokens_spin.setValue(self.summary_settings.max_tokens)
+        self.summary_tokens_spin.setSuffix(" tokens")
+        self.summary_tokens_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
+        settings_layout.addWidget(self.summary_tokens_spin, 3, 1)
+        settings_layout.addWidget(QLabel("上下文"), 3, 2)
+        self.summary_context_spin = QSpinBox()
+        self.summary_context_spin.setRange(4000, 50000)
+        self.summary_context_spin.setSingleStep(1000)
+        self.summary_context_spin.setValue(self.summary_settings.context_chars)
+        self.summary_context_spin.setSuffix(" chars")
+        self.summary_context_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
+        settings_layout.addWidget(self.summary_context_spin, 3, 3)
+        settings_layout.addWidget(QLabel("失败重试"), 4, 0)
+        self.summary_retry_spin = QSpinBox()
+        self.summary_retry_spin.setRange(0, 3)
+        self.summary_retry_spin.setValue(self.summary_settings.retries)
+        self.summary_retry_spin.setSuffix(" times")
+        self.summary_retry_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
+        settings_layout.addWidget(self.summary_retry_spin, 4, 1)
+        summary_note = QLabel("总结失败不会影响代码任务")
+        summary_note.setObjectName("Hint")
+        settings_layout.addWidget(summary_note, 4, 2, 1, 2)
+        settings_layout.addWidget(QLabel("阶段频率"), 5, 0)
+        self.summary_interval_spin = QSpinBox()
+        self.summary_interval_spin.setRange(0, 32)
+        self.summary_interval_spin.setValue(self.summary_settings.interval_turns)
+        self.summary_interval_spin.setSuffix(" turns")
+        self.summary_interval_spin.setSpecialValueText("仅结束")
+        self.summary_interval_spin.setToolTip("每 N 轮 Agent 调用生成一次阶段总结；0 表示只在对话结束时总结")
+        self.summary_interval_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
+        settings_layout.addWidget(self.summary_interval_spin, 5, 1)
+        frequency_note = QLabel("0 = 只在结束时总结")
+        frequency_note.setObjectName("Hint")
+        settings_layout.addWidget(frequency_note, 5, 2, 1, 2)
+        settings_layout.addWidget(QLabel("指令"), 6, 0)
+        self.summary_instruction_edit = QLineEdit(self.summary_settings.instruction)
+        self.summary_instruction_edit.setPlaceholderText("要求总结包含哪些内容")
+        self.summary_instruction_edit.editingFinished.connect(self._persist_summary_settings)
+        settings_layout.addWidget(self.summary_instruction_edit, 6, 1, 1, 3)
+        layout.addWidget(self.summary_settings_panel)
 
         self.chat_scroll = QScrollArea()
         self.chat_scroll.setObjectName("ChatScroll")
@@ -1397,6 +2271,15 @@ class ClientWindow(QMainWindow):
         retry = QLabel("网络重试已开启")
         retry.setObjectName("Hint")
         composer_top.addWidget(retry)
+        self.summary_chip = QLabel(self._summary_status_text())
+        self.summary_chip.setObjectName("Hint")
+        composer_top.addWidget(self.summary_chip)
+        context_button = QToolButton()
+        context_button.setObjectName("IconButton")
+        context_button.setText("@")
+        context_button.setToolTip("引用当前文件或选中代码")
+        context_button.clicked.connect(self._insert_current_file_context)
+        composer_top.addWidget(context_button)
         composer_top.addStretch(1)
         composer_layout.addLayout(composer_top)
 
@@ -1420,12 +2303,36 @@ class ClientWindow(QMainWindow):
         layout.addWidget(composer)
         return chat
 
-    @staticmethod
-    def _field_label(text: str) -> QLabel:
-        label = QLabel(text)
-        label.setObjectName("Subtle")
-        label.setMinimumWidth(44)
-        return label
+    def _summary_status_text(self) -> str:
+        settings = getattr(self, "summary_settings", SummarySettings())
+        if not settings.enabled:
+            return "总结已关闭"
+        return f"总结已开启 · 每{settings.interval_turns}轮" if settings.interval_turns else "总结已开启 · 仅结束"
+
+    def toggle_summary_settings(self) -> None:
+        visible = not self.summary_settings_panel.isVisible()
+        self.summary_settings_panel.setVisible(visible)
+        if visible:
+            self.summary_instruction_edit.setFocus()
+
+    def _persist_summary_settings(self) -> None:
+        if not hasattr(self, "summary_enabled_checkbox"):
+            return
+        self.summary_settings.enabled = self.summary_enabled_checkbox.isChecked()
+        self.summary_settings.model = self.summary_model_edit.text().strip()
+        self.summary_settings.max_tokens = self.summary_tokens_spin.value()
+        self.summary_settings.context_chars = self.summary_context_spin.value()
+        self.summary_settings.retries = self.summary_retry_spin.value()
+        self.summary_settings.interval_turns = self.summary_interval_spin.value()
+        self.summary_settings.instruction = self.summary_instruction_edit.text().strip() or SummarySettings.instruction
+        try:
+            self.summary_settings.save(self.project_root)
+            self.agent.summary_settings = self.summary_settings
+            state = self._summary_status_text()
+            self.summary_state_label.setText(state)
+            self.summary_chip.setText(state)
+        except OSError as exc:
+            self._append_log(f"总结设置保存失败: {exc}")
 
     def _provider_state(self) -> str:
         key = os.getenv("SCIDEV_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -1456,6 +2363,7 @@ class ClientWindow(QMainWindow):
             self.active_task_id = None
             self._set_state(self.chat_status, "任务失败 · 可从历史重试", "StateError")
             self._set_state(self.workspace_state, "● 出错", "StateError")
+            self.problems_output.setPlainText(str(payload.get("error") or "任务失败，未返回详细信息"))
         self._append_log(self._worker_message(event, payload))
         self.refresh_git_status()
         self.refresh_task_history()
@@ -1469,6 +2377,21 @@ class ClientWindow(QMainWindow):
         widget.style().polish(widget)
 
     def _handle_agent_event(self, event: str, payload: dict[str, Any]) -> None:
+        if event == "summary_started":
+            turn = payload.get("turn")
+            label = f"第 {turn} 轮阶段总结" if payload.get("phase") == "checkpoint" and turn else "会话总结"
+            self._append_chat(label, "正在整理本次对话、修改和验证结果…", "meta")
+            self._append_log(f"正在生成{label}")
+        elif event == "summary_completed":
+            turn = payload.get("turn")
+            label = f"第 {turn} 轮阶段总结" if payload.get("phase") == "checkpoint" and turn else "会话总结"
+            self._append_chat(label, str(payload.get("text", "")), "summary")
+            self._append_log(f"{label}已保存: {payload.get('path', '')}")
+        elif event == "summary_failed":
+            turn = payload.get("turn")
+            label = f"第 {turn} 轮阶段总结" if payload.get("phase") == "checkpoint" and turn else "会话总结"
+            self._append_chat(label, f"总结生成失败，但代码任务仍会继续：{payload.get('error', '')}", "meta")
+            self._append_log(f"{label}失败，未影响代码任务")
         if event == "model_call_started":
             self._append_log(f"正在请求模型 · 第 {payload['turn']} 轮")
         elif event == "assistant":
@@ -1482,6 +2405,7 @@ class ClientWindow(QMainWindow):
         elif event == "completed":
             sha = payload.get("git_result_sha") or "无新提交"
             self._append_chat("系统", f"任务完成 · Git commit: {sha[:12]}", "meta")
+            self._refresh_open_file_after_task()
             self.refresh_git_status()
             self._refresh_development_tree()
 
@@ -1506,6 +2430,18 @@ class ClientWindow(QMainWindow):
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
         QTimer.singleShot(0, lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()))
 
+    def _clear_chat_history(self) -> None:
+        while self.chat_layout.count() > 1:
+            item = self.chat_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _set_activity_button(self, index: int) -> None:
+        buttons = getattr(self, "activity_buttons", [])
+        if 0 <= index < len(buttons):
+            buttons[index].setChecked(True)
+
     def refresh_all(self) -> None:
         self.refresh_git_status()
         self.connection_label.setText(self._provider_state())
@@ -1513,83 +2449,1328 @@ class ClientWindow(QMainWindow):
         self._refresh_development_tree()
 
     def refresh_git_status(self) -> None:
-        status = self.git.status().replace("\n", "  ")
-        self.status_branch.setText(f"Git · {status[:80]}")
+        raw_status = self.git.status()
+        if hasattr(self, "git_status_output"):
+            self.git_status_output.setPlainText(raw_status)
+        self._refresh_git_changes()
+        if hasattr(self, "git_init_button"):
+            git_ready = self.git.is_repo()
+            git_available = not raw_status.startswith("Git 不可用")
+            self.git_init_button.setText(
+                "Git 已初始化" if git_ready else ("需安装 Git" if not git_available else "初始化 Git")
+            )
+            self.git_init_button.setEnabled(not git_ready and git_available)
+        if raw_status in {"工作区干净", "未初始化 Git 仓库"} or raw_status.startswith("Git 不可用"):
+            status = raw_status
+        else:
+            change_count = len([line for line in raw_status.splitlines() if line.strip()])
+            status = f"{change_count} 个工作区变更"
+        self.status_branch.setText(f"Git · {status}")
+        self.status_branch.setToolTip(raw_status)
+
+    def _refresh_git_changes(self) -> None:
+        if not hasattr(self, "git_changes_tree"):
+            return
+        selected_path = None
+        selected_item = self.git_changes_tree.currentItem()
+        if selected_item is not None:
+            selected_path = selected_item.data(0, Qt.ItemDataRole.UserRole)
+        self.git_changes_tree.clear()
+        item_to_restore = None
+        for entry in self.git.status_entries():
+            relative = str(entry.get("path", "")).strip('"')
+            code = str(entry.get("code", "  "))
+            if not relative:
+                continue
+            item = QTreeWidgetItem([f"{code}  {relative}"])
+            item.setData(0, Qt.ItemDataRole.UserRole, relative)
+            item.setToolTip(0, "双击查看 diff；可用下方按钮管理暂存区")
+            self.git_changes_tree.addTopLevelItem(item)
+            if selected_path == relative:
+                item_to_restore = item
+        if self.git_changes_tree.topLevelItemCount() == 0:
+            empty = QTreeWidgetItem(["工作区干净"])
+            empty.setFlags(empty.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            self.git_changes_tree.addTopLevelItem(empty)
+        elif item_to_restore is not None:
+            self.git_changes_tree.setCurrentItem(item_to_restore)
+
+    def _selected_git_change_path(self) -> Path | None:
+        item = self.git_changes_tree.currentItem() if hasattr(self, "git_changes_tree") else None
+        raw_path = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
+        if not raw_path:
+            return None
+        target = (self.project_root / str(raw_path)).resolve()
+        return target if target.is_relative_to(self.project_root) else None
+
+    def _open_git_change(self, item: QTreeWidgetItem, _column: int = 0) -> None:
+        raw_path = item.data(0, Qt.ItemDataRole.UserRole)
+        if not raw_path:
+            return
+        target = (self.project_root / str(raw_path)).resolve()
+        if target.exists() and target.is_file():
+            self._open_file(target, preview=False)
+        self._show_diff_for_path(target)
+
+    def stage_selected_change(self) -> None:
+        target = self._selected_git_change_path()
+        if target is None:
+            self._append_log("请先选择一个工作区变更")
+            return
+        try:
+            self.git.stage_path(target)
+            self.refresh_git_status()
+            self._append_log(f"已暂存 {target.relative_to(self.project_root).as_posix()}")
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.problems_output.setPlainText(str(exc))
+            self._append_log(f"暂存失败: {exc}")
+
+    def unstage_selected_change(self) -> None:
+        target = self._selected_git_change_path()
+        if target is None:
+            self._append_log("请先选择一个工作区变更")
+            return
+        try:
+            self.git.unstage_path(target)
+            self.refresh_git_status()
+            self._append_log(f"已取消暂存 {target.relative_to(self.project_root).as_posix()}")
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.problems_output.setPlainText(str(exc))
+            self._append_log(f"取消暂存失败: {exc}")
+
+    def stage_all_changes(self) -> None:
+        try:
+            self.git.stage_all()
+            self.refresh_git_status()
+            self._append_log("已暂存全部工作区变更")
+        except (OSError, RuntimeError) as exc:
+            self.problems_output.setPlainText(str(exc))
+            self._append_log(f"暂存失败: {exc}")
+
+    def _show_diff_for_path(self, path: Path) -> None:
+        path = path.resolve()
+        if not path.is_relative_to(self.project_root):
+            self._append_log("无法查看项目目录之外的 diff")
+            return
+        diff_text = self.git.diff(path)
+        if not diff_text:
+            self._append_log(f"{path.name} 没有未提交的差异")
+            return
+        title = f"差异 · {path.name}"
+        diff_editor = next(
+            (candidate for candidate, label in self._editor_titles.items() if label == title),
+            None,
+        )
+        if diff_editor is None:
+            diff_editor = CodeEditor()
+            self._configure_editor(diff_editor)
+            diff_editor.setReadOnly(True)
+            diff_editor.setProperty("diff_path", str(path))
+            self._editor_titles[diff_editor] = title
+            group = self._active_editor_group or self.editor_tabs
+            index = group.addTab(diff_editor, title)
+            self._install_tab_close_button(group, index, diff_editor)
+            group.setTabToolTip(index, f"Git diff · {path.as_posix()}")
+        diff_editor.setPlainText(diff_text)
+        diff_editor.document().setModified(False)
+        group = self._editor_group_for(diff_editor) or self._active_editor_group or self.editor_tabs
+        self._active_editor_group = group
+        group.setCurrentWidget(diff_editor)
+        self._append_log(f"已打开 {path.name} 的 Git diff")
+
+    def commit_workspace(self) -> None:
+        message = self.git_commit_input.text().strip()
+        if not message:
+            self.git_commit_input.setFocus()
+            self._append_log("请填写提交说明")
+            return
+        try:
+            sha = self.git.commit_changes(message)
+            self.git_commit_input.clear()
+            self._append_log(f"已创建 Git 提交 {sha[:12] if sha else '无变更'}")
+            self.refresh_git_status()
+            self._refresh_development_tree()
+        except Exception as exc:  # noqa: BLE001
+            self.problems_output.setPlainText(str(exc))
+            self._append_log(f"Git 提交失败: {exc}")
+
+    def _configure_editor(self, editor: CodeEditor) -> None:
+        self._editor_highlighters[editor] = PythonHighlighter(editor.document())
+        editor.document().modificationChanged.connect(
+            lambda _changed, target=editor: self._update_editor_tab_for(target)
+        )
+        editor.cursorPositionChanged.connect(
+            lambda target=editor: self._update_cursor_status(target)
+        )
+        editor.textChanged.connect(self._refresh_outline)
+        editor.textChanged.connect(self._refresh_diagnostics)
+        editor.installEventFilter(self)
+
+    def _update_cursor_status(self, editor: CodeEditor | None = None) -> None:
+        if not hasattr(self, "status_position"):
+            return
+        target = editor or self._active_editor()
+        if target is None:
+            self.status_position.setText("Ln 1, Col 1")
+            return
+        cursor = target.textCursor()
+        self.status_position.setText(f"Ln {cursor.blockNumber() + 1}, Col {cursor.columnNumber() + 1}")
+        path = self._editor_paths.get(target)
+        if path is None and target.property("diff_path"):
+            path = Path(str(target.property("diff_path")))
+        if hasattr(self, "status_language"):
+            suffix = path.suffix.lower() if path is not None else ""
+            language = {
+                ".py": "Python",
+                ".js": "JavaScript",
+                ".ts": "TypeScript",
+                ".tsx": "TypeScript React",
+                ".json": "JSON",
+                ".md": "Markdown",
+                ".html": "HTML",
+                ".css": "CSS",
+            }.get(suffix, "Plain Text")
+            self.status_language.setText(language)
+
+    def _active_editor(self) -> CodeEditor | None:
+        group = getattr(self, "_active_editor_group", None) or getattr(self, "editor_tabs", None)
+        editor = group.currentWidget() if group is not None else None
+        return editor if isinstance(editor, CodeEditor) else None
+
+    def _on_editor_tab_changed(self, index: int, group: QTabWidget | None = None) -> None:
+        group = group or self._active_editor_group or self.editor_tabs
+        self._active_editor_group = group
+        widget = group.widget(index) if index >= 0 else None
+        if isinstance(widget, CodeEditor):
+            self.code_editor = widget
+        path = self._editor_paths.get(widget) if widget is not None else None
+        if path is None and widget is not None and widget.property("diff_path"):
+            path = Path(str(widget.property("diff_path")))
+        self.current_file = path
+        if path is not None:
+            relative = path.relative_to(self.project_root).as_posix()
+            self.breadcrumb.setText(f"项目  /  {relative}")
+        else:
+            self.breadcrumb.setText("项目  /  欢迎页")
+        self._update_editor_tab_for(widget)
+        self._update_cursor_status(widget if isinstance(widget, CodeEditor) else None)
+        self._refresh_outline()
+        self._refresh_diagnostics()
+
+    def _update_editor_tab_for(self, editor: QWidget | None = None) -> None:
+        if not hasattr(self, "editor_tabs"):
+            return
+        active_group = getattr(self, "_active_editor_group", None) or self.editor_tabs
+        target = editor or active_group.currentWidget()
+        if target is None:
+            return
+        group = self._editor_group_for(target)
+        if group is None:
+            return
+        index = group.indexOf(target)
+        path = self._editor_paths.get(target)
+        name = path.name if path is not None else self._editor_titles.get(target, "欢迎页")
+        if isinstance(target, QPlainTextEdit) and target.document().isModified() and path is not None:
+            name = "● " + name
+        group.setTabText(index, name)
+
+    def _find_editor(self, path: Path, group: QTabWidget | None = None) -> QWidget | None:
+        target = path.resolve()
+        if group is not None:
+            editors = [group.widget(index) for index in range(group.count())]
+            for editor in editors:
+                if self._editor_paths.get(editor) == target:
+                    return editor
+        else:
+            for editor, editor_path in self._editor_paths.items():
+                if editor_path == target:
+                    return editor
+        return None
+
+    def _show_editor_tab_menu(self, point: QPoint, group: QTabWidget | None = None) -> None:
+        group = group or self._active_editor_group
+        if group is None:
+            return
+        bar = group.tabBar()
+        index = bar.tabAt(point)
+        if index < 0:
+            return
+        widget = group.widget(index)
+        menu = QMenu(self)
+        save = menu.addAction("保存")
+        save.setEnabled(widget in self._editor_paths and isinstance(widget, CodeEditor) and widget.document().isModified())
+        save.triggered.connect(lambda: self._save_editor(widget))
+        menu.addSeparator()
+        close = menu.addAction("关闭")
+        close.triggered.connect(lambda: self._close_editor_tab(index, group))
+        close_others = menu.addAction("关闭其他标签")
+        close_others.triggered.connect(lambda: self._close_other_editor_tabs(index, group))
+        path = self._editor_paths.get(widget)
+        open_side = menu.addAction("在右侧编辑器组打开")
+        open_side.setEnabled(path is not None)
+        open_side.triggered.connect(lambda: self._open_editor_to_side(path))
+        menu.exec(bar.mapToGlobal(point))
+
+    def _save_editor(self, editor: QWidget | None) -> None:
+        group = self._editor_group_for(editor)
+        if editor is None or group is None:
+            self._append_log("当前没有可保存的编辑器")
+            return
+        self._active_editor_group = group
+        if group.currentWidget() is not editor:
+            group.setCurrentWidget(editor)
+        self.save_current_file()
+
+    def _close_other_editor_tabs(self, keep_index: int, group: QTabWidget | None = None) -> None:
+        group = group or self._active_editor_group
+        if group is None:
+            return
+        for index in range(group.count() - 1, -1, -1):
+            if index != keep_index:
+                self._close_editor_tab(index, group)
+
+    def _open_editor_to_side(self, path: Path | None) -> None:
+        if path is None:
+            return
+        if self.secondary_editor_tabs is None:
+            self.secondary_editor_tabs = self._create_editor_group()
+            self.editor_splitter.addWidget(self.secondary_editor_tabs)
+            self.editor_splitter.setSizes([1, 1])
+        self.secondary_editor_tabs.setVisible(True)
+        self._open_file(path, preview=False, group=self.secondary_editor_tabs)
+
+    def _current_editor_location(self) -> tuple[Path, int, int] | None:
+        editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if editor is None or path is None:
+            return None
+        cursor = editor.textCursor()
+        return path, cursor.blockNumber() + 1, cursor.columnNumber() + 1
+
+    @staticmethod
+    def _symbol_at_cursor(editor: CodeEditor | None) -> str | None:
+        if editor is None:
+            return None
+        line = editor.textCursor().block().text()
+        position = editor.textCursor().positionInBlock()
+        for match in re.finditer(r"\b[A-Za-z_]\w*\b", line):
+            if match.start() <= position <= match.end():
+                return match.group(0)
+        return None
+
+    def _remember_navigation(self) -> None:
+        location = self._current_editor_location()
+        if location is None:
+            return
+        if not self._navigation_back or self._navigation_back[-1] != location:
+            self._navigation_back.append(location)
+            self._navigation_back = self._navigation_back[-100:]
+        self._navigation_forward.clear()
+
+    def _open_navigation_location(self, location: tuple[Path, int, int]) -> None:
+        path, line_number, column_number = location
+        if not path.exists():
+            self._append_log(f"导航目标不存在：{path.name}")
+            return
+        self._open_file(path, preview=False)
+        editor = self._active_editor()
+        if editor is not None:
+            self._move_editor_to_location(editor, line_number, column_number)
+            editor.setFocus()
+
+    def _find_symbol_definitions(self, symbol: str) -> list[tuple[Path, int, int]]:
+        definitions: list[tuple[Path, int, int]] = []
+        pattern = re.compile(
+            rf"^\s*(?:(?:async\s+)?def|class)\s+{re.escape(symbol)}\b|^\s*{re.escape(symbol)}\s*="
+        )
+        for path in self._project_files():
+            if path.suffix.lower() != ".py":
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeError):
+                continue
+            for line_number, line in enumerate(lines, start=1):
+                if pattern.search(line):
+                    match = re.search(rf"\b{re.escape(symbol)}\b", line)
+                    definitions.append((path, line_number, (match.start() + 1) if match else 1))
+        current = self._current_editor_location()
+        if current is not None:
+            current_path = current[0]
+            definitions.sort(key=lambda item: (0 if item[0] == current_path else 1, str(item[0])))
+        return definitions
+
+    def _go_to_definition(self) -> None:
+        symbol = self._symbol_at_cursor(self._active_editor())
+        if not symbol:
+            self._append_log("光标处没有可导航的符号")
+            return
+        definitions = self._find_symbol_definitions(symbol)
+        if not definitions:
+            self._append_log(f"没有找到 {symbol} 的定义")
+            return
+        current = self._current_editor_location()
+        target = definitions[0]
+        if current is not None and len(definitions) > 1 and target[0] == current[0] and target[1] == current[1]:
+            target = definitions[1]
+        if current is not None:
+            self._remember_navigation()
+        self._open_navigation_location(target)
+        self._append_log(f"已跳转到 {symbol} 的定义")
+
+    def _find_symbol_references(self) -> None:
+        symbol = self._symbol_at_cursor(self._active_editor())
+        if not symbol:
+            self._append_log("光标处没有可搜索的符号")
+            return
+        self._workspace_search_whole_word = True
+        self.workspace_search_input.setText(symbol)
+        self._search_workspace()
+        self._append_log(f"已找到 {symbol} 的引用")
+
+    def _navigate_back(self) -> None:
+        if not self._navigation_back:
+            self._append_log("没有可返回的导航位置")
+            return
+        current = self._current_editor_location()
+        target = self._navigation_back.pop()
+        if current is not None:
+            self._navigation_forward.append(current)
+        self._open_navigation_location(target)
+
+    def _navigate_forward(self) -> None:
+        if not self._navigation_forward:
+            self._append_log("没有可前进的导航位置")
+            return
+        current = self._current_editor_location()
+        target = self._navigation_forward.pop()
+        if current is not None:
+            self._navigation_back.append(current)
+        self._open_navigation_location(target)
+
+    def _rename_current_symbol(self) -> None:
+        editor = self._active_editor()
+        symbol = self._symbol_at_cursor(editor)
+        if editor is None or symbol is None:
+            self._append_log("光标处没有可重命名的符号")
+            return
+        replacement, accepted = QInputDialog.getText(self, "重命名符号", f"在当前文件中重命名 {symbol}：", QLineEdit.EchoMode.Normal, symbol)
+        replacement = replacement.strip()
+        if not accepted or replacement == symbol:
+            return
+        if not re.fullmatch(r"[A-Za-z_]\w*", replacement):
+            self._append_log("符号名称必须是合法的 Python 标识符")
+            return
+        cursor = editor.textCursor()
+        position = cursor.position()
+        updated = re.sub(rf"\b{re.escape(symbol)}\b", replacement, editor.toPlainText())
+        editor.setPlainText(updated)
+        cursor = editor.textCursor()
+        cursor.setPosition(min(position, len(updated)))
+        editor.setTextCursor(cursor)
+        self._append_log(f"已在当前文件中重命名 {symbol} → {replacement}，请保存")
+
+    def _format_current_document(self) -> None:
+        editor = self._active_editor()
+        if editor is None or editor.isReadOnly():
+            self._append_log("当前没有可格式化的编辑器")
+            return
+        original = editor.toPlainText()
+        formatted_lines = [line.rstrip() for line in original.splitlines()]
+        formatted = "\n".join(formatted_lines)
+        if formatted and not formatted.endswith("\n"):
+            formatted += "\n"
+        if formatted == original:
+            self._append_log("当前文档无需格式化")
+            return
+        cursor_position = editor.textCursor().position()
+        editor.setPlainText(formatted)
+        cursor = editor.textCursor()
+        cursor.setPosition(min(cursor_position, len(formatted)))
+        editor.setTextCursor(cursor)
+        self._append_log("已清理行尾空格并统一文件末尾换行，请保存")
+
+    def _close_editor_tab(self, index: int, group: QTabWidget | None = None) -> None:
+        group = group or self._active_editor_group
+        if group is None:
+            return
+        widget = group.widget(index)
+        if not isinstance(widget, CodeEditor):
+            return
+        path = self._editor_paths.get(widget)
+        if path is not None and widget.document().isModified():
+            self._append_log(f"{path.name} 有未保存修改，请先按 Ctrl+S")
+            return
+        if widget is self.welcome_editor:
+            self._append_log("欢迎页不能关闭")
+            return
+        if widget is self._preview_editor:
+            self._preview_editor = None
+        self._editor_paths.pop(widget, None)
+        self._editor_titles.pop(widget, None)
+        self._editor_highlighters.pop(widget, None)
+        self._pinned_editors.discard(widget)
+        group.removeTab(index)
+        widget.deleteLater()
+
+    def _on_file_preview(self, index: QModelIndex) -> None:
+        source_index = self.file_proxy.mapToSource(index)
+        path = Path(self.file_model.filePath(source_index))
+        if path.is_file():
+            self._open_file(path, preview=True)
 
     def _on_file_selected(self, index: QModelIndex) -> None:
         source_index = self.file_proxy.mapToSource(index)
         path = Path(self.file_model.filePath(source_index))
         if path.is_file():
-            self._open_file(path)
+            self._open_file(path, preview=False)
 
-    def _open_file(self, path: Path) -> None:
+    def _open_file(self, path: Path, preview: bool = False, group: QTabWidget | None = None) -> None:
         try:
+            path = path.resolve()
+            group = group or self._active_editor_group
+            if group is None:
+                group = self.editor_tabs
+            if not path.is_relative_to(self.project_root):
+                self._append_log("拒绝打开项目目录之外的文件")
+                return
             raw = path.read_bytes()
             if len(raw) > CodingToolbox.MAX_READ_BYTES or b"\x00" in raw:
-                self._show_editor_text(f"无法在编辑器中打开此文件：\n{path.name}\n\n文件过大或为二进制文件。")
+                self._append_log(f"无法打开 {path.name}：文件过大或为二进制文件")
+                return
+            editor = self._find_editor(path, group)
+            if editor is None:
+                if preview and self._preview_editor is not None:
+                    candidate = self._preview_editor
+                    candidate_group = self._editor_group_for(candidate)
+                    if candidate_group is group and isinstance(candidate, CodeEditor) and not candidate.document().isModified():
+                        self._editor_paths.pop(candidate, None)
+                        editor = candidate
+                        self._editor_paths[editor] = path
+                        group.setTabToolTip(group.indexOf(editor), path.as_posix())
+                    else:
+                        editor = None
+                if editor is None:
+                    editor = CodeEditor()
+                    self._configure_editor(editor)
+                    self._editor_paths[editor] = path
+                    tab_index = group.addTab(editor, path.name)
+                    self._install_tab_close_button(group, tab_index, editor)
+                    group.setTabToolTip(tab_index, path.as_posix())
+                editor.setPlainText(raw.decode("utf-8", errors="replace"))
+                editor.document().setModified(False)
+            self._active_editor_group = group
+            index = group.indexOf(editor)
+            group.setCurrentIndex(index)
+            if preview:
+                self._preview_editor = editor
             else:
-                self._show_editor_text(raw.decode("utf-8", errors="replace"))
-            self.current_file = path.resolve()
+                self._pinned_editors.add(editor)
+                if editor is self._preview_editor:
+                    self._preview_editor = None
+            self.code_editor = editor
+            self.current_file = path
             relative = path.relative_to(self.project_root).as_posix()
-            self.editor_tabs.setTabText(0, f"{path.name}")
+            self._update_editor_tab_for(editor)
             self.breadcrumb.setText(f"项目  /  {relative}")
-            self._append_log(f"已打开 {relative}")
+            self._refresh_outline()
+            self._append_log(f"{'预览' if preview else '已打开'} {relative}")
         except OSError as exc:
-            self._show_editor_text(f"读取失败：{exc}")
+            self._append_log(f"读取失败：{exc}")
 
     def _show_welcome(self) -> None:
         self.current_file = None
-        if hasattr(self, "editor_tabs"):
-            self.editor_tabs.setTabText(0, "欢迎页")
+        if hasattr(self, "editor_tabs") and self.welcome_editor is not None:
+            # The welcome page belongs to the primary editor group. Explicitly
+            # activate it so a secondary group's file is never overwritten
+            # when starting a new coding session.
+            self._active_editor_group = self.editor_tabs
+            self.editor_tabs.setCurrentWidget(self.welcome_editor)
+            self.code_editor = self.welcome_editor
+            self.editor_tabs.setTabText(self.editor_tabs.indexOf(self.welcome_editor), "欢迎页")
         if hasattr(self, "breadcrumb"):
-            self.breadcrumb.setText("项目  /  新建编码任务")
-        if hasattr(self, "code_editor"):
+            self.breadcrumb.setText("项目  /  欢迎页")
+        if self.welcome_editor is not None:
             self._show_editor_text(
                 "SciDevHarness Coding Workspace\n"
                 "────────────────────────────────────────\n\n"
-                "在上方填写编码任务，或在右侧直接输入指令。\n\n"
+                "在左侧打开文件开始编辑，或在右侧直接输入指令。\n\n"
                 "Agent 会先读取项目，再通过工具修改代码；网络暂时不可用时，任务会自动排队重试。\n\n"
                 "快捷键：Ctrl + Enter 发送任务    Ctrl + S 保存当前文件"
             )
 
     def _show_editor_text(self, text: str) -> None:
-        self.code_editor.setPlainText(text)
-        self.code_editor.document().setModified(False)
+        editor = self._active_editor() or self.code_editor
+        editor.setPlainText(text)
+        editor.document().setModified(False)
 
     def _update_editor_tab(self) -> None:
-        if self.current_file is None:
+        self._update_editor_tab_for(self._active_editor())
+
+    def _update_command_suggestions(self, text: str) -> None:
+        if not hasattr(self, "command_completer"):
             return
-        name = self.current_file.name
-        if self.code_editor.document().isModified():
-            name = "● " + name
-        self.editor_tabs.setTabText(0, name)
+        if text.lstrip().startswith(">"):
+            self.command_completer.setCompletionPrefix(text.strip())
+            if self.command_completer.completionCount() > 0:
+                self.command_completer.complete()
+            else:
+                self.command_completer.popup().hide()
+        else:
+            self.command_completer.popup().hide()
+
+    def _run_command_completion(self, command: str) -> None:
+        self.command_search.setText(command)
+        self.command_search.setCursorPosition(len(command))
+        self._open_quick_search()
+
+    def _focus_quick_search(self) -> None:
+        self.show_workspace()
+        self.command_search.selectAll()
+        self.command_search.setFocus()
+
+    def _focus_command_palette(self) -> None:
+        self.show_workspace()
+        self.command_search.setText("> ")
+        self.command_search.setCursorPosition(len(self.command_search.text()))
+        self.command_search.setFocus()
+
+    def _project_files(self) -> list[Path]:
+        files: list[Path] = []
+        for root, directories, names in os.walk(self.project_root):
+            directories[:] = [
+                name for name in directories
+                if name not in CodingToolbox.EXCLUDED_NAMES and not (Path(root) / name).is_symlink()
+            ]
+            for name in names:
+                path = Path(root) / name
+                if not path.is_symlink():
+                    files.append(path)
+        return files
+
+    @staticmethod
+    def _parse_quick_open_location(term: str) -> tuple[str, int | None, int | None]:
+        parts = term.rsplit(":", 2)
+        if len(parts) == 3 and parts[-1].isdigit() and parts[-2].isdigit():
+            return parts[0], max(1, int(parts[-2])), max(1, int(parts[-1]))
+        if len(parts) == 2 and parts[-1].isdigit():
+            return parts[0], max(1, int(parts[-1])), None
+        return term, None, None
+
+    def _open_quick_search(self) -> None:
+        term = self.command_search.text().strip()
+        if not term:
+            self._focus_quick_search()
+            return
+        if term.startswith(">"):
+            command = term[1:].strip().casefold()
+            if "terminal" in command or "终端" in command:
+                self._toggle_bottom_panel(1)
+            elif "problem" in command or "问题" in command:
+                self._toggle_bottom_panel(2)
+            elif "search" in command or "搜索" in command:
+                self._show_workspace_search()
+            elif "replace" in command or "替换" in command:
+                self._show_find_bar(True)
+            elif "outline" in command or "大纲" in command:
+                self._show_outline()
+            elif command == "git" or "git" in command:
+                self.show_git()
+            elif "explorer" in command or "资源" in command:
+                self.focus_explorer()
+            else:
+                self._append_log(f"未识别命令: {term[1:].strip()}")
+                return
+            self.command_search.clear()
+            return
+        file_term, line_number, column_number = self._parse_quick_open_location(term)
+        query = file_term.casefold()
+        candidates = self._project_files()
+        ranked: list[tuple[tuple[int, int, str], Path]] = []
+        for path in candidates:
+            relative = path.relative_to(self.project_root).as_posix()
+            filename = path.name.casefold()
+            relative_lower = relative.casefold()
+            if query == filename:
+                score = 0
+            elif query == relative_lower:
+                score = 1
+            elif filename.startswith(query):
+                score = 2
+            elif query in filename:
+                score = 3
+            elif query in relative_lower:
+                score = 4
+            else:
+                continue
+            ranked.append(((score, len(relative), relative_lower), path))
+        if not ranked:
+            self._append_log(f"没有找到文件: {term}")
+            return
+        ranked.sort(key=lambda item: item[0])
+        target = ranked[0][1]
+        self.command_search.clear()
+        self._open_file(target, preview=False)
+        editor = self._active_editor()
+        if editor is not None:
+            if line_number is not None:
+                self._move_editor_to_location(editor, line_number, column_number)
+            editor.setFocus()
+
+    def _show_workspace_search(self) -> None:
+        if hasattr(self, "workspace_stack") and self.workspace_stack.currentWidget() is not self.workspace_page:
+            self.workspace_stack.setCurrentWidget(self.workspace_page)
+        self.bottom_tabs.setCurrentIndex(0)
+        self.bottom_tabs.setVisible(True)
+        self.workspace_search_input.setFocus()
+        self.workspace_search_input.selectAll()
+
+    def _show_outline(self) -> None:
+        if hasattr(self, "workspace_stack") and self.workspace_stack.currentWidget() is not self.workspace_page:
+            self.workspace_stack.setCurrentWidget(self.workspace_page)
+        self._refresh_outline()
+        self.bottom_tabs.setCurrentIndex(3)
+        self.bottom_tabs.setVisible(True)
+        self.outline_tree.setFocus()
+
+    def _refresh_outline(self) -> None:
+        if not hasattr(self, "outline_tree"):
+            return
+        self.outline_tree.clear()
+        editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if editor is None or path is None:
+            return
+        text = editor.toPlainText()
+        count = 0
+
+        def add_symbol(name: str, kind: str, line_number: int, parent: QTreeWidgetItem | None = None) -> QTreeWidgetItem:
+            nonlocal count
+            count += 1
+            item = QTreeWidgetItem([f"{kind}  {name}  ·  {line_number}"])
+            item.setData(0, Qt.ItemDataRole.UserRole, str(path))
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, line_number)
+            if parent is None:
+                self.outline_tree.addTopLevelItem(item)
+            else:
+                parent.addChild(item)
+            return item
+
+        if path.suffix.lower() == ".py":
+            try:
+                syntax_tree = ast.parse(text or "\n")
+            except SyntaxError:
+                syntax_tree = None
+            if syntax_tree is not None:
+                def visit(nodes: list[ast.AST], parent: QTreeWidgetItem | None = None) -> None:
+                    for node in nodes:
+                        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                            kind = "类" if isinstance(node, ast.ClassDef) else "函数"
+                            item = add_symbol(node.name, kind, node.lineno, parent)
+                            visit(getattr(node, "body", []), item)
+
+                visit(syntax_tree.body)
+
+        if count == 0:
+            pattern = re.compile(r"^\s*(?:def|class|function|interface|enum|struct|fn)\s+([A-Za-z_]\w*)")
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                match = pattern.match(line)
+                if match:
+                    add_symbol(match.group(1), "符号", line_number)
+        if count == 0:
+            item = QTreeWidgetItem(["当前文件没有可识别的符号"])
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+
+    def _refresh_diagnostics(self) -> None:
+        if not hasattr(self, "problems_tree"):
+            return
+        self.problems_tree.clear()
+        editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if editor is None or path is None or path.suffix.lower() != ".py":
+            return
+        try:
+            ast.parse(editor.toPlainText() or "\n")
+        except SyntaxError as exc:
+            line_number = max(1, int(exc.lineno or 1))
+            column_number = max(1, int(exc.offset or 1))
+            message = str(exc.msg or "语法错误")
+            item = QTreeWidgetItem([f"{path.name}:{line_number}:{column_number}  {message}"])
+            item.setData(0, Qt.ItemDataRole.UserRole, str(path))
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, line_number)
+            item.setData(0, Qt.ItemDataRole.UserRole + 2, column_number)
+            self.problems_tree.addTopLevelItem(item)
+
+    def _open_problem(self, item: QTreeWidgetItem, _column: int = 0) -> None:
+        raw_path = item.data(0, Qt.ItemDataRole.UserRole)
+        line_number = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        column_number = item.data(0, Qt.ItemDataRole.UserRole + 2)
+        if not raw_path:
+            return
+        self._open_file(Path(str(raw_path)), preview=False)
+        editor = self._active_editor()
+        if editor is not None:
+            self._move_editor_to_location(editor, int(line_number or 1), int(column_number or 1))
+            editor.setFocus()
+
+    def _open_outline_result(self, item: QTreeWidgetItem, _column: int = 0) -> None:
+        raw_path = item.data(0, Qt.ItemDataRole.UserRole)
+        line_number = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if not raw_path or not line_number:
+            return
+        self._open_file(Path(str(raw_path)), preview=False)
+        editor = self._active_editor()
+        if editor is not None:
+            self._move_editor_to_location(editor, int(line_number))
+            editor.setFocus()
+
+    def _search_workspace(self) -> None:
+        query = self.workspace_search_input.text().strip()
+        self.workspace_search_results.clear()
+        if not query:
+            self._append_log("请输入工作区搜索内容")
+            return
+        whole_word = self._workspace_search_whole_word
+        self._workspace_search_whole_word = False
+        query_folded = query.casefold()
+        count = 0
+        for path in self._project_files():
+            if count >= 500:
+                break
+            try:
+                raw = path.read_bytes()
+                if len(raw) > CodingToolbox.MAX_READ_BYTES or b"\x00" in raw:
+                    continue
+                lines = raw.decode("utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            relative = path.relative_to(self.project_root).as_posix()
+            for line_number, line in enumerate(lines, start=1):
+                if whole_word:
+                    matched = re.search(rf"\b{re.escape(query)}\b", line, re.IGNORECASE) is not None
+                else:
+                    matched = query_folded in line.casefold()
+                if not matched:
+                    continue
+                item = QTreeWidgetItem([f"{relative}:{line_number}  {line.strip()[:180]}"])
+                item.setData(0, Qt.ItemDataRole.UserRole, str(path))
+                item.setData(0, Qt.ItemDataRole.UserRole + 1, line_number)
+                self.workspace_search_results.addTopLevelItem(item)
+                count += 1
+                if count >= 500:
+                    break
+        suffix = "（已显示前 500 条）" if count >= 500 else ""
+        self._append_log(f"工作区搜索完成：{count} 条{suffix}")
+
+    def _open_search_result(self, item: QTreeWidgetItem, _column: int = 0) -> None:
+        raw_path = item.data(0, Qt.ItemDataRole.UserRole)
+        line_number = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if not raw_path:
+            return
+        if self._current_editor_location() is not None:
+            self._remember_navigation()
+        self._open_file(Path(str(raw_path)), preview=False)
+        editor = self._active_editor()
+        if editor is None:
+            return
+        self._move_editor_to_location(editor, int(line_number or 1))
+        editor.setFocus()
+
+    @staticmethod
+    def _move_editor_to_location(editor: CodeEditor, line_number: int, column_number: int | None = None) -> None:
+        line_number = max(1, min(line_number, max(1, editor.blockCount())))
+        cursor = editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        for _ in range(max(0, line_number - 1)):
+            cursor.movePosition(QTextCursor.MoveOperation.Down)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)
+        if column_number is None:
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfLine, QTextCursor.MoveMode.KeepAnchor)
+        else:
+            column = min(max(0, column_number - 1), len(cursor.block().text()))
+            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, column)
+        editor.setTextCursor(cursor)
+        editor.ensureCursorVisible()
+
+    def _show_find_bar(self, replace: bool = False) -> None:
+        if hasattr(self, "workspace_stack") and self.workspace_stack.currentWidget() is not self.workspace_page:
+            self.workspace_stack.setCurrentWidget(self.workspace_page)
+        editor = self._active_editor()
+        if editor is None:
+            return
+        self.find_bar.setVisible(True)
+        self.replace_input.setVisible(replace)
+        self.replace_button.setVisible(replace)
+        self.replace_all_button.setVisible(replace)
+        selected = editor.textCursor().selectedText().replace("\u2029", "\n")
+        if selected and "\n" not in selected and not self.find_input.text():
+            self.find_input.setText(selected)
+        self.find_input.setFocus()
+        self.find_input.selectAll()
+
+    def _close_find_bar(self) -> None:
+        self.find_bar.setVisible(False)
+        editor = self._active_editor()
+        if editor is not None:
+            editor.setFocus()
+
+    def _find_flags(self, backward: bool = False) -> QTextDocument.FindFlag:
+        flags = QTextDocument.FindFlag(0)
+        if self.find_case_checkbox.isChecked():
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        if self.find_word_checkbox.isChecked():
+            flags |= QTextDocument.FindFlag.FindWholeWords
+        if backward:
+            flags |= QTextDocument.FindFlag.FindBackward
+        return flags
+
+    def _on_find_text_changed(self, text: str) -> None:
+        if not text:
+            self.find_status.setText("")
+            return
+        self._find_next()
+
+    def _find_next(self) -> None:
+        self._find_in_editor(backward=False)
+
+    def _find_previous(self) -> None:
+        self._find_in_editor(backward=True)
+
+    def _find_in_editor(self, backward: bool) -> None:
+        editor = self._active_editor()
+        term = self.find_input.text()
+        if editor is None or not term:
+            self.find_status.setText("")
+            return
+        flags = self._find_flags(backward)
+        if editor.find(term, flags):
+            self.find_status.setText("已找到")
+            return
+        cursor = editor.textCursor()
+        cursor.clearSelection()
+        cursor.movePosition(
+            QTextCursor.MoveOperation.End if backward else QTextCursor.MoveOperation.Start
+        )
+        editor.setTextCursor(cursor)
+        if editor.find(term, flags):
+            self.find_status.setText("已循环")
+        else:
+            self.find_status.setText("未找到")
+
+    def _replace_current(self) -> None:
+        editor = self._active_editor()
+        term = self.find_input.text()
+        if editor is None or not term:
+            return
+        cursor = editor.textCursor()
+        selected = cursor.selectedText()
+        matches = selected == term if self.find_case_checkbox.isChecked() else selected.casefold() == term.casefold()
+        if not matches:
+            self._find_next()
+            cursor = editor.textCursor()
+        if cursor.hasSelection():
+            cursor.insertText(self.replace_input.text())
+            self.find_status.setText("已替换")
+            return
+        self.find_status.setText("未找到")
+
+    def _replace_all(self) -> None:
+        editor = self._active_editor()
+        term = self.find_input.text()
+        if editor is None or not term:
+            return
+        document = editor.document()
+        cursor = QTextCursor(document)
+        cursor.beginEditBlock()
+        count = 0
+        flags = self._find_flags(False)
+        while True:
+            match = document.find(term, cursor, flags)
+            if match.isNull():
+                break
+            match.insertText(self.replace_input.text())
+            cursor = match
+            count += 1
+        cursor.endEditBlock()
+        self.find_status.setText(f"已替换 {count} 处")
+        editor.setFocus()
+
+    def _show_current_diff(self) -> None:
+        editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if path is None and editor is not None:
+            contextual_path = editor.property("diff_path")
+            if contextual_path:
+                path = Path(str(contextual_path))
+        if editor is None or path is None:
+            self._append_log("请先打开一个项目文件")
+            return
+        diff_text = self.git.diff(path)
+        if not diff_text:
+            self._append_log(f"{path.name} 没有未提交的差异")
+            return
+        title = f"差异 · {path.name}"
+        diff_editor = next(
+            (candidate for candidate, label in self._editor_titles.items() if label == title),
+            None,
+        )
+        if diff_editor is None:
+            diff_editor = CodeEditor()
+            self._configure_editor(diff_editor)
+            diff_editor.setReadOnly(True)
+            diff_editor.setProperty("diff_path", str(path))
+            self._editor_titles[diff_editor] = title
+            group = self._active_editor_group or self.editor_tabs
+            index = group.addTab(diff_editor, title)
+            group.setTabToolTip(index, f"Git diff · {path.as_posix()}")
+        diff_editor.setPlainText(diff_text)
+        diff_editor.document().setModified(False)
+        group = self._editor_group_for(diff_editor) or self._active_editor_group or self.editor_tabs
+        self._active_editor_group = group
+        group.setCurrentWidget(diff_editor)
+        self._append_log(f"已打开 {path.name} 的 Git 差异")
+
+    def _toggle_bottom_panel(self, tab_index: int | None = None) -> None:
+        if hasattr(self, "workspace_stack") and self.workspace_stack.currentWidget() is not self.workspace_page:
+            self.workspace_stack.setCurrentWidget(self.workspace_page)
+        if tab_index is not None:
+            if self.bottom_tabs.isVisible() and self.bottom_tabs.currentIndex() == tab_index:
+                self.bottom_tabs.setVisible(False)
+                return
+            self.bottom_tabs.setCurrentIndex(tab_index)
+            self.bottom_tabs.setVisible(True)
+        else:
+            self.bottom_tabs.setVisible(not self.bottom_tabs.isVisible())
+        if self.bottom_tabs.isVisible() and tab_index == 1:
+            self.terminal_input.setFocus()
+
+    def _run_terminal_command(self) -> None:
+        command = self.terminal_input.text().strip()
+        if not command:
+            return
+        if self.terminal_process is not None and self.terminal_process.state() != QProcess.ProcessState.NotRunning:
+            self._append_terminal_output("\n[已有命令正在运行]\n")
+            return
+        if not self.bottom_tabs.isVisible() or self.bottom_tabs.currentIndex() != 1:
+            self._toggle_bottom_panel(1)
+        self.terminal_input.clear()
+        self._append_terminal_output(f"\n$ {command}\n")
+        self._terminal_buffer = ""
+        process = QProcess(self)
+        self.terminal_process = process
+        process.setWorkingDirectory(str(self.terminal_cwd))
+        process.readyReadStandardOutput.connect(self._read_terminal_output)
+        process.readyReadStandardError.connect(self._read_terminal_output)
+        process.finished.connect(self._terminal_finished)
+        process.errorOccurred.connect(
+            lambda error: self._append_terminal_output(f"\n[进程错误: {error.name}]\n")
+        )
+        environment = QProcessEnvironment.systemEnvironment()
+        if os.name == "nt":
+            environment.insert("PYTHONUTF8", "1")
+            environment.insert("PYTHONIOENCODING", "utf-8")
+        process.setProcessEnvironment(environment)
+        if os.name == "nt":
+            # QProcess quotes each argument for CreateProcess. Passing the
+            # whole command as the final ``cmd /c`` argument therefore turns
+            # embedded quotes into literal backslashes on Windows. Use the
+            # raw-command overload so quoted executable paths work correctly.
+            shell = os.environ.get("COMSPEC", "cmd.exe")
+            process.startCommand(f'"{shell}" /d /c chcp 65001>nul & {command}')
+        else:
+            process.start(os.environ.get("SHELL", "/bin/sh"), ["-lc", command])
+        self.ledger.append(
+            "terminal_command",
+            {
+                "command": command,
+                "cwd": self.terminal_cwd.relative_to(self.project_root).as_posix() or ".",
+            },
+        )
+
+    def _read_terminal_output(self) -> None:
+        process = self.terminal_process
+        if process is None:
+            return
+        output = self._decode_terminal_bytes(bytes(process.readAllStandardOutput()))
+        output += self._decode_terminal_bytes(bytes(process.readAllStandardError()))
+        if output:
+            self._terminal_buffer += output
+            self._append_terminal_output(output)
+
+    @staticmethod
+    def _decode_terminal_bytes(raw: bytes) -> str:
+        if not raw:
+            return ""
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            fallback = "mbcs" if os.name == "nt" else "utf-8"
+            return raw.decode(fallback, errors="replace")
+
+    def _append_terminal_output(self, text: str) -> None:
+        self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.terminal_output.insertPlainText(text)
+        self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _terminal_finished(self, exit_code: int, _status: QProcess.ExitStatus) -> None:
+        self._read_terminal_output()
+        self._append_terminal_output(f"\n[退出码 {exit_code}]\n")
+        if exit_code != 0:
+            self.problems_output.setPlainText(self._terminal_buffer.strip() or f"命令退出码: {exit_code}")
+        self.refresh_git_status()
+        process = self.terminal_process
+        self.terminal_process = None
+        if process is not None:
+            process.deleteLater()
 
     def save_current_file(self) -> None:
-        if self.current_file is None or not self.current_file.is_relative_to(self.project_root):
+        editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if editor is None or path is None or not path.is_relative_to(self.project_root):
             self._append_log("当前没有可保存的项目文件")
             return
         try:
-            relative = self.current_file.relative_to(self.project_root).as_posix()
-            result = self.toolbox.write_file(relative, self.code_editor.toPlainText())
-            self.code_editor.document().setModified(False)
+            relative = path.relative_to(self.project_root).as_posix()
+            result = self.toolbox.write_file(relative, editor.toPlainText())
+            editor.document().setModified(False)
+            self._update_editor_tab_for(editor)
             self._append_log(result)
             self.refresh_git_status()
         except Exception as exc:  # noqa: BLE001
             self._show_message("保存失败", str(exc))
 
-    def submit_questionnaire(self) -> None:
-        goal = self.task_goal.toPlainText().strip()
-        scope = self.task_scope.text().strip()
-        verify = self.task_verify.text().strip()
-        if not goal:
-            self.task_goal.setFocus()
+    def _explorer_path(self, index: QModelIndex | None = None) -> Path | None:
+        target_index = index if index is not None and index.isValid() else self.file_tree.currentIndex()
+        if not target_index.isValid():
+            return self.project_root
+        source_index = self.file_proxy.mapToSource(target_index)
+        path = Path(self.file_model.filePath(source_index)).resolve()
+        return path if path.is_relative_to(self.project_root) else None
+
+    def _prepare_explorer_entry(
+        self,
+        mode: str,
+        parent: Path | None = None,
+        target: Path | None = None,
+    ) -> None:
+        self._explorer_entry_mode = mode
+        self._rename_target = target
+        self._entry_parent = (parent or self.project_root).resolve()
+        if self.new_file_entry.isVisible() and self._explorer_entry_mode == mode:
+            self.new_file_entry.setVisible(False)
             return
-        prompt = f"编码目标：{goal}"
-        if scope:
-            prompt += f"\n范围与约束：{scope}"
-        if verify:
-            prompt += f"\n验收标准：{verify}"
-        self._submit_prompt(prompt)
+        self.new_file_entry.clear()
+        if mode == "folder":
+            self.new_file_entry.setPlaceholderText("输入文件夹名称，回车创建")
+        elif mode == "rename":
+            self.new_file_entry.setText(target.name if target is not None else "")
+            self.new_file_entry.setPlaceholderText("输入新名称，回车确认")
+            self.new_file_entry.selectAll()
+        else:
+            self.new_file_entry.setPlaceholderText("输入相对路径，例如 src/new_module.py，回车创建")
+        self.new_file_entry.setVisible(True)
+        self.new_file_entry.setFocus()
+
+    def start_new_file_entry(self, parent: Path | None = None) -> None:
+        self._prepare_explorer_entry("create", parent=parent)
+
+    def start_new_folder_entry(self, parent: Path | None = None) -> None:
+        self._prepare_explorer_entry("folder", parent=parent)
+
+    def start_rename_entry(self, target: Path | None = None) -> None:
+        target = target or self._explorer_path()
+        if target is None or target == self.project_root or not target.exists():
+            return
+        self._prepare_explorer_entry("rename", target=target)
+
+    def create_new_file(self) -> None:
+        raw_name = self.new_file_entry.text().strip().replace("\\", "/")
+        if not raw_name:
+            self.new_file_entry.setVisible(False)
+            return
+        mode = self._explorer_entry_mode
+        old_target = self._rename_target
+        if mode == "rename" and old_target is not None:
+            target = (old_target.parent / raw_name).resolve()
+        else:
+            target = (self._entry_parent / raw_name).resolve()
+        try:
+            relative = target.relative_to(self.project_root)
+        except ValueError:
+            self._append_log("资源操作失败：路径必须位于项目目录内")
+            return
+        if not relative.parts or relative.parts[0] in CodingToolbox.EXCLUDED_NAMES:
+            self._append_log("资源操作失败：不能操作内部目录")
+            return
+        try:
+            if mode == "rename":
+                if old_target is None or not old_target.exists() or target.exists():
+                    self._append_log("重命名失败：名称无效或目标已存在")
+                    return
+                old_relative = old_target.relative_to(self.project_root).as_posix()
+                old_target.rename(target)
+                self._update_open_paths_after_rename(old_target, target)
+                self._append_log(f"已重命名 {old_relative} → {relative.as_posix()}")
+            elif mode == "folder":
+                if target.exists():
+                    self._append_log("新建文件夹失败：目标已存在")
+                    return
+                target.mkdir(parents=True, exist_ok=False)
+                self._append_log(f"已新建文件夹 {relative.as_posix()}")
+            else:
+                if target.exists():
+                    self._append_log("新建文件失败：文件已存在")
+                    return
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("", encoding="utf-8")
+                self._open_file(target, preview=False)
+                self._append_log(f"已新建 {relative.as_posix()}")
+            self.new_file_entry.clear()
+            self.new_file_entry.setVisible(False)
+            self.refresh_file_tree()
+        except OSError as exc:
+            self._append_log(f"资源操作失败：{exc}")
+
+    def _update_open_paths_after_rename(self, old_target: Path, new_target: Path) -> None:
+        for editor, path in list(self._editor_paths.items()):
+            if path == old_target or old_target in path.parents:
+                updated = new_target / path.relative_to(old_target) if path != old_target else new_target
+                self._editor_paths[editor] = updated
+                group = self._editor_group_for(editor)
+                index = group.indexOf(editor) if group is not None else -1
+                if group is not None and index >= 0:
+                    group.setTabToolTip(index, updated.as_posix())
+                    self._update_editor_tab_for(editor)
+        if self.current_file == old_target or (self.current_file is not None and old_target in self.current_file.parents):
+            self.current_file = new_target / self.current_file.relative_to(old_target) if self.current_file != old_target else new_target
+
+    def _show_explorer_menu(self, point: QPoint) -> None:
+        index = self.file_tree.indexAt(point)
+        # A blank-area context menu must not inherit the previously selected
+        # resource; otherwise Rename/Delete can target the wrong file.
+        path = self._explorer_path(index) if index.isValid() else None
+        if path is not None and index.isValid():
+            self.file_tree.setCurrentIndex(index)
+        base = path if path is not None and path.is_dir() else (path.parent if path is not None else self.project_root)
+        menu = QMenu(self)
+        new_file = menu.addAction("新建文件")
+        new_file.triggered.connect(lambda: self.start_new_file_entry(base))
+        new_folder = menu.addAction("新建文件夹")
+        new_folder.triggered.connect(lambda: self.start_new_folder_entry(base))
+        menu.addSeparator()
+        rename = menu.addAction("重命名")
+        rename.setEnabled(path is not None and path != self.project_root)
+        rename.triggered.connect(lambda: self.start_rename_entry(path))
+        delete = menu.addAction("删除")
+        delete.setEnabled(path is not None and path != self.project_root)
+        delete.triggered.connect(lambda: self.delete_explorer_path(path))
+        menu.addSeparator()
+        open_terminal = menu.addAction("在终端中打开")
+        open_terminal.triggered.connect(lambda: self.open_terminal_at(base))
+        menu.exec(self.file_tree.viewport().mapToGlobal(point))
+
+    def delete_explorer_path(self, target: Path | None) -> None:
+        if target is None:
+            return
+        target = target.resolve()
+        if target == self.project_root or not target.is_relative_to(self.project_root):
+            return
+        if target.name in CodingToolbox.EXCLUDED_NAMES:
+            self._append_log("删除失败：不能操作内部目录")
+            return
+        dirty = [
+            path.name for editor, path in self._editor_paths.items()
+            if (path == target or target in path.parents) and editor.document().isModified()
+        ]
+        if dirty:
+            self._append_log(f"删除失败：存在未保存文件 {', '.join(dirty[:3])}")
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定删除 {target.name} 吗？此操作不可撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+            editors = [
+                (self._editor_group_for(editor), editor)
+                for editor, path in self._editor_paths.items()
+                if path == target or target in path.parents
+            ]
+            for group, editor in editors:
+                if group is not None:
+                    self._close_editor_tab(group.indexOf(editor), group)
+            self.refresh_file_tree()
+            self._append_log(f"已删除 {target.relative_to(self.project_root).as_posix()}")
+        except OSError as exc:
+            self._append_log(f"删除失败：{exc}")
+
+    def open_terminal_at(self, target: Path | None) -> None:
+        if target is None:
+            target = self.project_root
+        target = target.resolve()
+        if not target.is_dir() or not target.is_relative_to(self.project_root):
+            target = self.project_root
+        self.terminal_cwd = target
+        self._toggle_bottom_panel(1)
+        relative = target.relative_to(self.project_root).as_posix() or "."
+        self._append_terminal_output(f"\n[cwd: {relative}]\n")
+        self.terminal_input.setFocus()
+
+    def refresh_file_tree(self) -> None:
+        root_index = self.file_model.setRootPath(str(self.project_root))
+        self.file_tree.setRootIndex(self.file_proxy.mapFromSource(root_index))
+        self._append_log("资源管理器已刷新")
+
+    def _insert_current_file_context(self) -> None:
+        editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if editor is None or path is None:
+            self._append_log("请先在编辑器中打开一个文件")
+            return
+        relative = path.relative_to(self.project_root).as_posix()
+        selected = editor.textCursor().selectedText().replace("\u2029", "\n")[:4000]
+        context = f"\n\n请参考当前文件：`{relative}`"
+        if selected:
+            context += f"\n当前选中代码：\n```\n{selected}\n```"
+        self.chat_input.insertPlainText(context)
+        self.chat_input.setFocus()
+
+    def _prompt_with_editor_context(self, prompt: str) -> str:
+        editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if editor is None or path is None:
+            return prompt
+        relative = path.relative_to(self.project_root).as_posix()
+        selected = editor.textCursor().selectedText().replace("\u2029", "\n")[:2400]
+        context = f"\n\n当前编辑器文件：{relative}（如需修改，请先读取该文件）"
+        if selected:
+            context += f"\n当前选中代码：\n```\n{selected}\n```"
+        return prompt + context
+
+    def _refresh_open_file_after_task(self) -> None:
+        for editor, path in list(self._editor_paths.items()):
+            if not isinstance(editor, CodeEditor):
+                continue
+            if editor.document().isModified():
+                if editor is self._active_editor():
+                    self._append_log(f"Agent 已修改 {path.name}，当前标签有本地未保存内容，未自动覆盖")
+                continue
+            try:
+                raw = path.read_bytes()
+                if b"\x00" not in raw and len(raw) <= CodingToolbox.MAX_READ_BYTES:
+                    editor.setPlainText(raw.decode("utf-8", errors="replace"))
+                    editor.document().setModified(False)
+                    self._update_editor_tab_for(editor)
+            except OSError:
+                continue
 
     def submit_chat(self) -> None:
         prompt = self.chat_input.toPlainText().strip()
@@ -1607,9 +3788,10 @@ class ClientWindow(QMainWindow):
             self.current_session_id = new_id("session")
             self._append_chat("系统", f"已创建会话 {self.current_session_id}", "meta")
         self._append_chat("你", prompt, "user")
+        task_prompt = self._prompt_with_editor_context(prompt)
         self.active_task_id = self.worker.submit(
             "coding",
-            {"session_id": self.current_session_id, "prompt": prompt},
+            {"session_id": self.current_session_id, "prompt": task_prompt},
             max_attempts=6,
         )
         self._set_state(self.chat_status, "排队中 · 等待 Agent", "StateWorking")
@@ -1623,14 +3805,13 @@ class ClientWindow(QMainWindow):
         self.show_workspace()
         self.current_session_id = None
         self._show_welcome()
-        self.task_goal.clear()
-        self.task_scope.clear()
-        self.task_verify.clear()
+        self._clear_chat_history()
         self._append_chat("系统", "已开始新会话。", "meta")
-        self.task_goal.setFocus()
+        self.chat_input.setFocus()
 
     def show_tasks(self) -> None:
         self.show_git()
+        self._set_activity_button(2)
         self._append_log("任务历史已收进开发版本树")
 
     def _clear_task_dialog(self, dialog: QDialog) -> None:
@@ -1658,7 +3839,9 @@ class ClientWindow(QMainWindow):
             self.refresh_task_history()
 
     def show_git(self) -> None:
+        self._set_activity_button(3)
         self.workspace_stack.setCurrentWidget(self.git_page)
+        self._adapt_git_layout()
         self._refresh_development_tree()
         self._append_log("已打开开发版本树")
 
@@ -1672,6 +3855,7 @@ class ClientWindow(QMainWindow):
             self._show_message("Git 错误", str(exc))
 
     def show_workspace(self) -> None:
+        self._set_activity_button(0)
         self.workspace_stack.setCurrentWidget(self.workspace_page)
         self._append_log("已返回编码工作区")
 
@@ -1683,9 +3867,36 @@ class ClientWindow(QMainWindow):
         return self.agent.run(task)
 
     def eventFilter(self, watched: QObject, event) -> bool:  # noqa: ANN001 - Qt event signature.
-        if watched is self.code_editor and event.type() == QEvent.Type.KeyPress:
+        if watched is self.file_tree.viewport() and event.type() == QEvent.Type.MouseButtonDblClick:
+            index = self.file_tree.indexAt(event.position().toPoint())
+            self._on_file_selected(index)
+            return True
+        if isinstance(watched, CodeEditor) and event.type() == QEvent.Type.FocusIn:
+            group = self._editor_group_for(watched)
+            if group is not None:
+                self._active_editor_group = group
+        if isinstance(watched, CodeEditor) and event.type() == QEvent.Type.ContextMenu:
+            menu = watched.createStandardContextMenu()
+            menu.addSeparator()
+            go_to_definition = menu.addAction("转到定义")
+            go_to_definition.triggered.connect(self._go_to_definition)
+            find_references = menu.addAction("查找引用")
+            find_references.triggered.connect(self._find_symbol_references)
+            rename_symbol = menu.addAction("重命名符号")
+            rename_symbol.triggered.connect(self._rename_current_symbol)
+            format_document = menu.addAction("格式化当前文档")
+            format_document.triggered.connect(self._format_current_document)
+            menu.exec(event.globalPos())
+            return True
+        if isinstance(watched, CodeEditor) and event.type() == QEvent.Type.KeyPress:
             if event.key() == Qt.Key.Key_S and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self.save_current_file()
+                return True
+            if event.key() == Qt.Key.Key_W and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self._close_editor_tab(self._active_editor_group.currentIndex() if self._active_editor_group is not None else -1)
+                return True
+            if event.key() == Qt.Key.Key_F2 and not event.modifiers():
+                self._rename_current_symbol()
                 return True
         return super().eventFilter(watched, event)
 
@@ -1694,6 +3905,8 @@ class ClientWindow(QMainWindow):
             event.accept()
             return
         self._closing = True
+        if self.terminal_process is not None and self.terminal_process.state() != QProcess.ProcessState.NotRunning:
+            self.terminal_process.kill()
         self.worker.stop()
         event.accept()
 
@@ -1702,7 +3915,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("SciDevHarness")
     app.setApplicationDisplayName("SciDevHarness")
-    ui_font = QFont("Segoe UI", 10)
+    ui_font = QFont("Microsoft YaHei UI", 10)
     ui_font.setStyleHint(QFont.StyleHint.SansSerif)
     app.setFont(ui_font)
     # Use the application directory so a shortcut or double-click never
