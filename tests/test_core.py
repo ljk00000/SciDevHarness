@@ -8,7 +8,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_core import CodingAgent, CodingToolbox, EventLedger, GitManager, RetryQueue, RetryableError, SummarySettings
+from scidev_core import (
+    CodingAgent,
+    CodingToolbox,
+    EventLedger,
+    GitManager,
+    OpenAICompatibleProvider,
+    RetryQueue,
+    RetryableError,
+    SummarySettings,
+)
 
 
 class FakeCodingProvider:
@@ -162,6 +171,76 @@ class CoreTests(unittest.TestCase):
             toolbox = CodingToolbox(root, EventLedger(root))
             with self.assertRaises(Exception):
                 toolbox.read_file("../outside.txt")
+
+    def test_text_tool_call_fallback_only_accepts_declared_tools(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://localhost:11434/v1",
+            "ollama",
+            "qwen-test",
+            text_tool_call_fallback=True,
+        )
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                        "required": ["path", "content"],
+                    },
+                },
+            }
+        ]
+        message = {
+            "role": "assistant",
+            "content": (
+                "我会调用工具。\n"
+                '```json\n{"name":"write_file","arguments":{"path":"hello.py","content":"print(1)"}}\n```\n'
+                "```python\nprint(1)\n```"
+            ),
+        }
+        normalized = provider._coerce_text_tool_calls(message, tools)
+        self.assertEqual(normalized["tool_calls"][0]["function"]["name"], "write_file")
+        self.assertEqual(
+            json.loads(normalized["tool_calls"][0]["function"]["arguments"]),
+            {"path": "hello.py", "content": "print(1)"},
+        )
+        self.assertNotIn('"name":"write_file"', normalized["content"])
+
+        tagged_call = {
+            "role": "assistant",
+            "content": '<tool_call>{"name":"write_file","arguments":{"path":"hello.py","content":"print(2)"}}</tool_call>',
+        }
+        normalized_tagged = provider._coerce_text_tool_calls(tagged_call, tools)
+        self.assertEqual(normalized_tagged["tool_calls"][0]["function"]["name"], "write_file")
+
+        unknown_tool = {
+            "role": "assistant",
+            "content": '```json\n{"name":"delete_everything","arguments":{}}\n```',
+        }
+        self.assertNotIn("tool_calls", provider._coerce_text_tool_calls(unknown_tool, tools))
+
+        missing_argument = {
+            "role": "assistant",
+            "content": '```json\n{"name":"write_file","arguments":{"path":"hello.py"}}\n```',
+        }
+        self.assertNotIn("tool_calls", provider._coerce_text_tool_calls(missing_argument, tools))
+
+        no_arg_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "git_diff",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        ]
+        unexpected_argument = {
+            "role": "assistant",
+            "content": '```json\n{"name":"git_diff","arguments":{"command":"del *"}}\n```',
+        }
+        self.assertNotIn("tool_calls", provider._coerce_text_tool_calls(unexpected_argument, no_arg_tools))
 
     def test_git_probe_is_safe_when_git_cli_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -1,5 +1,7 @@
 # SciDevHarness
 
+版本树使用 Qt Quick/QML 绘制，并通过 PySide6 的 QQuickWidget 嵌入现有桌面客户端；编辑器、文件树和 Agent 面板继续使用 Qt Widgets，因此不需要额外安装前端运行时。
+
 SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照 Codex，重点是让 LLM 直接读取项目、修改代码、执行必要检查并查看 Git diff；暂不包含“运行科研实验”流程。
 
 客户端使用 PySide6/Qt，采用 VSCode + Codex 风格的左侧资源管理器、中间编码工作区和右侧 Agent 对话栏。
@@ -38,6 +40,10 @@ $env:SCIDEV_MODEL="your-model"
 ```
 
 也支持 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `OPENAI_MODEL`。如果只配置 `OPENAI_API_KEY`，地址默认使用 `https://api.openai.com/v1`，模型默认使用 `gpt-5`。
+
+### 本机 Qwen2.5-Coder-7B
+
+已准备 Qwen 官方 GGUF Q4_K_M 量化版（约 4.68GB，Apache-2.0），从 [ModelScope 上的 Qwen GGUF 仓库](https://modelscope.cn/models/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF)下载并导入 Ollama。模型文件位于 `F:\Models\SciDevHarness\Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf`，Ollama 模型名为 `scidev-qwen2.5-coder-7b:q4_k_m`。需要本机安装并启动 Ollama；双击 `start_qwen_local.bat` 可用该模型启动客户端。该入口只在本次客户端进程设置本地 API 地址和工具调用兼容选项，不会改全局环境变量。当前兼容选项仅解析与已声明工具名称、参数匹配的明确 JSON 工具调用。
 
 ## 测试
 

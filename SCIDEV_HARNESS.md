@@ -151,7 +151,7 @@ Git 默认采用“编码任务完成后自动提交，推送由用户决定”�
   └─ Git：代码版本和 diff
 ```
 
-当前实现使用 Python、PySide6/Qt、SQLite、Git CLI 和 OpenAI-compatible HTTP 接口，后续再考虑 PyInstaller 打包和更丰富的 diff 视图。
+当前实现使用 Python、PySide6/Qt、Qt Quick/QML、SQLite、Git CLI 和 OpenAI-compatible HTTP 接口；版本树通过 QQuickWidget 嵌入桌面客户端，不新增前端运行时依赖。后续再考虑 PyInstaller 打包和更丰富的 diff 视图。
 
 ## 7. 后续科研能力
 

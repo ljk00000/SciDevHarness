@@ -6,6 +6,7 @@ import hashlib
 import json
 import difflib
 import os
+import re
 import sqlite3
 import subprocess
 import threading
@@ -564,7 +565,7 @@ class SummarySettings:
 
     enabled: bool = True
     model: str = ""
-    max_tokens: int = 900
+    max_tokens: int = 12000
     context_chars: int = 18000
     retries: int = 2
     interval_turns: int = 4
@@ -596,7 +597,7 @@ class SummarySettings:
         retries = data.get("summary_retries", cls.retries)
         interval_turns = data.get("summary_interval_turns", cls.interval_turns)
         try:
-            max_tokens = max(200, min(4000, int(max_tokens)))
+            max_tokens = max(200, min(32000, int(max_tokens)))
         except (TypeError, ValueError):
             max_tokens = cls.max_tokens
         try:
@@ -641,14 +642,28 @@ class SummarySettings:
 class OpenAICompatibleProvider:
     """OpenAI-compatible Chat Completions adapter with function/tool calling."""
 
-    def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 90.0):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout: float = 90.0,
+        text_tool_call_fallback: bool = False,
+    ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.text_tool_call_fallback = text_tool_call_fallback
 
     def with_model(self, model: str) -> "OpenAICompatibleProvider":
-        return type(self)(self.base_url, self.api_key, model.strip() or self.model, self.timeout)
+        return type(self)(
+            self.base_url,
+            self.api_key,
+            model.strip() or self.model,
+            self.timeout,
+            self.text_tool_call_fallback,
+        )
 
     @classmethod
     def from_env(cls) -> "OpenAICompatibleProvider":
@@ -661,7 +676,88 @@ class OpenAICompatibleProvider:
         model = (os.getenv("SCIDEV_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5").strip()
         if not api_key:
             raise PermanentError("未配置 SCIDEV_API_KEY 或 OPENAI_API_KEY")
-        return cls(base_url, api_key, model)
+        text_tool_call_fallback = os.getenv("SCIDEV_TEXT_TOOL_CALL_FALLBACK", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        return cls(base_url, api_key, model, text_tool_call_fallback=text_tool_call_fallback)
+
+    @staticmethod
+    def _coerce_text_tool_calls(
+        message: dict[str, Any],
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Normalize explicitly tagged or fenced Qwen-style tool JSON when native calls are absent."""
+        content = message.get("content")
+        if not isinstance(content, str) or not content:
+            return message
+
+        allowed: dict[str, tuple[set[str], set[str]]] = {}
+        for tool in tools:
+            function = tool.get("function") if isinstance(tool, dict) else None
+            if not isinstance(function, dict) or not function.get("name"):
+                continue
+            parameters = function.get("parameters") or {}
+            properties = parameters.get("properties") or {}
+            allowed[str(function["name"])] = (
+                set(properties) if isinstance(properties, dict) else set(),
+                set(parameters.get("required") or ()),
+            )
+        if not allowed:
+            return message
+
+        patterns = (
+            re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.IGNORECASE | re.DOTALL),
+            re.compile(r"```json\s*(.*?)```", re.IGNORECASE | re.DOTALL),
+        )
+        matches = sorted(
+            (match for pattern in patterns for match in pattern.finditer(content)),
+            key=lambda match: match.start(),
+        )
+        tool_calls: list[dict[str, Any]] = []
+        consumed_spans: list[tuple[int, int]] = []
+        for match in matches:
+            try:
+                payload = json.loads(match.group(1).strip())
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
+                continue
+            name = payload["name"]
+            arguments = payload.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    continue
+            if not isinstance(arguments, dict) or name not in allowed:
+                continue
+            properties, required = allowed[name]
+            if required - arguments.keys() or arguments.keys() - properties:
+                continue
+            tool_calls.append(
+                {
+                    "id": new_id("call"),
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    },
+                }
+            )
+            consumed_spans.append((match.start(), match.end()))
+
+        if not tool_calls:
+            return message
+        remaining = content
+        for start, end in reversed(consumed_spans):
+            remaining = remaining[:start] + remaining[end:]
+        normalized = dict(message)
+        normalized["content"] = remaining.strip()
+        normalized["tool_calls"] = tool_calls
+        return normalized
 
     def _endpoint(self) -> str:
         if self.base_url.endswith("/chat/completions"):
@@ -687,6 +783,23 @@ class OpenAICompatibleProvider:
         if tools:
             body_data["tools"] = tools
             body_data["tool_choice"] = "auto"
+        if self.text_tool_call_fallback and tools:
+            request_messages = [dict(message) for message in messages]
+            protocol = (
+                "\n\nLocal tool compatibility mode: you MUST use the declared tools for workspace actions. "
+                "Never claim an action is complete until you receive that tool's result. If native tool calls "
+                "are unavailable, emit exactly <tool_call>{\"name\":\"declared_function_name\","
+                "\"arguments\":{...}}</tool_call> with valid JSON, outside Markdown fences."
+            )
+            system_message = next(
+                (message for message in request_messages if message.get("role") == "system"),
+                None,
+            )
+            if system_message is None:
+                request_messages.insert(0, {"role": "system", "content": protocol.strip()})
+            else:
+                system_message["content"] = f"{system_message.get('content') or ''}{protocol}"
+            body_data["messages"] = request_messages
         body = json.dumps(
             body_data,
             ensure_ascii=False,
@@ -719,6 +832,8 @@ class OpenAICompatibleProvider:
             raise PermanentError("Provider 返回格式不包含 choices[0].message") from exc
         if not isinstance(message, dict):
             raise PermanentError("Provider 返回的 message 格式无效")
+        if self.text_tool_call_fallback and tools and not message.get("tool_calls"):
+            message = self._coerce_text_tool_calls(message, tools)
         return message
 
     def call(self, prompt: str, max_tokens: int = 12000) -> str:

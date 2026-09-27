@@ -9,6 +9,7 @@ The coding Agent and its retry/audit services remain UI-independent in
 from __future__ import annotations
 
 import json
+import math
 import os
 import ast
 import re
@@ -17,8 +18,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QDir, QEvent, QModelIndex, QObject, QPoint, QPointF, QProcess, QProcessEnvironment, QRect, QRegularExpression, QStringListModel, Qt, QSortFilterProxyModel, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QKeyEvent, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QShortcut, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
+from PySide6.QtCore import QDir, QEvent, QModelIndex, QObject, QPoint, QPointF, QProcess, QProcessEnvironment, QRect, QRegularExpression, QStringListModel, Qt, QSortFilterProxyModel, QTimer, QUrl, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QKeyEvent, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QShortcut, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -53,53 +54,54 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtQuickWidgets import QQuickWidget
 
 from scidev_core import CodingAgent, CodingToolbox, EventLedger, GitManager, RetryQueue, SummarySettings, new_id
 
 
 THEME = """
 * {
-    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI";
-    font-size: 10pt;
+    font-family: "Segoe UI Variable", "Microsoft YaHei UI", "Segoe UI", "Microsoft YaHei";
+    font-size: 11pt;
 }
 QMainWindow, QWidget#Root {
-    background: #1e1e1e;
-    color: #cccccc;
+    background: #10151b;
+    color: #dce4ed;
 }
 QFrame#TitleBar {
-    background: #181818;
-    border-bottom: 1px solid #2b2b2b;
+    background: #11171e;
+    border-bottom: 1px solid #26313d;
 }
 QFrame#ActivityRail {
-    background: #181818;
-    border-right: 1px solid #2b2b2b;
+    background: #11171e;
+    border-right: 1px solid #26313d;
 }
 QFrame#ExplorerPane {
-    background: #181818;
-    border-right: 1px solid #2b2b2b;
+    background: #11171e;
+    border-right: 1px solid #26313d;
 }
 QFrame#WorkspacePane {
-    background: #1e1e1e;
+    background: #0d1218;
 }
 QFrame#ChatPane {
-    background: #181818;
-    border-left: 1px solid #2b2b2b;
+    background: #11171e;
+    border-left: 1px solid #26313d;
 }
 QFrame#WorkspaceToolbar, QFrame#EditorToolbar {
-    background: #1e1e1e;
-    border-bottom: 1px solid #2b2b2b;
+    background: #0d1218;
+    border-bottom: 1px solid #222d38;
 }
 QFrame#ChatHeader {
-    background: #181818;
-    border-bottom: 1px solid #2b2b2b;
+    background: #11171e;
+    border-bottom: 1px solid #26313d;
 }
 QFrame#Composer {
-    background: #181818;
-    border-top: 1px solid #2b2b2b;
+    background: #11171e;
+    border-top: 1px solid #26313d;
 }
 QFrame#SummarySettings {
-    background: #222223;
-    border-bottom: 1px solid #3a3a3a;
+    background: #17212b;
+    border-bottom: 1px solid #2b3947;
 }
 QLabel#SummarySettingsTitle { color: #e6e6e6; font-weight: 600; }
 QLabel#SummaryState { color: #73c991; }
@@ -114,52 +116,52 @@ QFrame#SummarySettings QLabel#Hint { color: #9d9d9d; }
 QSpinBox {
     min-height: 26px;
     padding: 2px 5px;
-    background: #1f1f1f;
-    color: #d4d4d4;
-    border: 1px solid #3c3c3c;
-    border-radius: 4px;
+    background: #18212b;
+    color: #dce4ed;
+    border: 1px solid #2d3946;
+    border-radius: 6px;
 }
-QSpinBox:focus { border: 1px solid #007acc; }
+QSpinBox:focus { border: 1px solid #5a9cf5; }
 QFrame#GitPage {
-    background: #1e1e1e;
+    background: #0d1218;
 }
 QFrame#DevelopmentTree {
-    background: #1e1e1e;
+    background: #101820;
     border: none;
 }
 QScrollArea#TreeScroll {
-    background: #1e1e1e;
+    background: #101820;
     border: none;
 }
 QScrollArea#GitDetailsScroll {
-    background: #252526;
+    background: #141b23;
     border: none;
 }
 QScrollArea#GitDetailsScroll > QWidget {
-    background: #252526;
+    background: #141b23;
 }
 QFrame#GitPageHeader {
-    background: #1e1e1e;
-    border-bottom: 1px solid #2b2b2b;
+    background: #11171e;
+    border-bottom: 1px solid #26313d;
 }
 QFrame#GitDetails {
-    background: #252526;
-    border-left: 1px solid #3a3a3a;
+    background: #141b23;
+    border-left: 1px solid #273441;
 }
 QFrame#MetricCard {
-    background: #252526;
-    border: 1px solid #3a3a3a;
-    border-radius: 5px;
+    background: #171f28;
+    border: 1px solid #293643;
+    border-radius: 8px;
 }
 QFrame#GitEntry {
-    background: #252526;
-    border: 1px solid #3f3f46;
-    border-left: 3px solid #4ec9b0;
-    border-radius: 4px;
+    background: #18212b;
+    border: 1px solid #2d3a47;
+    border-left: 3px solid #53cbb7;
+    border-radius: 7px;
 }
 QFrame#GitEntry:hover {
-    background: #2d2d30;
-    border-color: #5a5a64;
+    background: #1d2934;
+    border-color: #435565;
 }
 QLabel#AppTitle {
     color: #f2f2f2;
@@ -172,27 +174,27 @@ QLabel#WindowTitle {
     font-weight: 600;
 }
 QLabel#Subtle, QLabel#Hint, QLabel#StatusText {
-    color: #9d9d9d;
+    color: #a2afbd;
 }
 QLabel#Overline {
-    color: #bdbdbd;
+    color: #a9b6c4;
     font-size: 9pt;
     font-weight: 600;
 }
 QLabel#SectionTitle {
-    color: #eeeeee;
-    font-size: 11pt;
+    color: #edf3f8;
+    font-size: 12pt;
     font-weight: 600;
 }
 QLabel#Logo {
-    background: #0078d4;
+    background: #3278df;
     color: #ffffff;
     border-radius: 5px;
     font-size: 12pt;
     font-weight: 700;
 }
 QLabel#AgentLogo {
-    background: #2f81f7;
+    background: #247f93;
     color: #ffffff;
     border-radius: 5px;
     font-size: 12pt;
@@ -202,39 +204,39 @@ QLabel#StateReady { color: #73c991; font-weight: 600; }
 QLabel#StateWorking { color: #e5c07b; font-weight: 600; }
 QLabel#StateError { color: #f48771; font-weight: 600; }
 QLineEdit, QTextEdit, QPlainTextEdit {
-    background: #1f1f1f;
-    color: #d4d4d4;
-    border: 1px solid #3c3c3c;
-    border-radius: 4px;
+    background: #18212b;
+    color: #dce4ed;
+    border: 1px solid #2d3946;
+    border-radius: 7px;
     padding: 8px 10px;
     selection-background-color: #264f78;
     selection-color: #ffffff;
 }
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
-    border: 1px solid #007acc;
+    border: 1px solid #5a9cf5;
 }
 QLineEdit#CommandSearch {
-    background: #252526;
-    border: 1px solid #3c3c3c;
-    color: #cccccc;
+    background: #19232e;
+    border: 1px solid #2d3a47;
+    color: #dce4ed;
     padding: 7px 10px;
 }
 QTextEdit#ChatInput {
-    background: #252526;
-    border: 1px solid #4a4a4a;
-    border-radius: 5px;
+    background: #18212b;
+    border: 1px solid #344353;
+    border-radius: 9px;
     padding: 8px 9px;
 }
 QPlainTextEdit#CodeEditor {
-    background: #1e1e1e;
-    color: #d4d4d4;
+    background: #0d1218;
+    color: #dce4ed;
     border: none;
     border-radius: 0px;
     padding: 14px 18px;
 }
 QFrame#FindBar {
-    background: #252526;
-    border-bottom: 1px solid #3a3a3a;
+    background: #17212b;
+    border-bottom: 1px solid #2b3947;
 }
 QFrame#FindBar QLineEdit {
     min-height: 25px;
@@ -243,17 +245,17 @@ QFrame#FindBar QLineEdit {
 }
 QLabel#FindStatus { color: #9d9d9d; min-width: 72px; }
 QTabWidget#BottomTabs::pane {
-    border-top: 1px solid #3a3a3a;
-    background: #181818;
+    border-top: 1px solid #273441;
+    background: #11171e;
 }
 QTabWidget#BottomTabs QTabBar::tab {
     min-width: 0px;
     padding: 7px 14px;
-    background: #181818;
+    background: #11171e;
 }
 QPlainTextEdit#TerminalOutput, QPlainTextEdit#ProblemsOutput {
-    background: #181818;
-    color: #d4d4d4;
+    background: #0d1218;
+    color: #dce4ed;
     border: none;
     border-radius: 0px;
     padding: 9px 12px;
@@ -261,196 +263,200 @@ QPlainTextEdit#TerminalOutput, QPlainTextEdit#ProblemsOutput {
     font-size: 9pt;
 }
 QLineEdit#TerminalInput {
-    background: #252526;
+    background: #17212b;
     border: none;
-    border-top: 1px solid #3a3a3a;
+    border-top: 1px solid #2b3947;
     border-radius: 0px;
     padding: 7px 10px;
     font-family: "Cascadia Mono", "Cascadia Code", "Consolas", monospace;
 }
 QMenu {
-    background: #252526;
-    color: #d4d4d4;
-    border: 1px solid #454545;
+    background: #17212b;
+    color: #dce4ed;
+    border: 1px solid #334252;
     padding: 4px;
 }
 QMenu::item { padding: 6px 24px 6px 10px; border-radius: 3px; }
-QMenu::item:selected { background: #094771; color: #ffffff; }
-QMenu::separator { height: 1px; background: #3a3a3a; margin: 4px 8px; }
+QMenu::item:selected { background: #213c5b; color: #ffffff; }
+QMenu::separator { height: 1px; background: #2b3947; margin: 4px 8px; }
 QPushButton, QToolButton {
-    background: #2d2d2d;
-    color: #cccccc;
-    border: 1px solid #454545;
-    border-radius: 4px;
-    padding: 5px 10px;
+    background: #1d2732;
+    color: #dce4ed;
+    border: 1px solid #2e3b49;
+    border-radius: 6px;
+    padding: 6px 11px;
 }
 QPushButton:hover, QToolButton:hover {
-    background: #3a3d41;
-    border-color: #606060;
+    background: #263442;
+    border-color: #405365;
 }
 QPushButton:pressed, QToolButton:pressed {
-    background: #333333;
+    background: #202b36;
 }
 QPushButton:disabled, QToolButton:disabled {
-    background: #242424;
-    color: #666666;
-    border-color: #303030;
+    background: #161c22;
+    color: #65717d;
+    border-color: #222c35;
 }
 QPushButton#Primary {
-    background: #0e639c;
+    background: #3278df;
     color: #ffffff;
-    border: 1px solid #1177bb;
+    border: 1px solid #4b91f2;
     font-weight: 600;
 }
-QPushButton#Primary:hover { background: #1177bb; }
+QPushButton#Primary:hover { background: #4389ed; }
 QPushButton#Primary:disabled, QPushButton#GitPrimary:disabled {
-    background: #242424;
-    color: #666666;
-    border-color: #303030;
+    background: #161c22;
+    color: #65717d;
+    border-color: #222c35;
 }
 QPushButton#GitPrimary {
-    background: #2d7d72;
+    background: #168f80;
     color: #ffffff;
-    border: 1px solid #4ec9b0;
+    border: 1px solid #40bea9;
     font-weight: 600;
 }
-QPushButton#GitPrimary:hover { background: #3b988a; }
+QPushButton#GitPrimary:hover { background: #20a291; }
 QPushButton#GitEntryButton {
     background: transparent;
-    color: #d7fff5;
+    color: #dce9f4;
     border: none;
-    border-radius: 3px;
+    border-radius: 6px;
     text-align: left;
     padding: 8px 10px;
 }
-QPushButton#GitEntryButton:hover { background: #34343a; }
+QPushButton#GitEntryButton:hover { background: #222d38; }
 QPushButton#Quiet, QToolButton#Quiet {
     background: transparent;
     border: 1px solid transparent;
 }
-QPushButton#Quiet:hover, QToolButton#Quiet:hover { background: #2a2d2e; }
+QPushButton#Quiet:hover, QToolButton#Quiet:hover { background: #202a35; }
 QToolButton#ActivityButton {
     background: transparent;
-    color: #858585;
+    color: #8492a1;
     border: 1px solid transparent;
-    border-radius: 0px;
+    border-radius: 9px;
+    font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol";
     font-size: 18pt;
     padding: 5px 0px;
 }
 QToolButton#ActivityButton:hover {
-    background: #2a2d2e;
+    background: #1d2935;
     color: #ffffff;
 }
 QToolButton#ActivityButton:checked {
-    color: #ffffff;
-    border-left: 2px solid #007acc;
+    color: #79b4ff;
+    background: #1a2734;
+    border-left: 2px solid #5a9cf5;
 }
 QToolButton#IconButton {
     background: transparent;
-    color: #bdbdbd;
+    color: #9eacba;
     border: 1px solid transparent;
     padding: 2px 5px;
 }
-QToolButton#IconButton:hover { background: #2a2d2e; color: #ffffff; }
+QToolButton#IconButton:hover { background: #202a35; color: #ffffff; }
 QToolButton#TabCloseButton {
     background: transparent;
-    color: #858585;
+    color: #8492a1;
     border: none;
     border-radius: 3px;
     padding: 0px;
     font-size: 12pt;
 }
-QToolButton#TabCloseButton:hover { background: #3a3d41; color: #ffffff; }
-QToolButton#TabCloseButton:pressed { background: #4a4d51; color: #ffffff; }
+QToolButton#TabCloseButton:hover { background: #293744; color: #ffffff; }
+QToolButton#TabCloseButton:pressed { background: #354554; color: #ffffff; }
 QToolButton#WindowButton {
     background: transparent;
-    color: #bdbdbd;
+    color: #a6b2be;
     border: none;
     border-radius: 0px;
     font-size: 11pt;
     padding: 0px;
 }
-QToolButton#WindowButton:hover { background: #333333; color: #ffffff; }
+QToolButton#WindowButton:hover { background: #26313c; color: #ffffff; }
 QToolButton#WindowClose:hover { background: #c42b1c; color: #ffffff; }
 QTreeView {
-    background: #181818;
-    alternate-background-color: #1b1b1b;
-    color: #cccccc;
+    background: #11171e;
+    alternate-background-color: #151c24;
+    color: #d2dbe5;
     border: none;
     outline: none;
     padding: 5px 0px;
     font-size: 10pt;
 }
 QTreeView::item { padding: 5px 6px; border-radius: 3px; }
-QTreeView::item:hover { background: #2a2d2e; }
-QTreeView::item:selected { background: #37373d; color: #ffffff; }
+QTreeView::item:hover { background: #1d2935; }
+QTreeView::item:selected { background: #20364e; color: #ffffff; }
 QTabWidget::pane {
     border: none;
-    background: #1e1e1e;
+    background: #0d1218;
 }
 QTabBar {
-    background: #181818;
+    background: #11171e;
 }
 QTabBar::tab {
-    background: #181818;
-    color: #969696;
+    background: #11171e;
+    color: #8f9dab;
     border: none;
-    border-right: 1px solid #2b2b2b;
-    padding: 10px 18px;
+    border-right: 1px solid #26313d;
+    padding: 10px 15px;
     min-width: 88px;
 }
 QTabBar::tab:selected {
-    background: #1e1e1e;
-    color: #f2f2f2;
-    border-top: 1px solid #007acc;
+    background: #0d1218;
+    color: #eef4fa;
+    border-top: 2px solid #5a9cf5;
 }
-QSplitter::handle { background: #2b2b2b; }
-QSplitter::handle:hover { background: #3f3f46; }
-QSplitter#Workbench::handle { background: #252526; }
-QSplitter#Workbench::handle:hover { background: #007acc; }
+QSplitter::handle { background: #202a35; }
+QSplitter::handle:hover { background: #41586c; }
+QSplitter#Workbench::handle { background: #202a35; }
+QSplitter#Workbench::handle:hover { background: #5a9cf5; }
 QScrollArea, QScrollArea#ChatScroll, QScrollArea#ChatScroll > QWidget, QWidget#ChatContent {
-    background: #181818;
+    background: #11171e;
     border: none;
 }
 QScrollBar:vertical {
-    background: #181818;
-    width: 10px;
+    background: transparent;
+    width: 8px;
     margin: 2px;
 }
-QScrollBar::handle:vertical { background: #424242; min-height: 26px; border-radius: 4px; }
-QScrollBar::handle:vertical:hover { background: #5a5a5a; }
+QScrollBar::handle:vertical { background: #344251; min-height: 26px; border-radius: 4px; }
+QScrollBar::handle:vertical:hover { background: #506477; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; border: none; }
-QScrollBar:horizontal { background: #1e1e1e; height: 10px; margin: 2px; }
-QScrollBar::handle:horizontal { background: #424242; min-width: 26px; border-radius: 4px; }
+QScrollBar:horizontal { background: transparent; height: 8px; margin: 2px; }
+QScrollBar::handle:horizontal { background: #344251; min-width: 26px; border-radius: 4px; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; border: none; }
 QStatusBar {
-    background: #007acc;
-    color: #ffffff;
+    background: #11171e;
+    color: #a2afbd;
     border: none;
+    border-top: 1px solid #26313d;
+    min-height: 26px;
 }
 QStatusBar::item { border: none; }
-QStatusBar QLabel { color: #ffffff; padding: 0 4px; }
-QStatusBar QLabel#StatusText { color: #ffffff; }
-QFrame#UserBubble { background: #264f78; border: 1px solid #3b6e9e; border-radius: 5px; }
-QFrame#AgentBubble { background: #252526; border: 1px solid #3b3b3b; border-radius: 5px; }
-QFrame#ToolBubble { background: #202b24; border: 1px solid #395241; border-radius: 5px; }
+QStatusBar QLabel { color: #a2afbd; padding: 0 5px; }
+QStatusBar QLabel#StatusText { color: #bdc8d3; }
+QFrame#UserBubble { background: #172d43; border: 1px solid #294866; border-radius: 9px; }
+QFrame#AgentBubble { background: #18212b; border: 1px solid #2a3744; border-radius: 9px; }
+QFrame#ToolBubble { background: #172720; border: 1px solid #2e493a; border-radius: 8px; }
 QFrame#MetaBubble { background: transparent; border: none; }
-QFrame#SummaryBubble { background: #20353d; border: 1px solid #2f6176; border-radius: 5px; }
-QLabel#BubbleRole { color: #a8a8a8; font-size: 9pt; font-weight: 600; }
-QLabel#BubbleText { color: #e1e1e1; font-size: 10pt; }
-QFrame#SummaryBubble QLabel#BubbleRole { color: #7fcef0; }
+QFrame#SummaryBubble { background: #172934; border: 1px solid #2a4c5b; border-radius: 9px; }
+QLabel#BubbleRole { color: #91a0af; font-size: 9pt; font-weight: 600; }
+QLabel#BubbleText { color: #e2e9f0; font-size: 11pt; }
+QFrame#SummaryBubble QLabel#BubbleRole { color: #77cbed; }
 QFrame#SummaryBubble QLabel#BubbleText { color: #e5f7ff; }
-QLabel#ToolText { color: #b7d7bf; font-family: "Cascadia Mono", "Consolas", monospace; font-size: 9pt; }
-QLabel#Chip { color: #9cdcfe; background: #252526; border: 1px solid #3c3c3c; border-radius: 3px; padding: 3px 7px; }
-QLabel#MetricValue { color: #f2f2f2; font-size: 14pt; font-weight: 600; }
-QLabel#GitDetailTitle { color: #f2f2f2; font-size: 12pt; font-weight: 600; }
-QLabel#GitDetailStatus { color: #4ec9b0; font-size: 10pt; font-weight: 600; }
-QLabel#TreeLegend { color: #9d9d9d; }
-QDialog { background: #252526; color: #cccccc; }
-QTreeWidget { background: #1e1e1e; color: #cccccc; border: 1px solid #3c3c3c; }
-QHeaderView::section { background: #252526; color: #cccccc; border: none; border-bottom: 1px solid #3c3c3c; padding: 6px; }
+QLabel#ToolText { color: #b9d4c3; font-family: "Cascadia Mono", "Consolas", monospace; font-size: 9pt; }
+QLabel#Chip { color: #a9d4ff; background: #19232e; border: 1px solid #2d3c4b; border-radius: 6px; padding: 4px 8px; }
+QLabel#MetricValue { color: #eef4fa; font-size: 16pt; font-weight: 600; }
+QLabel#GitDetailTitle { color: #eef4fa; font-size: 14pt; font-weight: 600; }
+QLabel#GitDetailStatus { color: #5bd5bd; font-size: 11pt; font-weight: 600; }
+QLabel#TreeLegend { color: #a2afbd; }
+QDialog { background: #141b23; color: #dce4ed; }
+QTreeWidget { background: #10161d; color: #dce4ed; border: 1px solid #2d3946; border-radius: 6px; }
+QHeaderView::section { background: #18212b; color: #dce4ed; border: none; border-bottom: 1px solid #2d3946; padding: 8px; }
 """
 
 
@@ -487,7 +493,7 @@ class CodeEditor(QPlainTextEdit):
         super().__init__()
         self.setObjectName("CodeEditor")
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        editor_font = QFont("Cascadia Code", 11)
+        editor_font = QFont("Cascadia Code", 12)
         editor_font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(editor_font)
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
@@ -690,7 +696,7 @@ class WindowTitleBar(QFrame):
         super().mouseDoubleClickEvent(event)
 
 
-class DevelopmentTreeView(QFrame):
+class _LegacyDevelopmentTreeView(QFrame):
     """Paint a readable development-attempt tree without pretending it is Git branches."""
 
     node_selected = Signal(object)
@@ -713,8 +719,20 @@ class DevelopmentTreeView(QFrame):
         self._press_node_offset = QPointF()
         self._drag_mode = "pan"
         self._dragging = False
+        self._hover_node_id: str | None = None
+        self._pulse_phase = 0.0
+        self._animation_timer = QTimer(self)
+        self._animation_timer.setInterval(34)
+        self._animation_timer.timeout.connect(self._tick_animation)
+        self._animation_timer.start()
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self._load_layout()
+
+    def _tick_animation(self) -> None:
+        if not self.isVisible():
+            return
+        self._pulse_phase = (self._pulse_phase + 0.075) % math.tau
+        self.update()
 
     def _load_layout(self) -> None:
         if self._layout_path is None or not self._layout_path.exists():
@@ -771,6 +789,11 @@ class DevelopmentTreeView(QFrame):
         if not main_nodes:
             return {}, {}
         card_width = min(270, max(180, int(self.width() * 0.31)))
+        if self.width() < 620:
+            # Two cards must still fit on opposite sides of the trunk in the
+            # narrow vertical-split layout; otherwise their 2.5D shadows can
+            # visually collide even though the graph geometry is valid.
+            card_width = min(card_width, max(132, int((self.width() - 48) / 2)))
         trunk_x = self.width() // 2
         top = 78
         row_height = 118
@@ -843,16 +866,77 @@ class DevelopmentTreeView(QFrame):
                 return node
         return None
 
+    @staticmethod
+    def _lerp(start: QPointF, end: QPointF, amount: float) -> QPointF:
+        return QPointF(
+            start.x() + (end.x() - start.x()) * amount,
+            start.y() + (end.y() - start.y()) * amount,
+        )
+
+    def _draw_energy_pulse(self, painter: QPainter, point: QPointF, accent: QColor, radius: float = 3.0) -> None:
+        """Draw a small animated light that makes the graph feel alive."""
+        halo_radius = radius * 4.5
+        halo = QRadialGradient(point, halo_radius)
+        halo.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 175))
+        halo.setColorAt(0.45, QColor(accent.red(), accent.green(), accent.blue(), 52))
+        halo.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(halo))
+        painter.drawEllipse(point, halo_radius, halo_radius)
+        painter.setBrush(accent)
+        painter.drawEllipse(point, radius, radius)
+
+    def _draw_node_halo(self, painter: QPainter, point: QPointF, accent: QColor, selected: bool, hovered: bool) -> None:
+        if not selected and not hovered:
+            return
+        phase = (math.sin(self._pulse_phase * 1.35) + 1.0) / 2.0
+        radius = 16.0 + phase * 7.0 if selected else 14.0 + phase * 4.0
+        alpha = int(48 + phase * 32) if selected else int(34 + phase * 22)
+        halo = QRadialGradient(point, radius)
+        halo.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), alpha))
+        halo.setColorAt(0.55, QColor(accent.red(), accent.green(), accent.blue(), alpha // 3))
+        halo.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(halo))
+        painter.drawEllipse(point, radius, radius)
+
     def paintEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(event.rect(), QColor("#1e1e1e"))
+        background = QLinearGradient(0, 0, 0, self.height())
+        background.setColorAt(0.0, QColor("#202a31"))
+        background.setColorAt(0.16, QColor("#1b2329"))
+        background.setColorAt(0.48, QColor("#151a1f"))
+        background.setColorAt(1.0, QColor("#111519"))
+        painter.fillRect(event.rect(), background)
 
-        for x in range(18, self.width(), 32):
-            painter.setPen(QPen(QColor("#242424"), 1))
-            painter.drawLine(x, 48, x, self.height())
-        for y in range(48, self.height(), 32):
+        # A faint horizon glow and perspective grid add depth without competing
+        # with the actual development graph.
+        horizon = 54
+        vanishing_x = self.width() * 0.52
+        horizon_glow = QRadialGradient(QPointF(vanishing_x, horizon), max(220.0, self.width() * 0.62))
+        horizon_glow.setColorAt(0.0, QColor(71, 143, 139, 30))
+        horizon_glow.setColorAt(0.55, QColor(35, 72, 78, 12))
+        horizon_glow.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(horizon_glow))
+        painter.drawEllipse(
+            QPointF(vanishing_x, horizon),
+            max(220.0, self.width() * 0.62),
+            max(220.0, self.width() * 0.62),
+        )
+
+        for x in range(-self.width(), self.width() * 2 + 1, 36):
+            end_x = vanishing_x + (x - vanishing_x) * 0.42
+            painter.setPen(QPen(QColor(107, 131, 139, 20), 1))
+            painter.drawLine(x, horizon, int(end_x), self.height())
+        for index in range(13):
+            ratio = (index / 12.0) ** 1.7
+            y = int(horizon + (self.height() - horizon) * ratio)
+            painter.setPen(QPen(QColor(107, 131, 139, 16 + index), 1))
             painter.drawLine(0, y, self.width(), y)
+        painter.setPen(QPen(QColor(91, 218, 191, 24), 1))
+        painter.drawLine(0, horizon, self.width(), horizon)
 
         cards, dots = self._positions()
         self._hit_boxes = []
@@ -869,12 +953,21 @@ class DevelopmentTreeView(QFrame):
         trunk_x = self.width() // 2
         first_y = dots[main_nodes[0]["id"]][1]
         last_y = dots[main_nodes[-1]["id"]][1]
-        painter.setPen(QPen(QColor("#0d1117"), 10, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        # The trunk is layered to look like a slim illuminated rail floating
+        # above the canvas instead of a flat diagram line.
+        painter.setPen(QPen(QColor(0, 0, 0, 130), 13, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(trunk_x + 5, first_y + 8, trunk_x + 5, last_y + 8)
+        painter.setPen(QPen(QColor("#0b1115"), 11, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(trunk_x, first_y, trunk_x, last_y)
-        painter.setPen(QPen(QColor("#397f72"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setPen(QPen(QColor("#284a45"), 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(trunk_x, first_y, trunk_x, last_y)
+        painter.setPen(QPen(QColor("#5bd9bd"), 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(trunk_x, first_y, trunk_x, last_y)
+        for node in main_nodes:
+            y = dots[node["id"]][1]
+            painter.setPen(QPen(QColor(126, 237, 212, 80), 1))
+            painter.drawLine(trunk_x - 14, y, trunk_x + 14, y)
 
-        main_by_id = {node["id"]: node for node in main_nodes}
         for node in (item for item in self.nodes if item.get("lane") == "attempt"):
             parent = dots.get(node.get("parent_id"), dots[main_nodes[-1]["id"]])
             current = dots[node["id"]]
@@ -882,10 +975,22 @@ class DevelopmentTreeView(QFrame):
             path = QPainterPath()
             path.moveTo(parent[0], parent[1])
             path.cubicTo(parent[0] + side * 46, parent[1], current[0] - side * 36, current[1], current[0], current[1])
-            painter.setPen(QPen(QColor(90, 98, 110, 35), 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            accent = self._accent(node)
+            hovered = str(node["id"]) == self._hover_node_id
+            painter.save()
+            painter.translate(5, 7)
+            painter.setPen(QPen(QColor(0, 0, 0, 120), 10, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawPath(path)
-            painter.setPen(QPen(QColor("#5a626e"), 2))
+            painter.restore()
+            glow_alpha = 70 if hovered else 32
+            painter.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), glow_alpha), 9, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawPath(path)
+            painter.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 150 if hovered else 92), 2.2))
+            painter.drawPath(path)
+            if node.get("status") in {"active", "retry"} or hovered:
+                seed = (sum(ord(char) for char in str(node["id"])) % 100) / 100.0
+                progress = (self._pulse_phase / math.tau * 0.65 + seed) % 1.0
+                self._draw_energy_pulse(painter, path.pointAtPercent(progress), accent, 2.3 if hovered else 1.8)
 
         for node in self.nodes:
             if node["id"] not in dots:
@@ -894,69 +999,107 @@ class DevelopmentTreeView(QFrame):
             rect = cards[node["id"]][2]
             accent = self._accent(node)
             selected = node["id"] == self.selected_id
+            hovered = str(node["id"]) == self._hover_node_id
+            self._draw_node_halo(painter, QPointF(x, y), accent, selected, hovered)
 
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0, 0, 0, 80))
-            painter.drawEllipse(x - 10, y - 7, 20, 20)
-            painter.setBrush(QColor("#1e1e1e"))
-            painter.setPen(QPen(accent, 3))
-            painter.drawEllipse(x - 8, y - 8, 16, 16)
+            painter.setBrush(QColor(0, 0, 0, 110))
+            painter.drawEllipse(x - 12, y - 8, 24, 24)
+            painter.setBrush(QColor("#10171a"))
+            painter.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 230), 3))
+            painter.drawEllipse(x - 9, y - 9, 18, 18)
             painter.setBrush(accent)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(x - 3, y - 3, 6, 6)
+            painter.drawEllipse(x - 4, y - 4, 8, 8)
 
             painter.setPen(Qt.PenStyle.NoPen)
-            for depth, color in ((8, QColor(8, 10, 13, 110)), (5, QColor(15, 20, 24, 170)), (2, QColor(25, 31, 36, 220))):
-                painter.setBrush(color)
-                painter.drawRoundedRect(rect.translated(0, depth), 7, 7)
+            # Offset layers are the visible extrusion under each floating card.
+            for depth in range(10, 0, -1):
+                shade = max(18, 105 - depth * 7)
+                painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), shade))
+                painter.drawRoundedRect(rect.translated(int(depth * 0.65), depth), 8, 8)
+            painter.setBrush(QColor(0, 0, 0, 135))
+            painter.drawRoundedRect(rect.translated(6, 8), 8, 8)
             gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
-            gradient.setColorAt(0.0, QColor("#2a2a2d"))
-            gradient.setColorAt(0.48, QColor("#292d32"))
-            gradient.setColorAt(1.0, QColor("#202328"))
+            if selected:
+                gradient.setColorAt(0.0, QColor("#263f42"))
+                gradient.setColorAt(0.48, QColor("#25363b"))
+                gradient.setColorAt(1.0, QColor("#1b262c"))
+            elif hovered:
+                gradient.setColorAt(0.0, QColor("#303c43"))
+                gradient.setColorAt(0.48, QColor("#2a343a"))
+                gradient.setColorAt(1.0, QColor("#20272d"))
+            else:
+                gradient.setColorAt(0.0, QColor("#2b343b"))
+                gradient.setColorAt(0.48, QColor("#272f35"))
+                gradient.setColorAt(1.0, QColor("#1b2025"))
             painter.setBrush(gradient)
-            painter.setPen(QPen(QColor("#505860" if not selected else accent), 1.2))
-            painter.drawRoundedRect(rect, 7, 7)
-            painter.setPen(QPen(QColor(255, 255, 255, 22), 1))
+            border = accent if selected else QColor("#8bd8d0" if hovered else "#53606a")
+            painter.setPen(QPen(border, 1.4 if selected or hovered else 1.0))
+            painter.drawRoundedRect(rect, 8, 8)
+            painter.setPen(QPen(QColor(255, 255, 255, 38), 1))
             painter.drawLine(rect.left() + 10, rect.top() + 1, rect.right() - 10, rect.top() + 1)
             painter.setBrush(accent)
-            painter.drawRoundedRect(QRect(rect.left(), rect.top(), 3, rect.height()), 2, 2)
+            painter.drawRoundedRect(QRect(rect.left(), rect.top(), 4, rect.height()), 2, 2)
             if node.get("lane") == "attempt":
                 painter.setBrush(QColor(210, 220, 225, 90))
                 for grip_y in (rect.top() + 23, rect.top() + 29, rect.top() + 35):
                     painter.drawEllipse(rect.right() - 14, grip_y, 3, 3)
 
-            text_rect = rect.adjusted(12, 8, -10, -8)
+            status_label = "主线" if node.get("lane") == "main" else {
+                "failed": "失败",
+                "retry": "重试",
+                "active": "进行中",
+            }.get(node.get("status"), "尝试")
+            badge_font = QFont("Microsoft YaHei UI", 8)
+            painter.setFont(badge_font)
+            badge_width = max(34, painter.fontMetrics().horizontalAdvance(status_label) + 14)
+            badge_rect = QRect(rect.right() - badge_width - 10, rect.top() + 8, badge_width, 18)
+            painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 38 if not selected else 62))
+            painter.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 120), 1))
+            painter.drawRoundedRect(badge_rect, 8, 8)
+            painter.setPen(accent)
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, status_label)
+
+            text_rect = QRect(rect.left() + 13, rect.top() + 7, max(40, badge_rect.left() - rect.left() - 20), rect.height() - 14)
             painter.setPen(QColor("#f2f2f2"))
-            title_font = QFont("Segoe UI", 10)
+            title_font = QFont("Microsoft YaHei UI", 9)
             title_font.setWeight(QFont.Weight.DemiBold)
             painter.setFont(title_font)
             title = painter.fontMetrics().elidedText(str(node.get("title", "")), Qt.TextElideMode.ElideRight, text_rect.width())
             painter.drawText(text_rect.left(), text_rect.top() + 14, title)
             painter.setPen(accent)
-            status_font = QFont("Segoe UI", 8)
+            status_font = QFont("Microsoft YaHei UI", 8)
             painter.setFont(status_font)
             painter.drawText(text_rect.left(), text_rect.top() + 33, self._status_text(node))
-            painter.setPen(QColor("#9d9d9d"))
+            painter.setPen(QColor("#aab5ba"))
             meta = str(node.get("meta", ""))
             meta = painter.fontMetrics().elidedText(meta, Qt.TextElideMode.ElideRight, text_rect.width())
             painter.drawText(text_rect.left(), text_rect.top() + 49, meta)
             self._hit_boxes.append((self._screen_rect(rect), node))
 
+        trunk_progress = (self._pulse_phase / math.tau * 0.55 + 0.08) % 1.0
+        trunk_point = self._lerp(QPointF(trunk_x, first_y), QPointF(trunk_x, last_y), trunk_progress)
+        self._draw_energy_pulse(painter, trunk_point, QColor("#75f2d2"), 2.7)
+
         painter.restore()
-        painter.setPen(QColor("#c5c5c5"))
-        header_font = QFont("Segoe UI", 10)
+        painter.setPen(QColor("#d8f5ed"))
+        header_font = QFont("Microsoft YaHei UI", 10)
         header_font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(header_font)
         painter.drawText(18, 24, "开发尝试树")
         painter.setPen(QColor("#858585"))
-        painter.setFont(QFont("Segoe UI", 9))
+        painter.setFont(QFont("Microsoft YaHei UI", 9))
         helper_rect = QRect(18, 10, max(100, self.width() - 36), 20)
         painter.drawText(
             helper_rect,
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
             f"{int(self._zoom * 100)}%  ·  拖动分支 / 平移画布",
         )
-        painter.drawText(18, 42, "主干 = 当前编码主线  ·  分支 = 已取消、失败或等待中的尝试方向")
+        legend = "主干 = 当前编码主线  ·  分支 = 已取消、失败或等待中的尝试方向"
+        legend_rect = QRect(18, 31, max(100, self.width() - 36), 18)
+        legend = painter.fontMetrics().elidedText(legend, Qt.TextElideMode.ElideRight, legend_rect.width())
+        painter.drawText(legend_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, legend)
 
     def mousePressEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         if event.button() == Qt.MouseButton.LeftButton:
@@ -994,6 +1137,10 @@ class DevelopmentTreeView(QFrame):
             event.accept()
             return
         node = self._node_at(event.position().toPoint())
+        hover_id = str(node["id"]) if node is not None else None
+        if hover_id != self._hover_node_id:
+            self._hover_node_id = hover_id
+            self.update()
         if node and node.get("lane") == "attempt":
             self.setCursor(Qt.CursorShape.SizeAllCursor)
         elif node:
@@ -1001,6 +1148,13 @@ class DevelopmentTreeView(QFrame):
         else:
             self.setCursor(Qt.CursorShape.OpenHandCursor)
         super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        if self._hover_node_id is not None:
+            self._hover_node_id = None
+            self.update()
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1032,6 +1186,176 @@ class DevelopmentTreeView(QFrame):
         self._pan = QPointF(cursor.x() - logical_x * self._zoom, cursor.y() - logical_y * self._zoom)
         self.update()
         event.accept()
+
+
+class DevelopmentTreeView(QQuickWidget):
+    """QML-backed development tree with a Python persistence/compatibility shell."""
+
+    node_selected = Signal(object)
+
+    def __init__(self, layout_path: Path | None = None):
+        super().__init__()
+        self.setObjectName("DevelopmentTree")
+        self.setMinimumHeight(420)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setClearColor(QColor("#101419"))
+        self.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        self.nodes: list[dict[str, Any]] = []
+        self.selected_id: str | None = None
+        self._layout_path = Path(layout_path).resolve() if layout_path is not None else None
+        self._node_offsets: dict[str, QPointF] = {}
+        self._root_item = None
+        self._load_layout()
+
+        qml_path = Path(__file__).resolve().parent / "ui" / "qml" / "DevelopmentTree.qml"
+        self.setSource(QUrl.fromLocalFile(str(qml_path)))
+        root = self.rootObject()
+        if root is not None:
+            self._root_item = root
+            root.nodeSelected.connect(self._on_qml_node_selected)
+            root.nodeMoved.connect(self._on_qml_node_moved)
+            root.setProperty("layoutOffsets", self._qml_offsets())
+
+    @staticmethod
+    def _accent(node: dict[str, Any]) -> QColor:
+        if node.get("lane") == "main":
+            return QColor("#55e3c1")
+        return {
+            "failed": QColor("#ff8978"),
+            "retry": QColor("#f2ca78"),
+            "active": QColor("#70b8ff"),
+        }.get(node.get("status"), QColor("#a7b1b8"))
+
+    @staticmethod
+    def _status_text(node: dict[str, Any]) -> str:
+        if node.get("lane") == "main":
+            return "当前主线"
+        return {
+            "failed": "已取消 / 失败",
+            "retry": "等待重试",
+            "active": "进行中",
+        }.get(node.get("status"), "尝试方向")
+
+    def _load_layout(self) -> None:
+        if self._layout_path is None or not self._layout_path.exists():
+            return
+        try:
+            raw = json.loads(self._layout_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(raw, dict):
+            return
+        for node_id, value in raw.items():
+            if isinstance(value, dict):
+                try:
+                    self._node_offsets[str(node_id)] = QPointF(float(value.get("x", 0)), float(value.get("y", 0)))
+                except (TypeError, ValueError):
+                    continue
+
+    def _save_layout(self) -> None:
+        if self._layout_path is None:
+            return
+        try:
+            self._layout_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                node_id: {"x": round(offset.x(), 1), "y": round(offset.y(), 1)}
+                for node_id, offset in self._node_offsets.items()
+            }
+            self._layout_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            return
+
+    def _qml_offsets(self) -> dict[str, dict[str, float]]:
+        return {
+            node_id: {"x": float(offset.x()), "y": float(offset.y())}
+            for node_id, offset in self._node_offsets.items()
+        }
+
+    def _on_qml_node_selected(self, node_id: str) -> None:
+        self.selected_id = str(node_id)
+        selected = next((node for node in self.nodes if str(node.get("id")) == self.selected_id), None)
+        if selected is not None:
+            self.node_selected.emit(selected)
+
+    def _on_qml_node_moved(self, node_id: str, offset_x: float, offset_y: float) -> None:
+        self._node_offsets[str(node_id)] = QPointF(float(offset_x), float(offset_y))
+        self._save_layout()
+
+    def set_nodes(self, nodes: list[dict[str, Any]]) -> None:
+        self.nodes = nodes
+        ids = {str(node["id"]) for node in nodes}
+        self._node_offsets = {node_id: offset for node_id, offset in self._node_offsets.items() if node_id in ids}
+        if self.selected_id not in ids:
+            self.selected_id = str(nodes[0]["id"]) if nodes else None
+
+        main_count = max(1, sum(node.get("lane") == "main" for node in nodes))
+        attempts_by_parent: dict[str, int] = {}
+        for node in nodes:
+            if node.get("lane") == "attempt":
+                parent_id = str(node.get("parent_id") or "root")
+                attempts_by_parent[parent_id] = attempts_by_parent.get(parent_id, 0) + 1
+        extra_height = sum(max(0, count - 1) * 76 for count in attempts_by_parent.values())
+        offset_bottom = max((max(0, int(offset.y())) for offset in self._node_offsets.values()), default=0)
+        self.setMinimumHeight(max(420, 140 + main_count * 122 + extra_height + offset_bottom))
+
+        if self._root_item is not None:
+            qml_nodes = []
+            for node in nodes:
+                item = dict(node)
+                offset = self._node_offsets.get(str(node["id"]), QPointF())
+                item["offset_x"] = float(offset.x())
+                item["offset_y"] = float(offset.y())
+                qml_nodes.append(item)
+            self._root_item.setProperty("nodes", qml_nodes)
+            self._root_item.setProperty("layoutOffsets", self._qml_offsets())
+            self._root_item.setProperty("selectedId", self.selected_id or "")
+
+        selected = next((node for node in nodes if str(node.get("id")) == self.selected_id), None)
+        if selected is not None:
+            self.node_selected.emit(selected)
+
+    def _positions(self) -> tuple[dict[str, tuple[int, int, QRect]], dict[str, tuple[int, int]]]:
+        """Return the logical geometry used by the QML scene and UI smoke checks."""
+        main_nodes = [node for node in self.nodes if node.get("lane") == "main"]
+        if not main_nodes:
+            return {}, {}
+        card_width = min(270, max(180, int(self.width() * 0.31)))
+        if self.width() < 620:
+            card_width = min(card_width, max(132, int((self.width() - 48) / 2)))
+        trunk_x = self.width() // 2
+        card_height = 68
+        top = 88
+        row_height = 122
+        cards: dict[str, tuple[int, int, QRect]] = {}
+        dots: dict[str, tuple[int, int]] = {}
+        attempts_by_parent: dict[str, int] = {}
+        for node in (item for item in self.nodes if item.get("lane") == "attempt"):
+            parent_id = str(node.get("parent_id") or "root")
+            attempts_by_parent[parent_id] = attempts_by_parent.get(parent_id, 0) + 1
+        main_y: dict[str, int] = {}
+        y = top
+        for node in main_nodes:
+            main_y[node["id"]] = y
+            y += row_height + max(0, attempts_by_parent.get(str(node["id"]), 0) - 1) * 76
+        for node in main_nodes:
+            y = main_y[node["id"]]
+            dots[node["id"]] = (trunk_x, y)
+            card_x = max(12, trunk_x - card_width - 58)
+            cards[node["id"]] = (trunk_x, y, QRect(card_x, y - card_height // 2, card_width, card_height))
+
+        children_count: dict[str, int] = {}
+        for node in (item for item in self.nodes if item.get("lane") == "attempt"):
+            parent_id = str(node.get("parent_id") or main_nodes[-1]["id"])
+            parent_x, parent_y = dots.get(parent_id, dots[main_nodes[-1]["id"]])
+            slot = children_count.get(parent_id, 0)
+            children_count[parent_id] = slot + 1
+            offset = self._node_offsets.get(str(node["id"]), QPointF())
+            dot_x = int(parent_x + 78 + offset.x())
+            dot_y = max(90, int(parent_y + 54 + slot * 76 + offset.y()))
+            card_x = min(self.width() - card_width - 12, dot_x + 24)
+            cards[node["id"]] = (dot_x, dot_y, QRect(card_x, dot_y - card_height // 2, card_width, card_height))
+            dots[node["id"]] = (dot_x, dot_y)
+        return cards, dots
 
 
 class MessageBubble(QFrame):
@@ -1068,7 +1392,7 @@ class ClientWindow(QMainWindow):
         self.setWindowTitle("SciDevHarness — Coding Workspace")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.resize(1500, 920)
-        self.setMinimumSize(1180, 760)
+        self.setMinimumSize(940, 620)
         self.setStyleSheet(THEME)
         self.ledger = EventLedger(self.project_root)
         self.git = GitManager(self.project_root)
@@ -1097,9 +1421,10 @@ class ClientWindow(QMainWindow):
         self._navigation_back: list[tuple[Path, int, int]] = []
         self._navigation_forward: list[tuple[Path, int, int]] = []
         self._workspace_search_whole_word = False
-        self._workbench_user_resized = False
+        self._workbench_user_ratios: tuple[float, float] | None = None
         self._workbench_adapting = False
         self._workbench_adapt_pending = False
+        self._titlebar_compact: bool | None = None
 
         self.agent = CodingAgent(
             self.project_root,
@@ -1246,6 +1571,8 @@ class ClientWindow(QMainWindow):
         layout.addWidget(self._vertical_rule())
         project = QLabel(self.project_root.name)
         project.setObjectName("Subtle")
+        project.setToolTip(str(self.project_root))
+        self.title_project_label = project
         layout.addWidget(project)
 
         search = QLineEdit()
@@ -1272,15 +1599,18 @@ class ClientWindow(QMainWindow):
 
         new_button = QPushButton("新会话")
         new_button.setObjectName("Primary")
+        self.title_new_button = new_button
         new_button.clicked.connect(self.new_coding_task)
         layout.addWidget(new_button)
         git_button = QPushButton("版本树")
         git_button.setObjectName("GitPrimary")
+        self.title_git_button = git_button
         git_button.clicked.connect(self.show_git)
         layout.addWidget(git_button)
         for text, command in (("刷新", self.refresh_all),):
             button = QPushButton(text)
             button.setObjectName("Quiet")
+            self.title_refresh_button = button
             button.clicked.connect(command)
             layout.addWidget(button)
         self.connection_label = QLabel(self._provider_state())
@@ -1367,8 +1697,8 @@ class ClientWindow(QMainWindow):
 
     def _build_left_panel(self) -> QWidget:
         shell = QWidget()
-        shell.setMinimumWidth(340)
-        shell.setMaximumWidth(520)
+        shell.setMinimumWidth(240)
+        shell.setMaximumWidth(480)
         shell.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout = QHBoxLayout(shell)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1376,16 +1706,15 @@ class ClientWindow(QMainWindow):
 
         rail = QFrame()
         rail.setObjectName("ActivityRail")
-        rail.setFixedWidth(70)
+        rail.setFixedWidth(58)
         rail_layout = QVBoxLayout(rail)
         rail_layout.setContentsMargins(0, 10, 0, 8)
         rail_layout.setSpacing(2)
         self.activity_buttons: list[QToolButton] = []
         for index, (symbol, tip, command) in enumerate((
             ("⌂", "资源管理器", self.focus_explorer),
-            ("▣", "文件", self.focus_explorer),
-            ("◌", "任务历史", self.show_tasks),
-            ("⌁", "Git", self.show_git),
+            ("⌕", "搜索项目", self._show_workspace_search),
+            ("⌁", "开发版本树", self.show_git),
         )):
             button = QToolButton()
             button.setObjectName("ActivityButton")
@@ -1394,7 +1723,7 @@ class ClientWindow(QMainWindow):
             button.setCheckable(True)
             button.setAutoExclusive(True)
             button.setChecked(index == 0)
-            button.setFixedHeight(50)
+            button.setFixedHeight(46)
             button.clicked.connect(command)
             rail_layout.addWidget(button)
             self.activity_buttons.append(button)
@@ -1431,7 +1760,8 @@ class ClientWindow(QMainWindow):
         explorer_layout.addWidget(self.new_file_entry)
 
         project_row = QHBoxLayout()
-        project = QLabel(f"⌄  {self.project_root.name.upper()}")
+        project = QLabel(f"⌄  {self.project_root.name}")
+        project.setToolTip(str(self.project_root))
         project.setObjectName("AppTitle")
         project_row.addWidget(project)
         project_row.addStretch(1)
@@ -1560,7 +1890,7 @@ class ClientWindow(QMainWindow):
 
         workspace_toolbar = QFrame()
         workspace_toolbar.setObjectName("WorkspaceToolbar")
-        workspace_toolbar.setFixedHeight(36)
+        workspace_toolbar.setFixedHeight(40)
         toolbar_layout = QHBoxLayout(workspace_toolbar)
         toolbar_layout.setContentsMargins(14, 0, 12, 0)
         self.breadcrumb = QLabel("项目  /  欢迎页")
@@ -1574,7 +1904,7 @@ class ClientWindow(QMainWindow):
 
         editor_toolbar = QFrame()
         editor_toolbar.setObjectName("EditorToolbar")
-        editor_toolbar.setFixedHeight(34)
+        editor_toolbar.setFixedHeight(42)
         editor_layout = QHBoxLayout(editor_toolbar)
         editor_layout.setContentsMargins(14, 0, 8, 0)
         editor_label = QLabel("编辑器")
@@ -1590,31 +1920,23 @@ class ClientWindow(QMainWindow):
         find.setObjectName("Quiet")
         find.clicked.connect(lambda: self._show_find_bar(False))
         editor_layout.addWidget(find)
-        search = QPushButton("搜索")
-        search.setObjectName("Quiet")
-        search.clicked.connect(self._show_workspace_search)
-        editor_layout.addWidget(search)
-        outline = QPushButton("大纲")
-        outline.setObjectName("Quiet")
-        outline.clicked.connect(self._show_outline)
-        editor_layout.addWidget(outline)
         terminal = QPushButton("终端")
         terminal.setObjectName("Quiet")
         terminal.clicked.connect(lambda: self._toggle_bottom_panel(1))
         editor_layout.addWidget(terminal)
-        problems = QPushButton("问题")
-        problems.setObjectName("Quiet")
-        problems.clicked.connect(lambda: self._toggle_bottom_panel(2))
-        editor_layout.addWidget(problems)
-        diff = QPushButton("差异")
-        diff.setObjectName("Quiet")
-        diff.clicked.connect(self._show_current_diff)
-        editor_layout.addWidget(diff)
-        split = QPushButton("分栏")
-        split.setObjectName("Quiet")
-        split.setToolTip("在右侧编辑器组打开当前文件")
-        split.clicked.connect(self._toggle_editor_split)
-        editor_layout.addWidget(split)
+        more = QToolButton()
+        more.setObjectName("Quiet")
+        more.setText("更多")
+        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        editor_menu = QMenu(more)
+        editor_menu.addAction("搜索整个项目", self._show_workspace_search)
+        editor_menu.addAction("文件大纲", self._show_outline)
+        editor_menu.addAction("问题", lambda: self._toggle_bottom_panel(2))
+        editor_menu.addAction("查看当前文件差异", self._show_current_diff)
+        editor_menu.addSeparator()
+        editor_menu.addAction("在右侧分栏打开", self._toggle_editor_split)
+        more.setMenu(editor_menu)
+        editor_layout.addWidget(more)
         layout.addWidget(editor_toolbar)
 
         self.find_bar = self._build_find_bar()
@@ -1644,24 +1966,34 @@ class ClientWindow(QMainWindow):
 
     def _on_workbench_splitter_moved(self, _position: int, _index: int) -> None:
         if not self._workbench_adapting:
-            self._workbench_user_resized = True
+            sizes = self.workbench.sizes()
+            total = sum(sizes)
+            if total > 0 and len(sizes) == 3:
+                self._workbench_user_ratios = (sizes[0] / total, sizes[2] / total)
 
     def _adapt_workbench_layout(self) -> None:
         self._workbench_adapt_pending = False
-        if self._workbench_user_resized or not hasattr(self, "workbench"):
+        if not hasattr(self, "workbench"):
             return
-        total = self.workbench.width()
+        total = self.workbench.width() - self.workbench.handleWidth() * 2
         if total <= 0:
             return
-        left = min(440, max(340, int(total * 0.24)))
-        chat = min(500, max(360, int(total * 0.27)))
+        if self._workbench_user_ratios is None:
+            left = int(total * 0.245)
+            chat = int(total * 0.275)
+        else:
+            left_ratio, chat_ratio = self._workbench_user_ratios
+            left = int(total * left_ratio)
+            chat = int(total * chat_ratio)
+        left = min(440, max(240, left))
+        chat = min(460, max(280, chat))
         center = total - left - chat
-        if center < 420:
-            deficit = 420 - center
-            chat_reduction = min(deficit, max(0, chat - 360))
+        if center < 360:
+            deficit = 360 - center
+            chat_reduction = min(deficit, max(0, chat - 280))
             chat -= chat_reduction
             deficit -= chat_reduction
-            left -= min(deficit, max(0, left - 340))
+            left -= min(deficit, max(0, left - 240))
             center = total - left - chat
         self._workbench_adapting = True
         try:
@@ -1671,11 +2003,27 @@ class ClientWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         super().resizeEvent(event)
+        if hasattr(self, "command_search"):
+            self._adapt_title_bar_layout()
         if hasattr(self, "workbench") and not self._workbench_adapt_pending:
             self._workbench_adapt_pending = True
             QTimer.singleShot(0, self._adapt_workbench_layout)
         if hasattr(self, "git_tree_splitter"):
             QTimer.singleShot(0, self._adapt_git_layout)
+
+    def _adapt_title_bar_layout(self) -> None:
+        compact = self.width() < 1120
+        if self._titlebar_compact == compact:
+            return
+        self._titlebar_compact = compact
+        self.title_project_label.setVisible(not compact)
+        self.command_search.setMinimumWidth(120 if compact else 190)
+        self.command_search.setPlaceholderText("Ctrl+P 搜索或跳转" if compact else "搜索文件、命令或跳转到…")
+        self.title_new_button.setText("新建" if compact else "新会话")
+        self.title_refresh_button.setText("刷新")
+        self.title_new_button.setToolTip("新建编码会话")
+        self.title_refresh_button.setToolTip("刷新项目、任务与 Git 状态")
+        self.title_git_button.setToolTip("打开开发版本树")
 
     def _adapt_git_layout(self) -> None:
         if not hasattr(self, "git_tree_splitter"):
@@ -1685,8 +2033,12 @@ class ClientWindow(QMainWindow):
             self.git_page_subtitle.setText(
                 "主线与尝试方向"
                 if narrow
-                else "记录主线与被取消的尝试方向 · 不等同于 Git 分支"
+                else "主线与尝试方向 · 非 Git 分支"
             )
+        self.git_back_button.setText("返回" if narrow else "返回编码工作区")
+        self.git_refresh_button.setText("刷新" if narrow else "刷新树")
+        if self.git_init_button.text() in {"初始化", "初始化 Git"}:
+            self.git_init_button.setText("初始化" if narrow else "初始化 Git")
         orientation = Qt.Orientation.Vertical if narrow else Qt.Orientation.Horizontal
         if self.git_tree_splitter.orientation() == orientation:
             return
@@ -1886,7 +2238,7 @@ class ClientWindow(QMainWindow):
         title_box.setSpacing(2)
         title = QLabel("开发版本树")
         title.setObjectName("AppTitle")
-        subtitle = QLabel("记录主线与被取消的尝试方向 · 不等同于 Git 分支")
+        subtitle = QLabel("主线与尝试方向 · 非 Git 分支")
         subtitle.setObjectName("Subtle")
         subtitle.setToolTip("记录主线与被取消的尝试方向 · 不等同于 Git 分支")
         self.git_page_subtitle = subtitle
@@ -1897,10 +2249,12 @@ class ClientWindow(QMainWindow):
         back = QPushButton("返回编码工作区")
         back.setObjectName("Quiet")
         back.clicked.connect(self.show_workspace)
+        self.git_back_button = back
         header_layout.addWidget(back)
         refresh = QPushButton("刷新树")
         refresh.setObjectName("Quiet")
         refresh.clicked.connect(self._refresh_development_tree)
+        self.git_refresh_button = refresh
         header_layout.addWidget(refresh)
         init = QPushButton("初始化 Git")
         init.setObjectName("GitPrimary")
@@ -1912,10 +2266,10 @@ class ClientWindow(QMainWindow):
         metrics = QHBoxLayout()
         metrics.setContentsMargins(18, 12, 18, 12)
         metrics.setSpacing(10)
-        self.git_main_value = self._metric_card(metrics, "当前主线", "0")
-        self.git_attempt_value = self._metric_card(metrics, "尝试方向", "0")
-        self.git_failed_value = self._metric_card(metrics, "已取消 / 失败", "0")
-        self.git_head_value = self._metric_card(metrics, "Git HEAD", "暂无")
+        self.git_main_value = self._metric_card(metrics, "主线", "0")
+        self.git_attempt_value = self._metric_card(metrics, "尝试", "0")
+        self.git_failed_value = self._metric_card(metrics, "失败", "0")
+        self.git_head_value = self._metric_card(metrics, "HEAD", "暂无")
         layout.addLayout(metrics)
 
         tree_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -2044,6 +2398,7 @@ class ClientWindow(QMainWindow):
         label = QLabel(label_text)
         label.setObjectName("Subtle")
         card_layout.addWidget(label)
+        card.setToolTip(label_text)
         parent_layout.addWidget(card, 1)
         return value
 
@@ -2145,8 +2500,8 @@ class ClientWindow(QMainWindow):
     def _build_chat_panel(self) -> QWidget:
         chat = QFrame()
         chat.setObjectName("ChatPane")
-        chat.setMinimumWidth(360)
-        chat.setMaximumWidth(520)
+        chat.setMinimumWidth(280)
+        chat.setMaximumWidth(500)
         layout = QVBoxLayout(chat)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -2204,8 +2559,8 @@ class ClientWindow(QMainWindow):
         settings_layout.addWidget(self.summary_model_edit, 2, 1, 1, 3)
         settings_layout.addWidget(QLabel("最大输出"), 3, 0)
         self.summary_tokens_spin = QSpinBox()
-        self.summary_tokens_spin.setRange(200, 4000)
-        self.summary_tokens_spin.setSingleStep(100)
+        self.summary_tokens_spin.setRange(200, 32000)
+        self.summary_tokens_spin.setSingleStep(1000)
         self.summary_tokens_spin.setValue(self.summary_settings.max_tokens)
         self.summary_tokens_spin.setSuffix(" tokens")
         self.summary_tokens_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
@@ -2268,11 +2623,13 @@ class ClientWindow(QMainWindow):
         mode = QLabel("Agent")
         mode.setObjectName("Chip")
         composer_top.addWidget(mode)
-        retry = QLabel("网络重试已开启")
-        retry.setObjectName("Hint")
+        retry = QLabel("↻ 重试")
+        retry.setObjectName("Chip")
+        retry.setToolTip("网络请求失败后自动排队并重试")
         composer_top.addWidget(retry)
-        self.summary_chip = QLabel(self._summary_status_text())
-        self.summary_chip.setObjectName("Hint")
+        self.summary_chip = QLabel(self._summary_chip_text())
+        self.summary_chip.setObjectName("Chip")
+        self.summary_chip.setToolTip(self._summary_status_text())
         composer_top.addWidget(self.summary_chip)
         context_button = QToolButton()
         context_button.setObjectName("IconButton")
@@ -2309,6 +2666,12 @@ class ClientWindow(QMainWindow):
             return "总结已关闭"
         return f"总结已开启 · 每{settings.interval_turns}轮" if settings.interval_turns else "总结已开启 · 仅结束"
 
+    def _summary_chip_text(self) -> str:
+        settings = getattr(self, "summary_settings", SummarySettings())
+        if not settings.enabled:
+            return "总结关"
+        return f"总结 {settings.interval_turns}轮" if settings.interval_turns else "总结结束"
+
     def toggle_summary_settings(self) -> None:
         visible = not self.summary_settings_panel.isVisible()
         self.summary_settings_panel.setVisible(visible)
@@ -2330,7 +2693,8 @@ class ClientWindow(QMainWindow):
             self.agent.summary_settings = self.summary_settings
             state = self._summary_status_text()
             self.summary_state_label.setText(state)
-            self.summary_chip.setText(state)
+            self.summary_chip.setText(self._summary_chip_text())
+            self.summary_chip.setToolTip(state)
         except OSError as exc:
             self._append_log(f"总结设置保存失败: {exc}")
 
@@ -2992,11 +3356,12 @@ class ClientWindow(QMainWindow):
             self.breadcrumb.setText("项目  /  欢迎页")
         if self.welcome_editor is not None:
             self._show_editor_text(
-                "SciDevHarness Coding Workspace\n"
-                "────────────────────────────────────────\n\n"
+                "SciDevHarness\n"
+                "──────────────────────\n\n"
                 "在左侧打开文件开始编辑，或在右侧直接输入指令。\n\n"
-                "Agent 会先读取项目，再通过工具修改代码；网络暂时不可用时，任务会自动排队重试。\n\n"
-                "快捷键：Ctrl + Enter 发送任务    Ctrl + S 保存当前文件"
+                "Agent 会读取项目并通过工具修改代码；网络不稳定时，任务会自动排队重试。\n\n"
+                "Ctrl + P 打开文件\n"
+                "Ctrl + Enter 发送任务  ·  Ctrl + S 保存"
             )
 
     def _show_editor_text(self, text: str) -> None:
@@ -3120,6 +3485,7 @@ class ClientWindow(QMainWindow):
     def _show_workspace_search(self) -> None:
         if hasattr(self, "workspace_stack") and self.workspace_stack.currentWidget() is not self.workspace_page:
             self.workspace_stack.setCurrentWidget(self.workspace_page)
+        self._set_activity_button(1)
         self.bottom_tabs.setCurrentIndex(0)
         self.bottom_tabs.setVisible(True)
         self.workspace_search_input.setFocus()
@@ -3811,7 +4177,6 @@ class ClientWindow(QMainWindow):
 
     def show_tasks(self) -> None:
         self.show_git()
-        self._set_activity_button(2)
         self._append_log("任务历史已收进开发版本树")
 
     def _clear_task_dialog(self, dialog: QDialog) -> None:
@@ -3839,7 +4204,7 @@ class ClientWindow(QMainWindow):
             self.refresh_task_history()
 
     def show_git(self) -> None:
-        self._set_activity_button(3)
+        self._set_activity_button(2)
         self.workspace_stack.setCurrentWidget(self.git_page)
         self._adapt_git_layout()
         self._refresh_development_tree()
@@ -3915,7 +4280,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("SciDevHarness")
     app.setApplicationDisplayName("SciDevHarness")
-    ui_font = QFont("Microsoft YaHei UI", 10)
+    ui_font = QFont("Microsoft YaHei UI", 11)
     ui_font.setStyleHint(QFont.StyleHint.SansSerif)
     app.setFont(ui_font)
     # Use the application directory so a shortcut or double-click never
