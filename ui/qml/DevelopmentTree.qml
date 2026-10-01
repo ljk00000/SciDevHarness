@@ -91,7 +91,7 @@ Item {
         var targetIndex = mainIndexFor(nodeId)
         var y = 88
         for (var index = 0; index < targetIndex; index++) {
-            y += 122 + Math.max(0, attemptsForParent(String(main[index].id)) - 1) * 76
+            y += 122 + Math.max(0, attemptsForParent(String(main[index].id)) - 1) * 90
         }
         return y
     }
@@ -110,7 +110,7 @@ Item {
         var main = mainNodes()
         var parentId = String(node.parent_id || (main.length ? main[main.length - 1].id : "root"))
         var parentY = mainYFor(parentId)
-        return Math.max(90, parentY + 54 + attemptSlotFor(node) * 76 + offsetFor(node.id, "y"))
+        return Math.max(90, parentY + 54 + attemptSlotFor(node) * 90 + offsetFor(node.id, "y"))
     }
 
     function cardXFor(node) {
@@ -420,6 +420,9 @@ Item {
             function onLayoutOffsetsChanged() { root.layoutVersion += 1; graph.requestPaint() }
             function onSelectedIdChanged() { graph.requestPaint() }
             function onHoverNodeIdChanged() { graph.requestPaint() }
+            function onPanXChanged() { graph.requestPaint() }
+            function onPanYChanged() { graph.requestPaint() }
+            function onZoomChanged() { graph.requestPaint() }
         }
     }
 
@@ -457,25 +460,6 @@ Item {
         onReleased: {
             root.panX = root.panX
             root.panY = root.panY
-        }
-    }
-
-    WheelHandler {
-        id: zoomHandler
-        target: null
-        onWheel: function(event) {
-            var oldZoom = root.zoom
-            var factor = event.angleDelta.y > 0 ? 1.12 : 1 / 1.12
-            root.zoom = Math.max(0.65, Math.min(1.8, oldZoom * factor))
-            // The cursor position belongs to the handler's point property;
-            // WheelEvent itself only carries the wheel delta.
-            var cursor = zoomHandler.point.position
-            var logicalX = (cursor.x - root.panX) / oldZoom
-            var logicalY = (cursor.y - root.panY) / oldZoom
-            root.panX = cursor.x - logicalX * root.zoom
-            root.panY = cursor.y - logicalY * root.zoom
-            graph.requestPaint()
-            event.accepted = true
         }
     }
 
@@ -682,7 +666,7 @@ Item {
         anchors.right: parent.right
         anchors.rightMargin: 18
         y: 11
-        text: Math.round(root.zoom * 100) + "%  ·  拖动分支 / 平移画布"
+        text: Math.round(root.zoom * 100) + "%  ·  Ctrl+滚轮缩放 · 拖动分支 / 平移画布"
         color: "#a2afbd"
         font.family: "Microsoft YaHei UI"
         font.pixelSize: 13

@@ -17,3 +17,18 @@ __pycache__/
 dist/
 build/
 *.spec
+!pysidedeploy.spec
+deployment/
+
+# Local model weights and generated research data must not enter source releases.
+*.gguf
+*.safetensors
+*.onnx
+*.ckpt
+*.pt
+*.pth
+*.bin
+models/
+datasets/
+checkpoints/
+artifacts/

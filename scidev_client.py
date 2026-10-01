@@ -8,23 +8,27 @@ The coding Agent and its retry/audit services remain UI-independent in
 
 from __future__ import annotations
 
+import argparse
+import ast
 import json
 import math
 import os
-import ast
 import re
 import shutil
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QDir, QEvent, QModelIndex, QObject, QPoint, QPointF, QProcess, QProcessEnvironment, QRect, QRegularExpression, QStringListModel, Qt, QSortFilterProxyModel, QTimer, QUrl, Signal
+from PySide6.QtCore import QDir, QEvent, QModelIndex, QObject, QPoint, QPointF, QProcess, QProcessEnvironment, QRect, QRegularExpression, QSettings, QStringListModel, Qt, QSortFilterProxyModel, QTimer, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QKeyEvent, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QShortcut, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QCompleter,
     QDialog,
+    QFileDialog,
     QFileSystemModel,
     QFrame,
     QGridLayout,
@@ -460,9 +464,123 @@ QHeaderView::section { background: #18212b; color: #dce4ed; border: none; border
 """
 
 
+def resolve_initial_workspace(
+    explicit_workspace: str | Path | None,
+    last_workspace: str | Path | None,
+    fallback: str | Path,
+) -> Path:
+    """Resolve a requested, remembered, or development workspace in priority order."""
+    if explicit_workspace is not None:
+        requested = Path(explicit_workspace).expanduser().resolve()
+        if not requested.is_dir():
+            raise ValueError(f"工作区目录不存在：{requested}")
+        return requested
+
+    if last_workspace:
+        remembered = Path(last_workspace).expanduser()
+        if remembered.is_dir():
+            return remembered.resolve()
+
+    default = Path(fallback).expanduser().resolve()
+    if not default.is_dir():
+        raise ValueError(f"默认工作区目录不存在：{default}")
+    return default
+
+
+def application_base_dir() -> Path:
+    """Return the source or deployed app directory for bundled UI resources."""
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+        return Path(sys.argv[0]).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+MAX_TREE_LAYOUT_BYTES = 1_000_000
+MAX_TREE_LAYOUT_OFFSET = 50_000.0
+
+
+def _finite_tree_coordinate(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        coordinate = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(coordinate) or abs(coordinate) > MAX_TREE_LAYOUT_OFFSET:
+        return None
+    return coordinate
+
+
+def _load_tree_layout_offsets(layout_path: Path | None) -> dict[str, QPointF]:
+    if layout_path is None:
+        return {}
+    try:
+        if layout_path.stat().st_size > MAX_TREE_LAYOUT_BYTES:
+            return {}
+        raw = json.loads(layout_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+
+    offsets: dict[str, QPointF] = {}
+    for node_id, value in raw.items():
+        if not isinstance(node_id, str) or not node_id or len(node_id) > 256 or not isinstance(value, dict):
+            continue
+        x = _finite_tree_coordinate(value.get("x", 0))
+        y = _finite_tree_coordinate(value.get("y", 0))
+        if x is not None and y is not None:
+            offsets[node_id] = QPointF(x, y)
+    return offsets
+
+
+def _choose_workspace_directory(initial_directory: Path, parent: QWidget | None = None) -> Path | None:
+    """Show a Qt directory picker without the platform-native title bar."""
+    dialog = QFileDialog(parent)
+    dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+    dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+    dialog.setFileMode(QFileDialog.FileMode.Directory)
+    dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+    dialog.setWindowTitle("打开文件夹")
+    dialog.setDirectory(str(initial_directory))
+    dialog.setStyleSheet(THEME)
+    dialog.resize(860, 600)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    selections = dialog.selectedFiles()
+    if not selections:
+        return None
+    selected = Path(selections[0]).expanduser().resolve()
+    return selected if selected.is_dir() else None
+
+
 class AppSignals(QObject):
     agent_event = Signal(str, object)
     worker_event = Signal(str, object)
+    command_approval_requested = Signal(object)
+
+
+class ElidedLabel(QLabel):
+    """Keep long workspace names readable without letting them push out controls."""
+
+    def __init__(self, full_text: str, parent: QWidget | None = None):
+        super().__init__(full_text, parent)
+        self.full_text = str(full_text)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setAccessibleName(self.full_text)
+
+    def resizeEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        super().resizeEvent(event)
+        available_width = max(0, self.contentsRect().width())
+        if available_width == 0:
+            return
+        visible_text = self.fontMetrics().elidedText(
+            self.full_text,
+            Qt.TextElideMode.ElideMiddle,
+            available_width,
+        )
+        if visible_text != self.text():
+            QLabel.setText(self, visible_text)
 
 
 class PromptEdit(QTextEdit):
@@ -735,20 +853,7 @@ class _LegacyDevelopmentTreeView(QFrame):
         self.update()
 
     def _load_layout(self) -> None:
-        if self._layout_path is None or not self._layout_path.exists():
-            return
-        try:
-            raw = json.loads(self._layout_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        if not isinstance(raw, dict):
-            return
-        for node_id, value in raw.items():
-            if isinstance(value, dict):
-                try:
-                    self._node_offsets[str(node_id)] = QPointF(float(value.get("x", 0)), float(value.get("y", 0)))
-                except (TypeError, ValueError):
-                    continue
+        self._node_offsets = _load_tree_layout_offsets(self._layout_path)
 
     def _save_layout(self) -> None:
         if self._layout_path is None:
@@ -1207,7 +1312,7 @@ class DevelopmentTreeView(QQuickWidget):
         self._root_item = None
         self._load_layout()
 
-        qml_path = Path(__file__).resolve().parent / "ui" / "qml" / "DevelopmentTree.qml"
+        qml_path = application_base_dir() / "ui" / "qml" / "DevelopmentTree.qml"
         self.setSource(QUrl.fromLocalFile(str(qml_path)))
         root = self.rootObject()
         if root is not None:
@@ -1215,6 +1320,47 @@ class DevelopmentTreeView(QQuickWidget):
             root.nodeSelected.connect(self._on_qml_node_selected)
             root.nodeMoved.connect(self._on_qml_node_moved)
             root.setProperty("layoutOffsets", self._qml_offsets())
+
+    def wheelEvent(self, event) -> None:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if self._root_item is None:
+                super().wheelEvent(event)
+                return
+            delta = event.pixelDelta().y() or event.angleDelta().y()
+            if delta == 0:
+                event.ignore()
+                return
+            old_zoom = float(self._root_item.property("zoom"))
+            factor = 1.12 if delta > 0 else 1 / 1.12
+            new_zoom = max(0.65, min(1.8, old_zoom * factor))
+            position = event.position()
+            pan_x = float(self._root_item.property("panX"))
+            pan_y = float(self._root_item.property("panY"))
+            logical_x = (position.x() - pan_x) / old_zoom
+            logical_y = (position.y() - pan_y) / old_zoom
+            self._root_item.setProperty("zoom", new_zoom)
+            self._root_item.setProperty("panX", position.x() - logical_x * new_zoom)
+            self._root_item.setProperty("panY", position.y() - logical_y * new_zoom)
+            event.accept()
+            return
+
+        scroll_area = self.parentWidget()
+        while scroll_area is not None and not isinstance(scroll_area, QScrollArea):
+            scroll_area = scroll_area.parentWidget()
+        if scroll_area is None:
+            super().wheelEvent(event)
+            return
+
+        scroll_bar = scroll_area.verticalScrollBar()
+        delta = event.pixelDelta().y()
+        if delta == 0:
+            wheel_steps = event.angleDelta().y() / 120
+            delta = wheel_steps * max(1, scroll_bar.singleStep()) * 3
+        if delta == 0:
+            super().wheelEvent(event)
+            return
+        scroll_bar.setValue(scroll_bar.value() - round(delta))
+        event.accept()
 
     @staticmethod
     def _accent(node: dict[str, Any]) -> QColor:
@@ -1237,20 +1383,7 @@ class DevelopmentTreeView(QQuickWidget):
         }.get(node.get("status"), "尝试方向")
 
     def _load_layout(self) -> None:
-        if self._layout_path is None or not self._layout_path.exists():
-            return
-        try:
-            raw = json.loads(self._layout_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        if not isinstance(raw, dict):
-            return
-        for node_id, value in raw.items():
-            if isinstance(value, dict):
-                try:
-                    self._node_offsets[str(node_id)] = QPointF(float(value.get("x", 0)), float(value.get("y", 0)))
-                except (TypeError, ValueError):
-                    continue
+        self._node_offsets = _load_tree_layout_offsets(self._layout_path)
 
     def _save_layout(self) -> None:
         if self._layout_path is None:
@@ -1278,7 +1411,11 @@ class DevelopmentTreeView(QQuickWidget):
             self.node_selected.emit(selected)
 
     def _on_qml_node_moved(self, node_id: str, offset_x: float, offset_y: float) -> None:
-        self._node_offsets[str(node_id)] = QPointF(float(offset_x), float(offset_y))
+        x = _finite_tree_coordinate(offset_x)
+        y = _finite_tree_coordinate(offset_y)
+        if x is None or y is None:
+            return
+        self._node_offsets[str(node_id)] = QPointF(x, y)
         self._save_layout()
 
     def set_nodes(self, nodes: list[dict[str, Any]]) -> None:
@@ -1294,7 +1431,7 @@ class DevelopmentTreeView(QQuickWidget):
             if node.get("lane") == "attempt":
                 parent_id = str(node.get("parent_id") or "root")
                 attempts_by_parent[parent_id] = attempts_by_parent.get(parent_id, 0) + 1
-        extra_height = sum(max(0, count - 1) * 76 for count in attempts_by_parent.values())
+        extra_height = sum(max(0, count - 1) * 90 for count in attempts_by_parent.values())
         offset_bottom = max((max(0, int(offset.y())) for offset in self._node_offsets.values()), default=0)
         self.setMinimumHeight(max(420, 140 + main_count * 122 + extra_height + offset_bottom))
 
@@ -1336,7 +1473,7 @@ class DevelopmentTreeView(QQuickWidget):
         y = top
         for node in main_nodes:
             main_y[node["id"]] = y
-            y += row_height + max(0, attempts_by_parent.get(str(node["id"]), 0) - 1) * 76
+            y += row_height + max(0, attempts_by_parent.get(str(node["id"]), 0) - 1) * 90
         for node in main_nodes:
             y = main_y[node["id"]]
             dots[node["id"]] = (trunk_x, y)
@@ -1351,7 +1488,7 @@ class DevelopmentTreeView(QQuickWidget):
             children_count[parent_id] = slot + 1
             offset = self._node_offsets.get(str(node["id"]), QPointF())
             dot_x = int(parent_x + 78 + offset.x())
-            dot_y = max(90, int(parent_y + 54 + slot * 76 + offset.y()))
+            dot_y = max(90, int(parent_y + 54 + slot * 90 + offset.y()))
             card_x = min(self.width() - card_width - 12, dot_x + 24)
             cards[node["id"]] = (dot_x, dot_y, QRect(card_x, dot_y - card_height // 2, card_width, card_height))
             dots[node["id"]] = (dot_x, dot_y)
@@ -1425,6 +1562,8 @@ class ClientWindow(QMainWindow):
         self._workbench_adapting = False
         self._workbench_adapt_pending = False
         self._titlebar_compact: bool | None = None
+        self._git_tree_compact_restore: tuple[float, float, float] | None = None
+        self._git_tree_compact_auto_view: tuple[float, float, float] | None = None
 
         self.agent = CodingAgent(
             self.project_root,
@@ -1432,6 +1571,7 @@ class ClientWindow(QMainWindow):
             self.git,
             event_callback=self._emit_agent,
             summary_settings=self.summary_settings,
+            command_approval=self._request_command_approval,
         )
         self.worker = RetryQueue(
             self.ledger,
@@ -1441,6 +1581,7 @@ class ClientWindow(QMainWindow):
         )
         self.signals.agent_event.connect(self._handle_agent_event)
         self.signals.worker_event.connect(self._handle_worker_event)
+        self.signals.command_approval_requested.connect(self._handle_command_approval_request)
         self._build_ui()
         self._install_shortcuts()
         self.worker.start()
@@ -1502,6 +1643,10 @@ class ClientWindow(QMainWindow):
         self.quick_open_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
         self.quick_open_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self.quick_open_shortcut.activated.connect(self._focus_quick_search)
+
+        self.open_workspace_shortcut = QShortcut(QKeySequence("Ctrl+K, Ctrl+O"), self)
+        self.open_workspace_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.open_workspace_shortcut.activated.connect(self._choose_workspace)
 
         self.command_palette_shortcut = QShortcut(QKeySequence("Ctrl+Shift+P"), self)
         self.command_palette_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -1569,9 +1714,12 @@ class ClientWindow(QMainWindow):
         title.setObjectName("WindowTitle")
         layout.addWidget(title)
         layout.addWidget(self._vertical_rule())
-        project = QLabel(self.project_root.name)
+        project = ElidedLabel(self.project_root.name)
         project.setObjectName("Subtle")
         project.setToolTip(str(self.project_root))
+        project.setMinimumWidth(96)
+        project.setMaximumWidth(220)
+        project.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.title_project_label = project
         layout.addWidget(project)
 
@@ -1587,7 +1735,16 @@ class ClientWindow(QMainWindow):
         self.command_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self.command_completer.setModel(
             QStringListModel(
-                ["> terminal", "> problems", "> search", "> replace", "> outline", "> git", "> explorer"],
+                [
+                    "> open folder",
+                    "> terminal",
+                    "> problems",
+                    "> search",
+                    "> replace",
+                    "> outline",
+                    "> git",
+                    "> explorer",
+                ],
                 self.command_completer,
             )
         )
@@ -1640,6 +1797,40 @@ class ClientWindow(QMainWindow):
             self.showNormal()
         else:
             self.showMaximized()
+
+    def _choose_workspace(self) -> None:
+        selected = _choose_workspace_directory(self.project_root, self)
+        if selected is not None:
+            self._open_workspace_root(selected)
+
+    def _open_workspace_root(self, workspace: str | Path) -> "ClientWindow | None":
+        target = Path(workspace).expanduser().resolve()
+        if not target.is_dir():
+            self._show_message("无法打开文件夹", f"所选工作区不存在或不是文件夹：\n{target}")
+            return None
+
+        app = QApplication.instance()
+        if app is None:
+            return None
+        windows: list[ClientWindow] = getattr(app, "_scidev_windows", [])
+        if self not in windows:
+            windows.append(self)
+        app._scidev_windows = windows
+
+        for window in windows:
+            if window.project_root == target:
+                if window.isMinimized():
+                    window.showNormal()
+                window.raise_()
+                window.activateWindow()
+                return window
+
+        settings = QSettings("SciDevHarness", "SciDevHarness")
+        settings.setValue("lastWorkspace", str(target))
+        new_window = ClientWindow(target)
+        windows.append(new_window)
+        new_window.show()
+        return new_window
 
     @staticmethod
     def _vertical_rule() -> QFrame:
@@ -1760,18 +1951,27 @@ class ClientWindow(QMainWindow):
         explorer_layout.addWidget(self.new_file_entry)
 
         project_row = QHBoxLayout()
-        project = QLabel(f"⌄  {self.project_root.name}")
+        project = ElidedLabel(f"⌄  {self.project_root.name}")
         project.setToolTip(str(self.project_root))
         project.setObjectName("AppTitle")
-        project_row.addWidget(project)
+        self.project_label = project
+        project_row.addWidget(project, 1)
         project_row.addStretch(1)
+        open_workspace = QToolButton()
+        open_workspace.setObjectName("IconButton")
+        open_workspace.setText("⋯")
+        open_workspace.setToolTip("打开文件夹…  (Ctrl+K, Ctrl+O)")
+        open_workspace.setAccessibleName("打开文件夹")
+        open_workspace.clicked.connect(self._choose_workspace)
+        self.open_workspace_button = open_workspace
+        project_row.addWidget(open_workspace)
         explorer_layout.addLayout(project_row)
 
         git_entry = QFrame()
         git_entry.setObjectName("GitEntry")
         git_entry_layout = QHBoxLayout(git_entry)
         git_entry_layout.setContentsMargins(0, 0, 0, 0)
-        git_entry_button = QPushButton("⌁  开发版本树\n    查看主线与尝试方向")
+        git_entry_button = QPushButton("开发版本树\n查看主线与尝试方向")
         git_entry_button.setObjectName("GitEntryButton")
         git_entry_button.clicked.connect(self.show_git)
         git_entry_layout.addWidget(git_entry_button)
@@ -1804,8 +2004,10 @@ class ClientWindow(QMainWindow):
         self.file_tree.viewport().installEventFilter(self)
         explorer_layout.addWidget(self.file_tree, 1)
 
-        hint = QLabel("本地工作区  ·  .research 已启用")
+        hint = QLabel("本地 · .research")
         hint.setObjectName("Hint")
+        hint.setToolTip("本地工作区 · .research 已启用")
+        self.workspace_hint = hint
         explorer_layout.addWidget(hint)
         layout.addWidget(rail)
         layout.addWidget(explorer, 1)
@@ -2040,9 +2242,27 @@ class ClientWindow(QMainWindow):
         if self.git_init_button.text() in {"初始化", "初始化 Git"}:
             self.git_init_button.setText("初始化" if narrow else "初始化 Git")
         orientation = Qt.Orientation.Vertical if narrow else Qt.Orientation.Horizontal
-        if self.git_tree_splitter.orientation() == orientation:
-            return
-        self.git_tree_splitter.setOrientation(orientation)
+        orientation_changed = self.git_tree_splitter.orientation() != orientation
+        if orientation_changed:
+            root = self.git_tree.rootObject()
+            if narrow and root is not None:
+                self._git_tree_compact_restore = (
+                    float(root.property("zoom")),
+                    float(root.property("panX")),
+                    float(root.property("panY")),
+                )
+                self._git_tree_compact_auto_view = None
+            elif not narrow and root is not None and self._git_tree_compact_restore is not None:
+                zoom, pan_x, pan_y = self._git_tree_compact_restore
+                root.setProperty("zoom", zoom)
+                root.setProperty("panX", pan_x)
+                root.setProperty("panY", pan_y)
+                self._git_tree_compact_restore = None
+                self._git_tree_compact_auto_view = None
+            self.git_tree_splitter.setOrientation(orientation)
+        # QSplitter swaps its orientation-specific default size policy when it
+        # changes direction. Keep the responsive page filling its full width.
+        self.git_tree_splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         if narrow:
             self.git_tree_splitter.setStretchFactor(0, 1)
             self.git_tree_splitter.setStretchFactor(1, 1)
@@ -2050,10 +2270,13 @@ class ClientWindow(QMainWindow):
             self.git_details.setMaximumWidth(16777215)
             self.git_details_scroll.setMinimumWidth(0)
             self.git_details_scroll.setMaximumWidth(16777215)
-            self.git_tree_scroll.setMinimumHeight(220)
-            self.git_details_scroll.setMinimumHeight(220)
-            split_height = max(440, self.git_tree_splitter.height())
-            self.git_tree_splitter.setSizes([int(split_height * 0.48), int(split_height * 0.52)])
+            self.git_tree_scroll.setMinimumHeight(0)
+            self.git_details_scroll.setMinimumHeight(0)
+            if orientation_changed:
+                split_height = max(1, self.git_tree_splitter.height())
+                # Leave enough room for both a useful tree canvas and the
+                # selected-node summary; the canvas is auto-fitted below.
+                self.git_tree_splitter.setSizes([int(split_height * 0.62), int(split_height * 0.38)])
         else:
             self.git_tree_splitter.setStretchFactor(0, 1)
             self.git_tree_splitter.setStretchFactor(1, 0)
@@ -2063,7 +2286,50 @@ class ClientWindow(QMainWindow):
             self.git_details_scroll.setMaximumWidth(360)
             self.git_tree_scroll.setMinimumHeight(0)
             self.git_details_scroll.setMinimumHeight(0)
-            self.git_tree_splitter.setSizes([1, 300])
+            if orientation_changed:
+                self.git_tree_splitter.setSizes([1, 300])
+        if narrow:
+            QTimer.singleShot(0, self._fit_git_tree_compact_layout)
+
+    def _fit_git_tree_compact_layout(self) -> None:
+        if (
+            not hasattr(self, "git_tree_splitter")
+            or self.git_tree_splitter.orientation() != Qt.Orientation.Vertical
+            or self._git_tree_compact_restore is None
+        ):
+            return
+        root = self.git_tree.rootObject()
+        if root is None:
+            return
+        current = (
+            float(root.property("zoom")),
+            float(root.property("panX")),
+            float(root.property("panY")),
+        )
+        previous_auto = self._git_tree_compact_auto_view
+        if previous_auto is not None and any(abs(value - prior) > 0.02 for value, prior in zip(current, previous_auto)):
+            # Respect a manual zoom or pan instead of repeatedly snapping it
+            # back while the user resizes the compact layout.
+            return
+
+        attempts = [node for node in self.git_tree.nodes if node.get("lane") == "attempt"]
+        if not attempts:
+            return
+        cards, _ = self.git_tree._positions()
+        first_attempt = cards.get(str(attempts[0].get("id")))
+        if first_attempt is None:
+            return
+        viewport_height = self.git_tree_scroll.viewport().height()
+        if viewport_height <= 0:
+            return
+        base_zoom, pan_x, pan_y = self._git_tree_compact_restore
+        available_height = max(1, viewport_height - 8 - pan_y)
+        fit_zoom = min(base_zoom, available_height / max(1, first_attempt[2].bottom()))
+        fit_zoom = max(0.65, fit_zoom)
+        root.setProperty("zoom", fit_zoom)
+        root.setProperty("panX", pan_x)
+        root.setProperty("panY", pan_y)
+        self._git_tree_compact_auto_view = (fit_zoom, pan_x, pan_y)
 
     def _build_find_bar(self) -> QFrame:
         bar = QFrame()
@@ -2229,7 +2495,7 @@ class ClientWindow(QMainWindow):
         header.setFixedHeight(68)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(18, 0, 14, 0)
-        icon = QLabel("⌁")
+        icon = QLabel("G")
         icon.setObjectName("AgentLogo")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setFixedSize(32, 32)
@@ -2275,6 +2541,7 @@ class ClientWindow(QMainWindow):
         tree_splitter = QSplitter(Qt.Orientation.Horizontal)
         tree_splitter.setChildrenCollapsible(False)
         tree_splitter.setHandleWidth(1)
+        tree_splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.git_tree = DevelopmentTreeView(self.project_root / ".research" / "tree_layout.json")
         self.git_tree.node_selected.connect(self._handle_git_node_selected)
         tree_scroll = QScrollArea()
@@ -2620,13 +2887,14 @@ class ClientWindow(QMainWindow):
         composer_layout.setContentsMargins(12, 10, 12, 10)
         composer_layout.setSpacing(7)
         composer_top = QHBoxLayout()
-        mode = QLabel("Agent")
-        mode.setObjectName("Chip")
-        composer_top.addWidget(mode)
-        retry = QLabel("↻ 重试")
-        retry.setObjectName("Chip")
-        retry.setToolTip("网络请求失败后自动排队并重试")
-        composer_top.addWidget(retry)
+        self.chat_mode_chip = QLabel("Agent")
+        self.chat_mode_chip.setObjectName("Chip")
+        composer_top.addWidget(self.chat_mode_chip)
+        self.retry_chip = QLabel("重试")
+        self.retry_chip.setObjectName("Chip")
+        self.retry_chip.setAccessibleName("自动重试")
+        self.retry_chip.setToolTip("网络请求失败后自动排队并重试")
+        composer_top.addWidget(self.retry_chip)
         self.summary_chip = QLabel(self._summary_chip_text())
         self.summary_chip.setObjectName("Chip")
         self.summary_chip.setToolTip(self._summary_status_text())
@@ -2652,7 +2920,7 @@ class ClientWindow(QMainWindow):
         hint.setObjectName("Hint")
         bottom.addWidget(hint)
         bottom.addStretch(1)
-        send = QPushButton("发送  ↵")
+        send = QPushButton("发送")
         send.setObjectName("Primary")
         send.clicked.connect(self.submit_chat)
         bottom.addWidget(send)
@@ -2707,6 +2975,49 @@ class ClientWindow(QMainWindow):
         if not self._closing:
             self.signals.agent_event.emit(kind, data)
 
+    def _request_command_approval(self, command: str, timeout_seconds: int) -> bool:
+        if self._closing:
+            return False
+        decision_ready = threading.Event()
+        request = {
+            "command": command,
+            "timeout_seconds": timeout_seconds,
+            "decision_ready": decision_ready,
+            "approved": False,
+        }
+        self.signals.command_approval_requested.emit(request)
+        decision_ready.wait()
+        return bool(request["approved"])
+
+    def _handle_command_approval_request(self, request: dict[str, Any]) -> None:
+        decision_ready = request["decision_ready"]
+        try:
+            if self._closing:
+                return
+            command = str(request.get("command") or "")
+            timeout_seconds = int(request.get("timeout_seconds") or 120)
+            dialog = QMessageBox(self)
+            dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+            dialog.setWindowTitle("安全确认")
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText("允许 Agent 执行这条终端命令？")
+            dialog.setInformativeText(
+                f"工作目录：{self.project_root}\n"
+                f"超时上限：{timeout_seconds} 秒。命令将以当前 Windows 用户权限执行。\n"
+                "展开详细信息可检查完整命令。"
+            )
+            dialog.setDetailedText(command)
+            dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            dialog.setButtonText(QMessageBox.StandardButton.Yes, "允许这一次")
+            dialog.setButtonText(QMessageBox.StandardButton.No, "拒绝")
+            dialog.setDefaultButton(QMessageBox.StandardButton.No)
+            approved = dialog.exec() == QMessageBox.StandardButton.Yes
+            request["approved"] = approved
+            self._append_log("已批准 Agent 命令" if approved else "已拒绝 Agent 命令")
+        finally:
+            decision_ready.set()
+
     def _emit_worker(self, kind: str, data: dict[str, Any]) -> None:
         if not self._closing:
             self.signals.worker_event.emit(kind, data)
@@ -2719,6 +3030,7 @@ class ClientWindow(QMainWindow):
         elif event == "task_retry" and task_id == self.active_task_id:
             self._set_state(self.chat_status, "等待网络 · 自动重试中", "StateWorking")
             self._set_state(self.workspace_state, "● 重试中", "StateWorking")
+            self._refresh_open_file_after_task()
         elif event == "task_completed" and task_id == self.active_task_id:
             self.active_task_id = None
             self._set_state(self.chat_status, "就绪 · 可以继续对话", "StateReady")
@@ -2728,6 +3040,7 @@ class ClientWindow(QMainWindow):
             self._set_state(self.chat_status, "任务失败 · 可从历史重试", "StateError")
             self._set_state(self.workspace_state, "● 出错", "StateError")
             self.problems_output.setPlainText(str(payload.get("error") or "任务失败，未返回详细信息"))
+            self._refresh_open_file_after_task()
         self._append_log(self._worker_message(event, payload))
         self.refresh_git_status()
         self.refresh_task_history()
@@ -2739,6 +3052,12 @@ class ClientWindow(QMainWindow):
         widget.setObjectName(name)
         widget.style().unpolish(widget)
         widget.style().polish(widget)
+
+    @staticmethod
+    def _tool_event_speaker(payload: dict[str, Any]) -> str:
+        if payload.get("source") == "harness_precommit":
+            return "Harness · 提交前 diff"
+        return f"工具 · {payload.get('name', '')}"
 
     def _handle_agent_event(self, event: str, payload: dict[str, Any]) -> None:
         if event == "summary_started":
@@ -2762,10 +3081,17 @@ class ClientWindow(QMainWindow):
             self._append_chat("Agent", payload.get("text", ""), "agent")
         elif event == "tool_started":
             args = json.dumps(payload.get("arguments", {}), ensure_ascii=False)
-            self._append_chat(f"工具 · {payload.get('name', '')}", args, "tool")
+            self._append_chat(self._tool_event_speaker(payload), args, "tool")
         elif event == "tool_result":
             result = str(payload.get("result", ""))
-            self._append_chat(f"结果 · {payload.get('name', '')}", result[-1400:], "tool")
+            self._append_chat(self._tool_event_speaker(payload), result[-1400:], "tool")
+        elif event == "git_auto_commit_skipped_paths":
+            self._append_chat(
+                "Harness · Git 自动提交保护",
+                str(payload.get("message", "部分文件未自动提交，请在 Git 面板审核。")),
+                "meta",
+            )
+            self._append_log("部分文件受 Git 自动提交安全策略保护，仍保留在工作区")
         elif event == "completed":
             sha = payload.get("git_result_sha") or "无新提交"
             self._append_chat("系统", f"任务完成 · Git commit: {sha[:12]}", "meta")
@@ -3429,7 +3755,11 @@ class ClientWindow(QMainWindow):
             return
         if term.startswith(">"):
             command = term[1:].strip().casefold()
-            if "terminal" in command or "终端" in command:
+            if "open folder" in command or "打开文件夹" in command or "workspace" in command:
+                self.command_search.clear()
+                self._choose_workspace()
+                return
+            elif "terminal" in command or "终端" in command:
                 self._toggle_bottom_panel(1)
             elif "problem" in command or "问题" in command:
                 self._toggle_bottom_panel(2)
@@ -4269,24 +4599,114 @@ class ClientWindow(QMainWindow):
         if self._closing:
             event.accept()
             return
+        dirty_editors = [
+            (editor, path)
+            for editor, path in self._editor_paths.items()
+            if isinstance(editor, CodeEditor) and editor.document().isModified()
+        ]
+        if dirty_editors:
+            dialog = QMessageBox(self)
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setWindowTitle("未保存的修改")
+            dialog.setText(f"有 {len(dirty_editors)} 个文件尚未保存。")
+            filenames = [path.name for _editor, path in dirty_editors[:5]]
+            if len(dirty_editors) > len(filenames):
+                filenames.append(f"另有 {len(dirty_editors) - len(filenames)} 个文件")
+            dialog.setInformativeText("、".join(filenames))
+            save_all = dialog.addButton("保存全部", QMessageBox.ButtonRole.AcceptRole)
+            discard = dialog.addButton("放弃修改", QMessageBox.ButtonRole.DestructiveRole)
+            cancel = dialog.addButton("继续编辑", QMessageBox.ButtonRole.RejectRole)
+            dialog.setDefaultButton(save_all)
+            dialog.setEscapeButton(cancel)
+            dialog.exec()
+            choice = dialog.clickedButton()
+            if choice is cancel or choice not in (save_all, discard):
+                event.ignore()
+                return
+            if choice is save_all:
+                failures: list[str] = []
+                for editor, path in dirty_editors:
+                    try:
+                        relative = path.relative_to(self.project_root).as_posix()
+                        self.toolbox.write_file(relative, editor.toPlainText())
+                    except Exception as exc:  # noqa: BLE001 - keep all unsaved buffers alive on failure.
+                        failures.append(f"{path.name}: {exc}")
+                        continue
+                    editor.document().setModified(False)
+                    self._update_editor_tab_for(editor)
+                if failures:
+                    self._append_log("关闭已取消，以下文件未能保存：" + "；".join(failures)[:360])
+                    event.ignore()
+                    return
         self._closing = True
         if self.terminal_process is not None and self.terminal_process.state() != QProcess.ProcessState.NotRunning:
             self.terminal_process.kill()
         self.worker.stop()
+        app = QApplication.instance()
+        windows = getattr(app, "_scidev_windows", []) if app is not None else []
+        if self in windows:
+            windows.remove(self)
         event.accept()
 
 
-def main() -> int:
-    app = QApplication(sys.argv)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="SciDevHarness desktop coding client")
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        help="open this project folder (defaults to the most recently used folder)",
+    )
+    parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+    source_root = application_base_dir()
+    if args.workspace is not None:
+        try:
+            workspace_root = resolve_initial_workspace(args.workspace, None, source_root)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+    app = QApplication([sys.argv[0]])
     app.setApplicationName("SciDevHarness")
+    app.setOrganizationName("SciDevHarness")
+    app.setOrganizationDomain("scidevharness.local")
     app.setApplicationDisplayName("SciDevHarness")
     ui_font = QFont("Microsoft YaHei UI", 11)
     ui_font.setStyleHint(QFont.StyleHint.SansSerif)
     app.setFont(ui_font)
-    # Use the application directory so a shortcut or double-click never
-    # accidentally opens the current shell directory as the project.
-    window = ClientWindow(Path(__file__).resolve().parent)
+
+    settings = QSettings("SciDevHarness", "SciDevHarness")
+    if args.workspace is None:
+        last_workspace = str(settings.value("lastWorkspace", "") or "")
+        is_packaged = bool(getattr(sys, "frozen", False) or "__compiled__" in globals())
+        if is_packaged and not (last_workspace and Path(last_workspace).is_dir()):
+            selected = _choose_workspace_directory(Path.home())
+            if selected is None:
+                return 0
+            workspace_root = selected
+        else:
+            fallback = Path(sys.executable).resolve().parent if is_packaged else source_root
+            workspace_root = resolve_initial_workspace(None, last_workspace, fallback)
+
+    if not args.smoke_test:
+        settings.setValue("lastWorkspace", str(workspace_root))
+    window = ClientWindow(workspace_root)
+    app._scidev_windows = [window]
     window.show()
+    if args.smoke_test:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            app.processEvents()
+            if window.git_tree.status() != QQuickWidget.Status.Loading:
+                break
+            time.sleep(0.01)
+        qml_ready = window.git_tree.status() == QQuickWidget.Status.Ready and not window.git_tree.errors()
+        if not qml_ready:
+            errors = "; ".join(error.toString() for error in window.git_tree.errors())
+            print(f"QML startup smoke test failed: {errors or 'loading timeout'}", file=sys.stderr)
+        window.close()
+        app.processEvents()
+        return 0 if qml_ready else 1
     return app.exec()
 
 

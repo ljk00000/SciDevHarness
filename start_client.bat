@@ -4,23 +4,25 @@ setlocal
 set "PROJECT_DIR=%~dp0"
 set "VENV_PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe"
 
-if not exist "%VENV_PYTHON%" (
-    echo Creating project virtual environment...
-    python -m venv "%PROJECT_DIR%.venv"
-    if errorlevel 1 goto :error
+if exist "%VENV_PYTHON%" (
+    "%VENV_PYTHON%" "%PROJECT_DIR%scripts\bootstrap.py" %*
+) else (
+    where python >nul 2>&1
+    if not errorlevel 1 (
+        python "%PROJECT_DIR%scripts\bootstrap.py" %*
+    ) else (
+        where py >nul 2>&1
+        if errorlevel 1 goto :python_missing
+        py -3 "%PROJECT_DIR%scripts\bootstrap.py" %*
+    )
 )
 
-"%VENV_PYTHON%" -c "import PySide6" >nul 2>&1
-if errorlevel 1 (
-    echo Installing project dependencies into .venv...
-    "%VENV_PYTHON%" -m pip install -r "%PROJECT_DIR%requirements.txt"
-    if errorlevel 1 goto :error
-)
+set "CLIENT_EXIT_CODE=%ERRORLEVEL%"
+if not "%CLIENT_EXIT_CODE%"=="0" if not defined CI pause
+exit /b %CLIENT_EXIT_CODE%
 
-"%VENV_PYTHON%" "%PROJECT_DIR%scidev_client.py"
-exit /b %errorlevel%
-
-:error
-echo SciDevHarness could not prepare its virtual environment.
-pause
+:python_missing
+echo Python 3.12, 3.13, or 3.14 is required to start SciDevHarness.
+set "CLIENT_EXIT_CODE=1"
+if not defined CI pause
 exit /b 1

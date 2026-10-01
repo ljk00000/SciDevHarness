@@ -1,0 +1,87 @@
+name: Windows Package Verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-standalone:
+    runs-on: windows-2022
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Prepare packaging environment
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Verify minimal Qt runtime
+        run: .\.venv\Scripts\python.exe scripts\verify_minimal_qt.py
+
+      - name: Stage release inputs outside the checkout
+        run: .\scripts\stage_release.ps1 -Destination "$env:RUNNER_TEMP\scidev-package-stage"
+
+      - name: Build standalone package with MSVC
+        shell: cmd
+        working-directory: ${{ runner.temp }}\scidev-package-stage
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VSINSTALL=%%i"
+          if not defined VSINSTALL exit /b 1
+          call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          "%GITHUB_WORKSPACE%\.venv\Scripts\pyside6-deploy.exe" --config-file pysidedeploy.spec --nuitka-version=4.1.1
+          if errorlevel 1 exit /b 1
+
+      - name: Smoke-test standalone executable and write a build manifest
+        shell: pwsh
+        run: |
+          $deployment = Join-Path $env:RUNNER_TEMP "scidev-package-stage\deployment"
+          $executables = @(Get-ChildItem -LiteralPath $deployment -Filter "scidev_client.exe" -File -Recurse)
+          if ($executables.Count -ne 1) {
+            throw "Expected one standalone scidev_client.exe; found $($executables.Count)."
+          }
+          $qmlFiles = @(Get-ChildItem -LiteralPath $deployment -Filter "DevelopmentTree.qml" -File -Recurse)
+          if ($qmlFiles.Count -lt 1) {
+            throw "The standalone package is missing DevelopmentTree.qml."
+          }
+          $smokeWorkspace = Join-Path $env:RUNNER_TEMP "scidev-package-smoke-workspace"
+          New-Item -ItemType Directory -Path $smokeWorkspace -Force | Out-Null
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_QUICK_BACKEND = "software"
+          & $executables[0].FullName --smoke-test --workspace $smokeWorkspace
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged executable failed its Qt/QML startup smoke test (exit $LASTEXITCODE)."
+          }
+          $manifestPath = Join-Path $env:RUNNER_TEMP "SciDevHarness-Windows-x64-build-manifest.json"
+          $python = Join-Path $env:GITHUB_WORKSPACE ".venv\Scripts\python.exe"
+          $auditScript = Join-Path $env:GITHUB_WORKSPACE "scripts\audit_standalone.py"
+          $sitePackages = Join-Path $env:GITHUB_WORKSPACE ".venv\Lib\site-packages"
+          & $python $auditScript `
+            --deployment $deployment `
+            --site-packages $sitePackages `
+            --output $manifestPath `
+            --python-version "3.14" `
+            --pyside-version "6.11.2" `
+            --nuitka-version "4.1.1"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Standalone runtime/license inventory failed (exit $LASTEXITCODE)."
+          }
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: SciDevHarness-Windows-x64-build-manifest
+          path: ${{ runner.temp }}\SciDevHarness-Windows-x64-build-manifest.json
+          if-no-files-found: error
+          retention-days: 7

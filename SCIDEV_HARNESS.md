@@ -63,7 +63,9 @@ git_diff         查看工作区状态和代码差异
 工具执行限制：
 
 - 所有文件路径限制在项目根目录内。
-- 禁止访问 `.git`、`.research`、密钥和环境内部目录。
+- 禁止访问 `.git`、`.research`、虚拟环境和常见凭据路径（`.env`、`.ssh`、`.aws`、`.npmrc`、`secrets/` 等）；模板 `.env.example` 可读。
+- Agent 发起的每条 shell 命令都在 UI 中逐次等待用户批准；缺少审批界面或用户拒绝时命令不执行。
+- 用户批准的 shell 命令仍以当前 Windows 用户权限运行；这不是操作系统级沙箱。
 - 默认不运行长时间科研训练、实验或大文件下载。
 - 屏蔽 `git reset --hard`、`git clean`、递归删除等破坏性命令。
 - 命令只在当前项目根目录执行，并有超时限制。
@@ -121,21 +123,28 @@ Git 默认采用“编码任务完成后自动提交，推送由用户决定”�
 
 - 客户端显示当前分支、工作区状态和提交记录。
 - 每次编码会话完成后自动生成 `[codex] ...` commit。
+- 自动提交只纳入任务开始时干净、且在本会话内变化的路径；已有暂存和未提交内容保留在原位，不混入 Agent commit。
+- 会话提交使用隔离的临时 Git index，提交后只刷新本次安全路径的真实 index 项。
 - 会话记录 `git_base_sha` 和 `git_result_sha`。
+- Agent 自动 diff 隐藏常见凭据/内部路径；自动提交跳过敏感路径、链接路径、超过 240,000 字节的文件及二进制/非 UTF-8 文件，跳过项保留在工作区并通过对话提示。敏感文件重命名时，来源与目标一并跳过。
+- Git 面板手动 diff/提交仍由用户显式操作；Agent 的自动筛选不会拦截手动审核。
 - 不自动 push、不自动合并、不删除用户分支。
 - `.env`、`.research` 数据库和缓存默认进入 `.gitignore`。
 
-客户端采用 VSCode + Codex 的布局：左侧为活动栏和项目文件树，中间为代码编辑工作区，右侧为固定的 Codex 对话栏；任务历史和 Git 状态通过顶部入口打开。
+客户端采用 VSCode + Codex 的布局：左侧为活动栏和项目文件树，中间为代码编辑工作区，右侧为固定的 Agent 对话栏；开发版本树是主工作区入口，集中展示主线提交、开发尝试和任务历史。
 
 ## 6. 技术架构
 
 ```text
-原生桌面客户端 Tkinter/ttk
+原生桌面客户端 PySide6 / Qt Widgets
   ├─ 编码对话
   ├─ 项目文件树
   ├─ 任务队列
-  ├─ Git 状态与提交记录
-  └─ Agent 实时日志
+  ├─ 多标签代码编辑器
+  ├─ Git / 开发版本树
+  └─ Agent 对话与实时日志
+
+Qt Quick / QML 通过 QQuickWidget 承载可拖拽、缩放的 2.5D 开发版本树；Git、会话、工具权限与持久化仍由 Python 核心管理。
 
 应用核心
   ├─ Coding Agent Loop
@@ -151,7 +160,7 @@ Git 默认采用“编码任务完成后自动提交，推送由用户决定”�
   └─ Git：代码版本和 diff
 ```
 
-当前实现使用 Python、PySide6/Qt、Qt Quick/QML、SQLite、Git CLI 和 OpenAI-compatible HTTP 接口；版本树通过 QQuickWidget 嵌入桌面客户端，不新增前端运行时依赖。后续再考虑 PyInstaller 打包和更丰富的 diff 视图。
+当前实现使用 Python、PySide6/Qt、Qt Quick/QML、SQLite、Git CLI 和 OpenAI-compatible HTTP 接口；版本树通过 QQuickWidget 嵌入桌面客户端，不新增前端运行时依赖。后续再完善 Windows 安装包和语言服务集成。
 
 ## 7. 后续科研能力
 

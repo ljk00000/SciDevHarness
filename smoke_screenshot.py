@@ -1,0 +1,557 @@
+"""Render representative IDE layouts for visual regression review."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ["QT_QUICK_BACKEND"] = "software"
+if os.name == "nt":
+    windows_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    if windows_fonts.is_dir():
+        os.environ["QT_QPA_FONTDIR"] = str(windows_fonts)
+
+from PySide6.QtQuickWidgets import QQuickWidget
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QTimer, Qt
+from PySide6.QtGui import QFont, QImage, QMouseEvent, QWheelEvent
+from PySide6.QtWidgets import QApplication, QMessageBox, QSizePolicy
+
+from scidev_client import ClientWindow, DevelopmentTreeView
+
+
+def capture(
+    window: ClientWindow,
+    app: QApplication,
+    output_dir: Path,
+    name: str,
+    size: tuple[int, int],
+) -> QImage:
+    window.resize(*size)
+    window.show()
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if window.git_tree.status() == QQuickWidget.Status.Ready:
+            break
+        time.sleep(0.01)
+
+    if window.git_tree.status() != QQuickWidget.Status.Ready:
+        errors = "; ".join(error.toString() for error in window.git_tree.errors())
+        raise RuntimeError(f"version-tree QML did not become ready: {errors or 'timeout'}")
+
+    # QQuickWidget may accept a root-property update before its scene graph
+    # has painted the corresponding frame (visible at non-100% DPI). Let a
+    # few render/event-loop turns pass so the screenshot reflects the UI state
+    # that the geometry assertions inspect.
+    for _ in range(3):
+        app.processEvents()
+        time.sleep(0.016)
+    image = window.grab().toImage()
+    if image.isNull() or image.width() < size[0] - 8 or image.height() < size[1] - 8:
+        raise RuntimeError(f"unexpected screenshot size for {name}: {image.width()}x{image.height()}")
+    destination = output_dir / f"{name}.png"
+    if not image.save(str(destination), "PNG"):
+        raise RuntimeError(f"could not save screenshot: {destination}")
+    print(f"{destination} ({image.width()}x{image.height()})")
+    return image
+
+
+def verify_screenshot_content(window: ClientWindow, name: str) -> None:
+    image = window.grab().toImage().convertToFormat(QImage.Format.Format_ARGB32)
+    step_x = max(1, image.width() // 48)
+    step_y = max(1, image.height() // 32)
+    colors = {
+        image.pixelColor(x, y).rgba()
+        for x in range(0, image.width(), step_x)
+        for y in range(0, image.height(), step_y)
+    }
+    if len(colors) < 24:
+        raise RuntimeError(f"screenshot looks blank or incomplete for {name}: only {len(colors)} sampled colors")
+
+
+def verify_attempt_accent_pixel(
+    window: ClientWindow,
+    image: QImage,
+    name: str,
+    node_id: str,
+) -> None:
+    node = next((item for item in window.git_tree.nodes if str(item.get("id")) == node_id), None)
+    card = window.git_tree._positions()[0].get(node_id)
+    if node is None or card is None:
+        raise RuntimeError(f"cannot locate attempt node {node_id!r} for screenshot check {name}")
+    root = window.git_tree.rootObject()
+    zoom = float(root.property("zoom"))
+    pan_x = float(root.property("panX"))
+    pan_y = float(root.property("panY"))
+    origin = window.git_tree.mapTo(window, QPoint(0, 0))
+    device_scale = image.devicePixelRatio()
+    logical_x = origin.x() + pan_x + (card[2].left() + 2.0) * zoom
+    logical_y = origin.y() + pan_y + (card[2].top() + card[2].height() / 2.0) * zoom
+    pixel_x = round(logical_x * device_scale)
+    pixel_y = round(logical_y * device_scale)
+    if not (0 <= pixel_x < image.width() and 0 <= pixel_y < image.height()):
+        raise RuntimeError(f"attempt-node screenshot sample is outside the image for {name}: {(pixel_x, pixel_y)}")
+
+    expected = DevelopmentTreeView._accent(node).toRgb()
+    closest_difference = 256
+    closest_color = None
+    for offset_y in range(-5, 6):
+        for offset_x in range(-5, 6):
+            sample_x = pixel_x + offset_x
+            sample_y = pixel_y + offset_y
+            if not (0 <= sample_x < image.width() and 0 <= sample_y < image.height()):
+                continue
+            actual = image.pixelColor(sample_x, sample_y).toRgb()
+            difference = max(abs(left - right) for left, right in zip(actual.getRgb()[:3], expected.getRgb()[:3]))
+            if difference < closest_difference:
+                closest_difference = difference
+                closest_color = actual.name()
+    if closest_difference > 12:
+        raise RuntimeError(
+            f"attempt node accent is not painted at its expected zoomed position for {name}: "
+            f"pixel={(pixel_x, pixel_y)} nearest={closest_color} expected={expected.name()} "
+            f"rgb-delta={closest_difference} zoom={zoom:.3f} dpr={device_scale:.2f}"
+        )
+
+
+def verify_workbench_layout(window: ClientWindow, name: str) -> None:
+    QApplication.processEvents()
+    splitter = window.workbench
+    panes = [splitter.widget(index) for index in range(splitter.count())]
+    minimum_widths = (240, 360, 280)
+    sizes = splitter.sizes()
+    if len(panes) != 3 or len(sizes) != 3:
+        raise RuntimeError(f"unexpected workbench pane count for {name}: {len(panes)}")
+    if any(not pane.isVisible() or pane.width() < minimum for pane, minimum in zip(panes, minimum_widths)):
+        widths = [pane.width() for pane in panes]
+        raise RuntimeError(f"workbench pane collapsed or clipped for {name}: {widths}")
+    rectangles = [pane.geometry() for pane in panes]
+    if any(left.intersects(right) for left, right in zip(rectangles, rectangles[1:])):
+        raise RuntimeError(f"workbench panes overlap for {name}: {rectangles}")
+    if not window.chat_input.isVisible() or window.chat_input.width() < 200:
+        raise RuntimeError(f"Agent composer is not usable for {name}: {window.chat_input.size()}")
+    for chip in (window.chat_mode_chip, window.retry_chip, window.summary_chip):
+        rendered_width = chip.fontMetrics().horizontalAdvance(chip.text())
+        available_width = chip.contentsRect().width()
+        if rendered_width > available_width:
+            raise RuntimeError(
+                f"chat composer chip is clipped for {name}: {chip.text()!r} "
+                f"needs {rendered_width}px, has {available_width}px"
+            )
+    labels = [window.project_label]
+    if window.title_project_label.isVisible():
+        labels.append(window.title_project_label)
+    for label in labels:
+        visible_text_width = label.fontMetrics().horizontalAdvance(label.text())
+        if visible_text_width > label.contentsRect().width() + 1:
+            raise RuntimeError(
+                f"workspace name is clipped for {name}: {label.text()!r} exceeds {label.width()}px"
+            )
+        if visible_text_width < label.fontMetrics().horizontalAdvance(label.full_text) and "…" not in label.text():
+            raise RuntimeError(f"workspace name was truncated without an ellipsis for {name}: {label.text()!r}")
+    verify_screenshot_content(window, name)
+    print(f"{name} workbench widths={sizes}")
+
+
+def capture_unsaved_close_confirmation(
+    window: ClientWindow,
+    app: QApplication,
+    output_dir: Path,
+) -> None:
+    editor = window._active_editor()
+    if editor is None or not hasattr(editor, "document"):
+        raise RuntimeError("cannot prepare an editor buffer for the unsaved-close visual check")
+    editor.selectAll()
+    editor.insertPlainText("unsaved screenshot check\n")
+    captured: list[Path] = []
+    errors: list[str] = []
+    deadline = time.monotonic() + 3
+
+    def capture_and_cancel() -> None:
+        active_dialog = app.activeModalWidget()
+        dialogs = [active_dialog] if isinstance(active_dialog, QMessageBox) else [
+            widget
+            for widget in app.topLevelWidgets()
+            if isinstance(widget, QMessageBox) and widget.isVisible()
+        ]
+        if dialogs:
+            dialog = dialogs[-1]
+            try:
+                expected = {"保存全部", "放弃修改", "继续编辑"}
+                buttons = {button.text(): button for button in dialog.buttons()}
+                missing = expected - buttons.keys()
+                if missing:
+                    raise RuntimeError(f"unsaved-close dialog is missing buttons: {sorted(missing)}")
+                if any(
+                    not buttons[text].isVisible()
+                    or not dialog.rect().contains(buttons[text].geometry())
+                    or buttons[text].width() < buttons[text].sizeHint().width()
+                    or buttons[text].height() < buttons[text].sizeHint().height()
+                    for text in expected
+                ):
+                    raise RuntimeError("unsaved-close dialog has hidden or clipped action buttons")
+                image = dialog.grab().toImage()
+                destination = output_dir / "unsaved-close-confirmation.png"
+                if image.isNull() or not image.save(str(destination), "PNG"):
+                    raise RuntimeError("could not capture the unsaved-close confirmation dialog")
+                captured.append(destination)
+            except Exception as exc:  # noqa: BLE001 - always dismiss the temporary modal dialog.
+                errors.append(f"{type(exc).__name__}: {exc}")
+                print(f"unsaved-close screenshot diagnostic: {type(exc).__name__}: {exc}", flush=True)
+            finally:
+                dialog.done(0)
+            return
+        if window.isVisible() and time.monotonic() < deadline:
+            QTimer.singleShot(10, capture_and_cancel)
+            return
+        if isinstance(active_dialog, QMessageBox):
+            print("unsaved-dialog: timeout reject", flush=True)
+            errors.append("timed out while waiting to capture the unsaved-close dialog")
+            active_dialog.reject()
+
+    QTimer.singleShot(0, capture_and_cancel)
+    closed = window.close()
+    app.processEvents()
+    dirty_buffer_survived = editor.document().isModified()
+    editor.document().setModified(False)
+    if closed:
+        raise RuntimeError("closing with a dirty editor did not show a confirmation dialog")
+    if not captured:
+        raise RuntimeError("the unsaved-close confirmation dialog was not captured")
+    if errors:
+        raise RuntimeError("unsaved-close confirmation visual check failed: " + "; ".join(errors))
+    if not dirty_buffer_survived:
+        raise RuntimeError("canceling the unsaved-close confirmation lost the dirty editor state")
+    print(f"{captured[0]} (unsaved-close confirmation)")
+
+
+def verify_git_splitter_layout(window: ClientWindow, name: str, orientation: Qt.Orientation) -> None:
+    page = window.git_page
+    splitter = window.git_tree_splitter
+    if splitter.orientation() != orientation:
+        raise RuntimeError(f"unexpected version-tree splitter orientation for {name}: {splitter.orientation()}")
+    page_width = page.contentsRect().width()
+    if abs(splitter.width() - page_width) > 2:
+        raise RuntimeError(
+            f"version-tree content does not fill its page for {name}: "
+            f"splitter={splitter.width()} page={page_width}"
+        )
+    policy = splitter.sizePolicy()
+    if (
+        policy.horizontalPolicy() != QSizePolicy.Policy.Expanding
+        or policy.verticalPolicy() != QSizePolicy.Policy.Expanding
+    ):
+        raise RuntimeError(
+            f"version-tree splitter is not responsive for {name}: "
+            f"{policy.horizontalPolicy().name}/{policy.verticalPolicy().name}"
+        )
+    for index in range(splitter.count()):
+        child = splitter.widget(index)
+        rect = child.geometry()
+        if (
+            rect.x() < 0
+            or rect.y() < 0
+            or rect.x() + rect.width() > splitter.width() + 1
+            or rect.y() + rect.height() > splitter.height() + 1
+        ):
+            raise RuntimeError(f"version-tree pane is clipped for {name}: {rect} / {splitter.size()}")
+    if orientation == Qt.Orientation.Vertical:
+        tree_height, details_height = splitter.sizes()
+        minimum_details_height = max(144, int(splitter.height() * 0.36))
+        if details_height < minimum_details_height:
+            raise RuntimeError(
+                f"version-tree details are too short for {name}: "
+                f"tree={tree_height}px details={details_height}px; expected at least {minimum_details_height}px"
+            )
+        if tree_height < int(splitter.height() * 0.50):
+            raise RuntimeError(
+                f"version-tree canvas is too short for {name}: "
+                f"tree={tree_height}px details={details_height}px"
+            )
+        if window.git_details_scroll.viewport().height() < 136:
+            raise RuntimeError(
+                f"version-tree detail content has no usable scroll area for {name}: "
+                f"{window.git_details_scroll.viewport().size()}"
+            )
+        viewport = window.git_details_scroll.viewport()
+        for control_name, control in (
+            ("title", window.git_detail_title),
+            ("status", window.git_detail_status),
+            ("description", window.git_detail_description),
+        ):
+            origin = control.mapTo(viewport, QPoint(0, 0))
+            control_rect = QRect(origin, control.size())
+            if not viewport.rect().contains(control_rect):
+                raise RuntimeError(
+                    f"selected-node {control_name} is not fully visible for {name}: "
+                    f"control={control_rect} viewport={viewport.rect()}"
+                )
+        print(f"{name} version-tree heights=[{tree_height}, {details_height}]")
+
+
+def send_wheel(
+    window: ClientWindow,
+    modifiers: Qt.KeyboardModifier,
+    angle_delta_y: int = -120,
+) -> None:
+    tree = window.git_tree
+    position = QPointF(80, 100)
+    global_position = QPointF(tree.mapToGlobal(QPoint(80, 100)))
+    event = QWheelEvent(
+        position,
+        global_position,
+        QPoint(0, 0),
+        QPoint(0, angle_delta_y),
+        Qt.MouseButton.NoButton,
+        modifiers,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    QApplication.sendEvent(tree, event)
+
+
+def send_mouse_drag(
+    tree: DevelopmentTreeView,
+    app: QApplication,
+    start: QPointF,
+    end: QPointF,
+) -> None:
+    def send_mouse(event_type, position: QPointF, button, buttons) -> None:
+        global_position = QPointF(tree.mapToGlobal(position.toPoint()))
+        event = QMouseEvent(event_type, position, global_position, button, buttons, Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(tree, event)
+        app.processEvents()
+
+    send_mouse(QEvent.Type.MouseButtonPress, start, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+    send_mouse(QEvent.Type.MouseMove, end, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
+    send_mouse(QEvent.Type.MouseButtonRelease, end, Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton)
+
+
+def pan_canvas(window: ClientWindow, app: QApplication, output_dir: Path, size: tuple[int, int]) -> None:
+    tree = window.git_tree
+    root = tree.rootObject()
+    original_x = float(root.property("panX"))
+    original_y = float(root.property("panY"))
+    send_mouse_drag(tree, app, QPointF(90, 460), QPointF(108, 476))
+    moved_x = float(root.property("panX"))
+    moved_y = float(root.property("panY"))
+    if moved_x - original_x < 10 or moved_y - original_y < 10:
+        raise RuntimeError(f"dragging the empty canvas did not pan the version tree: {moved_x}, {moved_y}")
+    capture(window, app, output_dir, "tree-wide-panned", size)
+    root.setProperty("panX", original_x)
+    root.setProperty("panY", original_y)
+    app.processEvents()
+
+
+def drag_attempt_node(window: ClientWindow, app: QApplication, output_dir: Path, name: str, size: tuple[int, int]) -> None:
+    tree = window.git_tree
+    cards, _dots = tree._positions()
+    card = cards["fast-warmup"][2]
+    start = QPointF(card.center())
+    end = start + QPointF(28, 18)
+
+    send_mouse_drag(tree, app, start, end)
+
+    offsets = json.loads(window.git_tree._layout_path.read_text(encoding="utf-8"))
+    position = offsets.get("fast-warmup", {})
+    if position.get("x", 0) < 20 or position.get("y", 0) < 10:
+        raise RuntimeError(f"dragging an attempt node did not persist its new offset: {position}")
+    reloaded_tree = DevelopmentTreeView(window.git_tree._layout_path)
+    try:
+        restored_offset = reloaded_tree._node_offsets.get("fast-warmup")
+        if restored_offset is None or restored_offset.x() != position["x"] or restored_offset.y() != position["y"]:
+            raise RuntimeError(f"reopening the version tree did not restore the dragged position: {restored_offset}")
+    finally:
+        reloaded_tree.close()
+    cards_after_drag, _dots = tree._positions()
+    moved_rect = cards_after_drag["fast-warmup"][2]
+    for node_id, (_x, _y, other_rect) in cards_after_drag.items():
+        if node_id != "fast-warmup" and moved_rect.intersects(other_rect):
+            raise RuntimeError(f"dragged attempt node overlaps {node_id}: {moved_rect} / {other_rect}")
+    capture(window, app, output_dir, name, size)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output-dir", type=Path, help="directory for PNG files (defaults to a temporary folder)")
+    args = parser.parse_args(argv)
+
+    temporary_output = None
+    if args.output_dir is None:
+        temporary_output = tempfile.TemporaryDirectory(prefix="scidev-ui-shots-")
+        output_dir = Path(temporary_output.name)
+    else:
+        output_dir = args.output_dir.expanduser().resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    app = QApplication([sys.argv[0]])
+    ui_font = QFont("Microsoft YaHei UI", 11)
+    ui_font.setStyleHint(QFont.StyleHint.SansSerif)
+    app.setFont(ui_font)
+    workspace_temp = tempfile.TemporaryDirectory(prefix="scidev-ui-workspace-")
+    workspace = Path(workspace_temp.name)
+    source_dir = workspace / "src"
+    source_dir.mkdir()
+    source_file = source_dir / "analysis.py"
+    source_file.write_text(
+        "from dataclasses import dataclass\n\n\n"
+        "@dataclass\n"
+        "class ExperimentConfig:\n"
+        "    learning_rate: float = 0.001\n"
+        "    warmup_steps: int = 200\n\n\n"
+        "def score_prediction(prediction: float, target: float) -> float:\n"
+        "    return 1.0 - abs(prediction - target)\n",
+        encoding="utf-8",
+    )
+    (workspace / "README.md").write_text(
+        "# Example research project\n\nA small project used for desktop visual regression checks.\n",
+        encoding="utf-8",
+    )
+    window = None
+    try:
+        window = ClientWindow(workspace)
+        window._open_file(source_file, preview=False)
+        capture(window, app, output_dir, "editor-wide", (1500, 920))
+        verify_workbench_layout(window, "editor-wide")
+        window.show_git()
+        window.git_tree.set_nodes([
+            {
+                "id": "root",
+                "lane": "main",
+                "status": "main",
+                "title": "当前主线",
+                "description": "稳定的编码主线。",
+                "meta": "Git main",
+            },
+            {
+                "id": "editor-cleanup",
+                "lane": "main",
+                "status": "main",
+                "parent_id": "root",
+                "title": "整理指标计算",
+                "description": "抽离评价逻辑并补齐类型标注。",
+                "meta": "成功 · 2026-10-01",
+            },
+            {
+                "id": "fast-warmup",
+                "lane": "attempt",
+                "status": "failed",
+                "parent_id": "editor-cleanup",
+                "title": "缩短 warmup",
+                "description": "验证集波动明显，暂不保留。",
+                "meta": "失败 · 3 次尝试",
+            },
+            {
+                "id": "typed-config",
+                "lane": "attempt",
+                "status": "active",
+                "parent_id": "editor-cleanup",
+                "title": "类型化配置",
+                "description": "把配置默认值整理成 dataclass。",
+                "meta": "进行中 · 1 次尝试",
+            },
+        ])
+        window.git_main_value.setText("1")
+        window.git_attempt_value.setText("2")
+        window.git_failed_value.setText("1")
+        capture(window, app, output_dir, "tree-wide", (1500, 920))
+        verify_workbench_layout(window, "tree-wide")
+        verify_git_splitter_layout(window, "tree-wide", Qt.Orientation.Horizontal)
+        pan_canvas(window, app, output_dir, (1500, 920))
+        if window.git_tree_splitter.orientation() != Qt.Orientation.Horizontal:
+            raise RuntimeError("wide version tree did not use a side-by-side layout")
+        drag_attempt_node(window, app, output_dir, "tree-wide-dragged", (1500, 920))
+        window.git_tree._node_offsets.pop("fast-warmup", None)
+        window.git_tree._save_layout()
+        window.git_tree._root_item.setProperty("layoutOffsets", window.git_tree._qml_offsets())
+        window.git_tree.set_nodes(window.git_tree.nodes)
+        window.git_tree_scroll.verticalScrollBar().setValue(0)
+        app.processEvents()
+        capture(window, app, output_dir, "tree-medium", (1180, 760))
+        verify_workbench_layout(window, "tree-medium")
+        verify_git_splitter_layout(window, "tree-medium", Qt.Orientation.Vertical)
+        narrow_tree_image = capture(window, app, output_dir, "tree-narrow", (940, 620))
+        verify_workbench_layout(window, "tree-narrow")
+        verify_git_splitter_layout(window, "tree-narrow", Qt.Orientation.Vertical)
+        if window.git_tree_splitter.orientation() != Qt.Orientation.Vertical:
+            raise RuntimeError("narrow version tree did not switch to a stacked layout")
+        verify_attempt_accent_pixel(window, narrow_tree_image, "tree-narrow", "fast-warmup")
+        branch_card = window.git_tree._positions()[0]["fast-warmup"][2]
+        root = window.git_tree.rootObject()
+        visible_branch_bottom = (
+            branch_card.bottom() * float(root.property("zoom")) + float(root.property("panY"))
+        )
+        print(
+            "tree-narrow fit "
+            f"zoom={float(root.property('zoom')):.3f} panY={float(root.property('panY')):.1f} "
+            f"branch-bottom={visible_branch_bottom:.1f}/{window.git_tree_scroll.viewport().height()}"
+        )
+        if visible_branch_bottom >= window.git_tree_scroll.viewport().height():
+            raise RuntimeError(
+                "the first attempt node is clipped in the narrow version-tree layout: "
+                f"visual-card-bottom={visible_branch_bottom:.1f}px logical-card-bottom={branch_card.bottom()}px viewport="
+                f"{window.git_tree_scroll.viewport().size()} splitter={window.git_tree_splitter.sizes()}"
+            )
+        scroll_bar = window.git_tree_scroll.verticalScrollBar()
+        if scroll_bar.maximum() <= 0:
+            raise RuntimeError("narrow version tree does not expose the offscreen content")
+        initial_scroll = scroll_bar.value()
+        initial_zoom = float(root.property("zoom"))
+        send_wheel(window, Qt.KeyboardModifier.NoModifier)
+        app.processEvents()
+        if scroll_bar.value() <= initial_scroll:
+            raise RuntimeError("plain mouse wheel did not scroll the narrow version tree")
+        if float(root.property("zoom")) != initial_zoom:
+            raise RuntimeError("plain mouse wheel unexpectedly zoomed the version tree")
+        capture(window, app, output_dir, "tree-narrow-scrolled", (940, 620))
+        initial_scroll = scroll_bar.value()
+        send_wheel(window, Qt.KeyboardModifier.ControlModifier, angle_delta_y=120)
+        app.processEvents()
+        if float(root.property("zoom")) <= initial_zoom:
+            raise RuntimeError("Ctrl+mouse wheel did not zoom the version tree")
+        if scroll_bar.value() != initial_scroll:
+            raise RuntimeError("Ctrl+mouse wheel unexpectedly scrolled the version tree")
+        compact_restore = window._git_tree_compact_restore
+        if compact_restore is None:
+            raise RuntimeError("compact version tree did not keep its wide-layout view state")
+        capture(window, app, output_dir, "tree-wide-restored", (1500, 920))
+        verify_git_splitter_layout(window, "tree-wide-restored", Qt.Orientation.Horizontal)
+        restored_view = (
+            float(root.property("zoom")),
+            float(root.property("panX")),
+            float(root.property("panY")),
+        )
+        if any(abs(value - expected) > 0.02 for value, expected in zip(restored_view, compact_restore)):
+            raise RuntimeError(
+                f"wide-layout version-tree zoom/pan was not restored: {restored_view} != {compact_restore}"
+            )
+        if window._git_tree_compact_restore is not None:
+            raise RuntimeError("compact-layout view state was not cleared after returning wide")
+        window.show_workspace()
+        capture(window, app, output_dir, "editor-narrow", (940, 620))
+        verify_workbench_layout(window, "editor-narrow")
+        hint = window.workspace_hint
+        if hint.fontMetrics().horizontalAdvance(hint.text()) > hint.width():
+            raise RuntimeError("workspace footer status is clipped at the narrow layout")
+        capture_unsaved_close_confirmation(window, app, output_dir)
+    finally:
+        if window is not None:
+            window.close()
+        app.processEvents()
+        app.quit()
+        workspace_temp.cleanup()
+        if temporary_output is not None:
+            temporary_output.cleanup()
+
+    print("UI screenshot smoke test: OK")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,16 @@
+[project]
+name = "scidev-harness"
+version = "0.1.0"
+description = "A local-first desktop coding harness for research workflows."
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = ["PySide6-Essentials>=6.11,<7"]
+
+[tool.pyside6-project]
+files = [
+    "scidev_client.py",
+    "scidev_core.py",
+    "ui/qml/DevelopmentTree.qml",
+]

@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -19,6 +20,57 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+
+DEFAULT_EXCLUDED_PATH_NAMES = frozenset(
+    {".git", ".research", "__pycache__", ".pytest_cache", ".venv", "venv", "node_modules"}
+)
+DEFAULT_SENSITIVE_PATH_NAMES = frozenset(
+    {
+        ".aws",
+        ".azure",
+        ".envrc",
+        ".git-credentials",
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        ".ssh",
+        "credentials",
+        "credentials.json",
+        "id_ed25519",
+        "id_rsa",
+        "secrets",
+        "secrets.json",
+    }
+)
+DEFAULT_SAFE_ENV_TEMPLATES = (".example", ".sample", ".template", ".dist")
+
+
+def _is_sensitive_component(
+    name: str,
+    sensitive_names: set[str] | frozenset[str] = DEFAULT_SENSITIVE_PATH_NAMES,
+    safe_env_templates: tuple[str, ...] = DEFAULT_SAFE_ENV_TEMPLATES,
+) -> bool:
+    folded = name.casefold()
+    if folded in sensitive_names or folded == ".env":
+        return True
+    return folded.startswith(".env.") and not folded.endswith(safe_env_templates)
+
+
+def _is_protected_workspace_path(
+    raw_path: str | Path,
+    excluded_names: set[str] | frozenset[str] = DEFAULT_EXCLUDED_PATH_NAMES,
+    sensitive_names: set[str] | frozenset[str] = DEFAULT_SENSITIVE_PATH_NAMES,
+    safe_env_templates: tuple[str, ...] = DEFAULT_SAFE_ENV_TEMPLATES,
+) -> bool:
+    components = str(raw_path).replace("\\", "/").split("/")
+    excluded = {name.casefold() for name in excluded_names}
+    return any(
+        component.casefold() in excluded
+        or _is_sensitive_component(component, sensitive_names, safe_env_templates)
+        for component in components
+        if component and component not in {".", ".."}
+    )
 
 
 def now_iso() -> str:
@@ -292,17 +344,27 @@ class RetryQueue:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self._lifecycle_lock = threading.Lock()
 
     def start(self) -> None:
-        self.ledger.recover_running_tasks()
-        self._thread = threading.Thread(target=self._worker, name="scidev-worker", daemon=True)
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self._thread is not None and self._thread.is_alive():
+                if self._stop.is_set():
+                    raise RuntimeError("RetryQueue 的旧 worker 仍在停止，请等待其退出后再启动")
+                return
+            self._stop.clear()
+            self._wake.clear()
+            self.ledger.recover_running_tasks()
+            self._thread = threading.Thread(target=self._worker, name="scidev-worker", daemon=True)
+            self._thread.start()
 
     def stop(self) -> None:
-        self._stop.set()
-        self._wake.set()
-        if self._thread is not None:
-            self._thread.join(timeout=2)
+        with self._lifecycle_lock:
+            self._stop.set()
+            self._wake.set()
+            thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2)
 
     def submit(self, kind: str, payload: dict[str, Any], max_attempts: int = 1) -> str:
         task_id = self.ledger.create_task(kind, payload, max_attempts=max_attempts)
@@ -356,11 +418,17 @@ class RetryQueue:
 
 class GitManager:
     MAX_UNTRACKED_DIFF_BYTES = 240_000
+    MAX_AUTO_COMMIT_FILE_BYTES = MAX_UNTRACKED_DIFF_BYTES
 
     def __init__(self, project_root: Path):
         self.project_root = Path(project_root).resolve()
 
-    def _run(self, args: list[str], check: bool = False) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self,
+        args: list[str],
+        check: bool = False,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         command = ["git", *args]
         try:
             return subprocess.run(
@@ -371,6 +439,7 @@ class GitManager:
                 encoding="utf-8",
                 errors="replace",
                 check=check,
+                env=env,
             )
         except OSError as exc:
             # A desktop client should still open when Git is not installed.
@@ -410,12 +479,20 @@ class GitManager:
         result = self._run(["branch", "--show-current"])
         return result.stdout.strip() or "(detached)"
 
-    def status(self) -> str:
+    def status(self, *, protect_sensitive: bool = False) -> str:
         probe = self._run(["rev-parse", "--is-inside-work-tree"])
         if probe.returncode == 127:
             return "Git 不可用：请安装 Git CLI"
         if probe.returncode != 0 or probe.stdout.strip() != "true":
             return "未初始化 Git 仓库"
+        if protect_sensitive:
+            paths = self.status_paths()
+            safe_paths = sorted(path for path in paths if not _is_protected_workspace_path(path))
+            hidden_count = len(paths) - len(safe_paths)
+            lines = [f"已变更：{path}" for path in safe_paths]
+            if hidden_count:
+                lines.append(f"[{hidden_count} 个敏感/内部路径已隐藏]")
+            return "\n".join(lines) or "工作区干净"
         result = self._run(["status", "--short"])
         return result.stdout.strip() or "工作区干净"
 
@@ -433,6 +510,84 @@ class GitManager:
             path = raw_path.split(" -> ", 1)[-1]
             entries.append({"code": code, "path": path, "raw": raw_path})
         return entries
+
+    def status_path_groups(self) -> list[set[str]]:
+        """Return changed paths grouped by status record, keeping renames together."""
+        if not self.is_repo():
+            return []
+        result = self._run(["status", "--porcelain=v1", "-z", "-uall"])
+        records = result.stdout.split("\x00")
+        groups: list[set[str]] = []
+        index = 0
+        while index < len(records):
+            record = records[index]
+            if len(record) >= 4:
+                group = {record[3:]}
+                if "R" in record[:2] or "C" in record[:2]:
+                    index += 1
+                    if index < len(records) and records[index]:
+                        group.add(records[index])
+                groups.append(group)
+            index += 1
+        return groups
+
+    def status_paths(self) -> set[str]:
+        """Return exact changed paths, using NUL-delimited porcelain for unusual filenames."""
+        groups = self.status_path_groups()
+        return set().union(*groups) if groups else set()
+
+    def _sensitive_rename_groups(self) -> list[set[str]]:
+        """Detect sensitive-file renames that porcelain reports as delete + untracked add."""
+        changed_paths = self.status_paths()
+        if not self.head_sha() or not any(
+            _is_protected_workspace_path(path) for path in changed_paths
+        ):
+            return []
+
+        candidates: list[str] = []
+        for relative in sorted(changed_paths):
+            unresolved = self.project_root / Path(relative)
+            try:
+                target = unresolved.resolve(strict=False)
+                if not target.is_relative_to(self.project_root):
+                    continue
+                if unresolved.is_symlink() or unresolved.is_junction():
+                    continue
+                if target.exists() and target.is_file() and target.stat().st_size > self.MAX_AUTO_COMMIT_FILE_BYTES:
+                    continue
+            except (OSError, RuntimeError, ValueError):
+                continue
+            candidates.append(relative)
+        if len(candidates) < 2:
+            return []
+
+        detected: list[set[str]] = []
+        with tempfile.TemporaryDirectory(prefix="scidev-git-rename-check-") as temp_dir:
+            environment = os.environ.copy()
+            environment["GIT_INDEX_FILE"] = str(Path(temp_dir) / "index")
+            self._run(["read-tree", self.head_sha()], check=True, env=environment)
+            self._run(
+                ["--literal-pathspecs", "add", "-A", "--", *candidates],
+                check=True,
+                env=environment,
+            )
+            result = self._run(
+                ["--literal-pathspecs", "diff", "--cached", "--find-renames", "--name-status", "-z", "HEAD"],
+                env=environment,
+            )
+            records = result.stdout.split("\x00")
+            index = 0
+            while index < len(records):
+                status = records[index]
+                index += 1
+                if not status:
+                    continue
+                path_count = 2 if status.startswith(("R", "C")) else 1
+                group = {path for path in records[index:index + path_count] if path}
+                index += path_count
+                if len(group) > 1 and any(_is_protected_workspace_path(path) for path in group):
+                    detected.append(group)
+        return detected
 
     def stage_all(self) -> None:
         self.init()
@@ -472,11 +627,31 @@ class GitManager:
         result = self._run(["log", f"-{limit}", "--oneline", "--decorate"])
         return result.stdout.strip()
 
-    def diff(self, path: Path | None = None) -> str:
+    def diff(self, path: Path | None = None, *, protect_sensitive: bool = False) -> str:
         """Return a reviewable diff for the whole worktree or one file."""
         if not self.is_repo():
             return "Git 尚未初始化"
-        args = ["diff", "--no-ext-diff"]
+        protected_changes: set[str] = set()
+        selected_paths: list[str] = []
+        if path is None and protect_sensitive:
+            path_groups = self.status_path_groups()
+            sensitive_rename_groups = self._sensitive_rename_groups()
+            sensitive_rename_paths = set().union(*sensitive_rename_groups) if sensitive_rename_groups else set()
+            changed_paths = set().union(*path_groups) if path_groups else set()
+            selected_paths = sorted(
+                relative
+                for group in path_groups
+                if not any(
+                    _is_protected_workspace_path(item) or item in sensitive_rename_paths
+                    for item in group
+                )
+                for relative in group
+            )
+            protected_changes = (changed_paths - set(selected_paths)) | sensitive_rename_paths
+            if not selected_paths:
+                return "敏感/内部路径的差异已隐藏" if protected_changes else ""
+
+        args = ["--literal-pathspecs", "diff", "--no-ext-diff"]
         has_head = bool(self.head_sha())
         if has_head:
             # Comparing with HEAD includes both staged and unstaged changes,
@@ -488,13 +663,19 @@ class GitManager:
             if not target.is_relative_to(self.project_root):
                 return "拒绝读取项目目录之外的文件"
             relative = target.relative_to(self.project_root).as_posix()
+            if protect_sensitive and _is_protected_workspace_path(relative):
+                return "敏感/内部路径的差异已隐藏"
             args.extend(["--", relative])
+        elif protect_sensitive:
+            args.extend(["--", *selected_paths])
         result = self._run(args)
         diff_text = result.stdout
         if not has_head:
-            staged_args = ["diff", "--cached", "--no-ext-diff"]
+            staged_args = ["--literal-pathspecs", "diff", "--cached", "--no-ext-diff"]
             if relative:
                 staged_args.extend(["--", relative])
+            elif protect_sensitive:
+                staged_args.extend(["--", *selected_paths])
             staged = self._run(staged_args)
             diff_text += staged.stdout
         if path is None:
@@ -505,6 +686,8 @@ class GitManager:
             for raw_relative in untracked.stdout.split("\x00"):
                 relative_path = raw_relative
                 if not relative_path:
+                    continue
+                if protect_sensitive and _is_protected_workspace_path(relative_path):
                     continue
                 unresolved = self.project_root / Path(relative_path)
                 if unresolved.is_symlink():
@@ -557,6 +740,97 @@ class GitManager:
             return self.head_sha()
         self._run(["commit", "-m", message], check=True)
         return self.head_sha()
+
+    def filter_auto_commit_paths(
+        self,
+        paths: set[str] | list[str] | tuple[str, ...],
+    ) -> tuple[set[str], dict[str, dict[str, str | int]]]:
+        """Keep unsafe, sensitive, linked, and oversized artifacts out of Agent commits."""
+        included: set[str] = set()
+        skipped: dict[str, dict[str, str | int]] = {}
+        sensitive_rename_paths = {
+            path
+            for group in self._sensitive_rename_groups()
+            if len(group) > 1 and any(_is_protected_workspace_path(path) for path in group)
+            for path in group
+        }
+        for relative in sorted({str(path) for path in paths}):
+            if _is_protected_workspace_path(relative) or relative in sensitive_rename_paths:
+                skipped[relative] = {"reason": "protected_path"}
+                continue
+
+            unresolved = self.project_root / Path(relative)
+            try:
+                target = unresolved.resolve(strict=False)
+                if not target.is_relative_to(self.project_root):
+                    skipped[relative] = {"reason": "outside_workspace"}
+                    continue
+                if unresolved.is_symlink() or unresolved.is_junction():
+                    skipped[relative] = {"reason": "linked_path"}
+                    continue
+                if target.exists() and target.is_file():
+                    size_bytes = target.stat().st_size
+                    if size_bytes > self.MAX_AUTO_COMMIT_FILE_BYTES:
+                        skipped[relative] = {"reason": "file_too_large", "size_bytes": size_bytes}
+                        continue
+                    try:
+                        content = target.read_bytes()
+                        content.decode("utf-8")
+                    except (OSError, UnicodeDecodeError):
+                        skipped[relative] = {"reason": "non_text_file"}
+                        continue
+                    if b"\x00" in content:
+                        skipped[relative] = {"reason": "non_text_file"}
+                        continue
+            except (OSError, RuntimeError, ValueError):
+                skipped[relative] = {"reason": "path_unavailable"}
+                continue
+            included.add(relative)
+        return included, skipped
+
+    def commit_paths(self, message: str, paths: set[str] | list[str] | tuple[str, ...]) -> str:
+        """Commit only the given paths without consuming the user's existing index."""
+        relative_paths = sorted({self._relative_path(self.project_root / Path(path)) for path in paths})
+        if not relative_paths:
+            return ""
+
+        self.init()
+        base_sha = self.head_sha()
+        with tempfile.TemporaryDirectory(prefix="scidev-git-index-") as temp_dir:
+            environment = os.environ.copy()
+            environment["GIT_INDEX_FILE"] = str(Path(temp_dir) / "index")
+            read_tree = ["read-tree", base_sha] if base_sha else ["read-tree", "--empty"]
+            self._run(read_tree, check=True, env=environment)
+
+            included_paths = []
+            for relative in relative_paths:
+                ignored = self._run(["check-ignore", "-q", "--", relative])
+                if ignored.returncode != 0:
+                    included_paths.append(relative)
+            if not included_paths:
+                return ""
+
+            self._run(
+                ["--literal-pathspecs", "add", "-A", "--", *included_paths],
+                check=True,
+                env=environment,
+            )
+            staged = self._run(["diff", "--cached", "--quiet"], env=environment)
+            if staged.returncode == 0:
+                return ""
+            if staged.returncode != 1:
+                raise subprocess.CalledProcessError(staged.returncode, staged.args, staged.stdout, staged.stderr)
+            self._run(["commit", "-m", message], check=True, env=environment)
+
+        result_sha = self.head_sha()
+        if result_sha:
+            # The selected paths were clean at session start; refresh only those entries
+            # so unrelated user staging and worktree edits remain untouched.
+            self._run(
+                ["--literal-pathspecs", "reset", "--quiet", "HEAD", "--", *included_paths],
+                check=True,
+            )
+        return result_sha
 
 
 @dataclass
@@ -710,7 +984,12 @@ class OpenAICompatibleProvider:
 
         patterns = (
             re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.IGNORECASE | re.DOTALL),
+            re.compile(r"<tool_request>\s*(.*?)\s*</tool_request>", re.IGNORECASE | re.DOTALL),
             re.compile(r"```json\s*(.*?)```", re.IGNORECASE | re.DOTALL),
+            # Some local models omit the requested wrapper. Only accept a JSON
+            # object that occupies the entire response; prose/code examples
+            # must never be promoted to executable workspace actions.
+            re.compile(r"\A\s*(\{.*\})\s*\Z", re.DOTALL),
         )
         matches = sorted(
             (match for pattern in patterns for match in pattern.finditer(content)),
@@ -723,7 +1002,11 @@ class OpenAICompatibleProvider:
                 payload = json.loads(match.group(1).strip())
             except (json.JSONDecodeError, TypeError):
                 continue
-            if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != {"name", "arguments"}
+                or not isinstance(payload.get("name"), str)
+            ):
                 continue
             name = payload["name"]
             arguments = payload.get("arguments")
@@ -848,11 +1131,32 @@ class CodingToolbox:
 
     MAX_READ_BYTES = 240_000
     MAX_WRITE_BYTES = 360_000
-    EXCLUDED_NAMES = {".git", ".research", "__pycache__", ".pytest_cache", ".venv", "venv", "node_modules"}
+    EXCLUDED_NAMES = set(DEFAULT_EXCLUDED_PATH_NAMES)
+    SENSITIVE_NAMES = set(DEFAULT_SENSITIVE_PATH_NAMES)
+    SAFE_ENV_TEMPLATES = DEFAULT_SAFE_ENV_TEMPLATES
 
-    def __init__(self, project_root: Path, ledger: EventLedger):
+    def __init__(
+        self,
+        project_root: Path,
+        ledger: EventLedger,
+        command_approval: Callable[[str, int], bool] | None = None,
+    ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
+        self.command_approval = command_approval
+
+    @classmethod
+    def _is_sensitive_name(cls, name: str) -> bool:
+        return _is_sensitive_component(name, cls.SENSITIVE_NAMES, cls.SAFE_ENV_TEMPLATES)
+
+    @classmethod
+    def is_protected_path(cls, raw_path: str | Path) -> bool:
+        return _is_protected_workspace_path(
+            raw_path,
+            cls.EXCLUDED_NAMES,
+            cls.SENSITIVE_NAMES,
+            cls.SAFE_ENV_TEMPLATES,
+        )
 
     @staticmethod
     def definitions() -> list[dict[str, Any]]:
@@ -882,7 +1186,7 @@ class CodingToolbox:
             ),
             function(
                 "read_file",
-                "读取项目中的文本文件，可指定行号范围。不要读取二进制文件或密钥。",
+                "读取项目中的文本文件，可指定行号范围；返回内容带行号，行号仅为显示标记，不属于文件原文。不要读取二进制文件或密钥。",
                 {
                     "path": {"type": "string", "description": "相对项目根目录的文件路径"},
                     "start_line": {"type": "integer", "description": "起始行号，从 1 开始，默认 1"},
@@ -912,7 +1216,7 @@ class CodingToolbox:
             ),
             function(
                 "run_command",
-                "在项目根目录执行必要的测试、检查或构建命令。不要运行未被请求的科研长实验。",
+                "在项目根目录执行必要的测试、检查或构建命令；每条命令都须经用户逐次批准。不要运行未被请求的科研长实验。",
                 {
                     "command": {"type": "string", "description": "要执行的命令"},
                     "timeout_seconds": {"type": "integer", "description": "超时秒数，默认 120，最大 300"},
@@ -935,9 +1239,22 @@ class CodingToolbox:
             raise PermanentError(f"路径越过项目根目录：{raw_path}") from exc
         if not allow_root and candidate == self.project_root:
             raise PermanentError("这里需要文件路径，不能使用项目根目录")
-        if relative.parts and relative.parts[0] in self.EXCLUDED_NAMES:
-            raise PermanentError(f"禁止访问内部目录：{relative.parts[0]}")
+        excluded_names = {name.casefold() for name in self.EXCLUDED_NAMES}
+        for component in relative.parts:
+            if component.casefold() in excluded_names:
+                raise PermanentError(f"禁止访问内部目录：{component}")
+            if self._is_sensitive_name(component):
+                raise PermanentError(f"禁止通过 Agent 文件工具访问敏感路径：{component}")
         return candidate
+
+    @staticmethod
+    def _decode_utf8_text(raw: bytes, path: Path) -> str:
+        if b"\x00" in raw:
+            raise PermanentError(f"拒绝将包含 NUL 字节的文件作为文本读取或编辑：{path.name}")
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise PermanentError(f"文件不是有效 UTF-8 文本，拒绝读取或编辑：{path.name}") from exc
 
     def list_files(self, path: str = ".", depth: int = 3) -> str:
         base = self._resolve(path)
@@ -955,8 +1272,20 @@ class CodingToolbox:
             except OSError as exc:
                 result.append(f"{prefix}[无法读取：{exc}]")
                 continue
+            excluded_names = {name.casefold() for name in self.EXCLUDED_NAMES}
             for child in children:
-                if child.name in self.EXCLUDED_NAMES or child.is_symlink():
+                if (
+                    child.name.casefold() in excluded_names
+                    or self._is_sensitive_name(child.name)
+                ):
+                    continue
+                try:
+                    child.resolve(strict=False).relative_to(self.project_root)
+                except (OSError, RuntimeError, ValueError):
+                    # Do not expose names or metadata from links/junctions that
+                    # resolve outside the workspace, even when is_symlink() is false.
+                    continue
+                if child.is_symlink() or child.is_junction():
                     continue
                 marker = "目录" if child.is_dir() else f"文件 {child.stat().st_size} bytes"
                 result.append(f"{prefix}{child.name}{'/' if child.is_dir() else ''}  [{marker}]")
@@ -973,9 +1302,7 @@ class CodingToolbox:
         raw = target.read_bytes()
         if len(raw) > self.MAX_READ_BYTES:
             raise PermanentError(f"文件过大（{len(raw)} bytes），请只读取相关文件或拆分读取")
-        if b"\x00" in raw:
-            raise PermanentError(f"不读取二进制文件：{path}")
-        text = raw.decode("utf-8", errors="replace")
+        text = self._decode_utf8_text(raw, target)
         lines = text.splitlines()
         start = max(1, int(start_line or 1))
         end = min(len(lines), max(start, int(end_line or 400)), start + 399)
@@ -987,6 +1314,14 @@ class CodingToolbox:
         encoded = str(content).encode("utf-8")
         if len(encoded) > self.MAX_WRITE_BYTES:
             raise PermanentError(f"拒绝写入过大文件（上限 {self.MAX_WRITE_BYTES} bytes）")
+        if b"\x00" in encoded:
+            raise PermanentError(f"拒绝写入包含 NUL 字节的文本文件：{path}")
+        if target.exists():
+            if not target.is_file():
+                raise PermanentError(f"目标不是普通文件，拒绝覆盖：{path}")
+            if target.stat().st_size > self.MAX_WRITE_BYTES:
+                raise PermanentError(f"目标文件过大，拒绝完整重写：{path}")
+            self._decode_utf8_text(target.read_bytes(), target)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(encoded)
         relative = target.relative_to(self.project_root).as_posix()
@@ -997,17 +1332,38 @@ class CodingToolbox:
         target = self._resolve(path, allow_root=False)
         if not target.exists() or not target.is_file():
             raise PermanentError(f"文件不存在：{path}")
+        if not old_text:
+            raise PermanentError("拒绝使用空 old_text，避免意外插入或扩展整份文件")
         raw = target.read_bytes()
         if len(raw) > self.MAX_WRITE_BYTES:
             raise PermanentError(f"文件过大（{len(raw)} bytes），请使用更小范围的编辑")
-        text = raw.decode("utf-8", errors="replace")
-        count = text.count(old_text)
+        text = self._decode_utf8_text(raw, target)
+        matched_old_text = old_text
+        count = text.count(matched_old_text)
+        if count == 0 and "\n" in old_text and "\r" not in old_text:
+            # read_file presents normalized lines, while Windows source files
+            # commonly contain CRLF bytes. Match the source's actual newline
+            # style when the model supplies an otherwise exact LF snippet.
+            for newline in ("\r\n", "\r"):
+                candidate = old_text.replace("\n", newline)
+                candidate_count = text.count(candidate)
+                if candidate_count:
+                    matched_old_text = candidate
+                    count = candidate_count
+                    if "\n" in new_text and "\r" not in new_text:
+                        new_text = new_text.replace("\n", newline)
+                    break
         if count == 0:
             raise PermanentError(f"old_text 在 {path} 中未找到，请先重新读取文件")
         if count > 1 and not replace_all:
             raise PermanentError(f"old_text 在 {path} 中匹配 {count} 次，请提供更精确文本或明确 replace_all=true")
-        updated = text.replace(old_text, new_text, -1 if replace_all else 1)
-        target.write_text(updated, encoding="utf-8")
+        updated = text.replace(matched_old_text, new_text, -1 if replace_all else 1)
+        encoded = updated.encode("utf-8")
+        if len(encoded) > self.MAX_WRITE_BYTES:
+            raise PermanentError(f"拒绝写入过大文件（上限 {self.MAX_WRITE_BYTES} bytes）")
+        if b"\x00" in encoded:
+            raise PermanentError(f"拒绝写入包含 NUL 字节的文本文件：{path}")
+        target.write_bytes(encoded)
         relative = target.relative_to(self.project_root).as_posix()
         self.ledger.append("file_changed", {"operation": "replace", "path": relative, "matches": count})
         return f"已修改 {relative}（匹配 {count} 次）"
@@ -1021,6 +1377,28 @@ class CodingToolbox:
         if any(fragment in lowered for fragment in blocked):
             raise PermanentError("为保护项目，拒绝执行破坏性命令")
         timeout = max(1, min(int(timeout_seconds or 120), 300))
+        self.ledger.append(
+            "command_approval_requested",
+            {"command": command, "timeout_seconds": timeout, "cwd": str(self.project_root)},
+        )
+        approved = False
+        reason = "未配置用户审批回调"
+        if self.command_approval is not None:
+            try:
+                approved = bool(self.command_approval(command, timeout))
+                reason = "用户拒绝或审批超时"
+            except Exception as exc:
+                reason = f"审批界面异常：{type(exc).__name__}: {exc}"
+        if not approved:
+            self.ledger.append(
+                "command_approval_denied",
+                {"command": command, "reason": reason},
+            )
+            raise PermanentError(f"命令未执行：{reason}。Agent 不应重试该命令。")
+        self.ledger.append(
+            "command_approval_granted",
+            {"command": command, "timeout_seconds": timeout},
+        )
         self.ledger.append("tool_called", {"tool": "run_command", "command": command})
         try:
             process = subprocess.Popen(
@@ -1046,8 +1424,8 @@ class CodingToolbox:
 
     def git_diff(self) -> str:
         manager = GitManager(self.project_root)
-        status = manager.status()
-        changes = manager.diff().strip() or "（工作区没有可展示的文本 diff）"
+        status = manager.status(protect_sensitive=True)
+        changes = manager.diff(protect_sensitive=True).strip() or "（工作区没有可展示的文本 diff）"
         return f"状态：\n{status}\n\nDiff：\n{changes[-30000:]}"
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
@@ -1071,14 +1449,16 @@ class CodingAgent:
     MAX_TURNS = 32
     SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent，工作方式类似 Codex。
 
-你的任务是直接帮助用户修改当前项目代码，而不是泛泛解释代码。你可以使用工具查看文件、精确编辑文件、运行必要的测试/检查命令和查看 Git diff。
+你的任务是直接帮助用户修改当前项目代码，而不是泛泛解释代码。你可以使用工具查看文件、精确编辑文件、请求运行必要的测试/检查命令和查看 Git diff。
 
 工作规则：
 1. 先了解项目结构并读取相关文件，再修改代码；不要凭空猜文件内容。
-2. 只修改完成用户请求所需的文件；不要触碰 .git、.research、密钥、环境变量和数据集。
+2. 用户任务授权范围内的文件读取和编辑可直接执行，不要只提出方案或在执行前二次询问；超出请求范围时先询问。只修改完成用户请求所需的文件；不要触碰 .git、.research、密钥、环境变量和数据集。
 3. 修改后运行与本次改动相关的最小测试或静态检查。除非用户明确要求，不要运行长时间科研实验、训练或下载大文件。
 4. 遇到工具报错，分析报错并修复；不要假装已经完成。
-5. 最后简要说明改了什么、验证了什么、仍有什么限制。所有文件修改和工具调用都会被本地记录。
+5. 每条 shell 命令都会等待用户单独批准；用户拒绝或审批超时后，不得重试、变形或拆分同一命令来规避拒绝。
+6. 用户明确要求的工具调用或检查（如 git_diff、测试、lint）是任务完成条件；必须实际执行并依据工具结果汇报。没有执行或执行失败时，要明确说未完成/未验证，不能把请求、计划或工具 JSON 文本当作已发生的结果。
+7. 最后简要说明改了什么、验证了什么、仍有什么限制。所有文件修改和工具调用都会被本地记录。
 """
 
     def __init__(
@@ -1088,13 +1468,14 @@ class CodingAgent:
         git: GitManager,
         event_callback: Callable[[str, dict[str, Any]], None] | None = None,
         summary_settings: SummarySettings | None = None,
+        command_approval: Callable[[str, int], bool] | None = None,
     ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
         self.git = git
         self.event_callback = event_callback
         self.summary_settings = summary_settings or SummarySettings.load(self.project_root)
-        self.toolbox = CodingToolbox(self.project_root, ledger)
+        self.toolbox = CodingToolbox(self.project_root, ledger, command_approval=command_approval)
 
     def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self.event_callback:
@@ -1111,7 +1492,7 @@ class CodingAgent:
         return (
             f"项目根目录：{self.project_root}\n\n"
             f"当前文件树：\n{self.toolbox.list_files('.', 3)}\n\n"
-            f"Git 状态：\n{self.git.status()}\n\n"
+            f"Git 状态：\n{self.git.status(protect_sensitive=True)}\n\n"
             f"项目指令 AGENTS.md：\n{instruction or '未找到'}"
         )
 
@@ -1141,6 +1522,8 @@ class CodingAgent:
             "updated_at": now_iso(),
             "last_prompt": prompt,
             "git_base_sha": self.git.head_sha(),
+            "git_preexisting_paths": sorted(self.git.status_paths()),
+            "agent_changed_paths": [],
             "git_result_sha": "",
             "messages": [
                 {"role": "system", "content": self.SYSTEM_PROMPT},
@@ -1155,6 +1538,39 @@ class CodingAgent:
         self.ledger.append("coding_session_started", {"session_id": session_id, "prompt": prompt})
         self._save_session(session)
         return session
+
+    def _auto_commit_warning(
+        self,
+        skipped_paths: dict[str, dict[str, str | int]],
+        commit_sha: str,
+    ) -> str:
+        if not skipped_paths:
+            return ""
+        reason_labels = {
+            "protected_path": "敏感/内部路径",
+            "outside_workspace": "越出工作区的路径",
+            "linked_path": "符号链接或目录联接",
+            "path_unavailable": "无法安全核验的路径",
+            "file_too_large": f"超过 {self.git.MAX_AUTO_COMMIT_FILE_BYTES:,} bytes 自动提交上限",
+            "non_text_file": "二进制或非 UTF-8 文件",
+        }
+        lines = ["Git 自动提交保护：以下变更未自动提交，仍保留在工作区，可在 Git 面板审核后手动提交："]
+        for relative, detail in sorted(skipped_paths.items())[:12]:
+            label = json.dumps(relative, ensure_ascii=False)
+            reason = reason_labels.get(str(detail.get("reason")), "安全策略拦截")
+            size = detail.get("size_bytes")
+            if isinstance(size, int):
+                reason += f"（{size:,} bytes）"
+            lines.append(f"- {label}：{reason}")
+        remaining = len(skipped_paths) - min(12, len(skipped_paths))
+        if remaining:
+            lines.append(f"- 另有 {remaining} 个文件因同一安全策略保留未提交。")
+        lines.append(
+            f"其余安全文件已提交 {commit_sha[:12]}。"
+            if commit_sha
+            else "本次没有安全文件产生自动提交。"
+        )
+        return "\n".join(lines)
 
     @staticmethod
     def _text_content(content: Any) -> str:
@@ -1186,6 +1602,9 @@ class CodingAgent:
                     if isinstance(function, dict):
                         name = str(function.get("name") or "unknown")
                         chunks.append(f"[tool_call] {name}")
+        commit_warning = str(session.get("git_auto_commit_warning") or "").strip()
+        if commit_warning:
+            chunks.append(f"[harness_git_safety]\n{commit_warning}")
         source = "\n\n".join(chunks)
         limit = self.summary_settings.context_chars
         if len(source) <= limit:
@@ -1324,7 +1743,11 @@ class CodingAgent:
         session_id = payload["session_id"]
         prompt = payload["prompt"]
         session = self._load_session(session_id, prompt)
+        session.setdefault("git_preexisting_paths", sorted(self.git.status_paths()))
+        session.setdefault("agent_changed_paths", [])
         if session.get("last_prompt") != prompt:
+            session["git_preexisting_paths"] = sorted(self.git.status_paths())
+            session["agent_changed_paths"] = []
             session["messages"].append(
                 {
                     "role": "user",
@@ -1338,6 +1761,8 @@ class CodingAgent:
         self._save_session(session)
         provider = OpenAICompatibleProvider.from_env()
         messages = session["messages"]
+        workspace_revision = 0
+        diff_verified_revision = -1
 
         for turn in range(1, self.MAX_TURNS + 1):
             self.ledger.append("model_call_started", {"session_id": session_id, "turn": turn})
@@ -1349,20 +1774,128 @@ class CodingAgent:
                 request_id=f"{session_id}-turn-{turn}",
             )
             content = self._text_content(message.get("content"))
-            assistant_message: dict[str, Any] = {"role": "assistant", "content": content}
             tool_calls = message.get("tool_calls") or []
+            # Ollama templates commonly serialize assistant content *instead of*
+            # tool calls when both fields are present. Keep narration in the UI
+            # event below, but give the next model turn an unambiguous call record.
+            assistant_message: dict[str, Any] = {
+                "role": "assistant",
+                "content": "" if tool_calls else content,
+            }
             if tool_calls:
                 assistant_message["tool_calls"] = tool_calls
             messages.append(assistant_message)
-            if content:
+            if content and tool_calls:
                 self._emit("assistant", {"session_id": session_id, "text": content})
-            self._save_session(session)
+            if tool_calls:
+                self._save_session(session)
 
             if not tool_calls:
+                preexisting_paths = set(session.get("git_preexisting_paths") or [])
+                changed_paths = (self.git.status_paths() - preexisting_paths) | (
+                    set(session.get("agent_changed_paths") or []) - preexisting_paths
+                )
+                if changed_paths and diff_verified_revision != workspace_revision:
+                    # The model's premature final text is not shown or retained;
+                    # it must review the actual diff before producing a final answer.
+                    messages.pop()
+                    call_id = new_id("call")
+                    tool_call = {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": "git_diff", "arguments": "{}"},
+                    }
+                    messages.append({"role": "assistant", "content": "", "tool_calls": [tool_call]})
+                    self.ledger.append(
+                        "tool_call_started",
+                        {
+                            "session_id": session_id,
+                            "name": "git_diff",
+                            "source": "harness_precommit",
+                            "reason": "unverified_agent_changes",
+                        },
+                    )
+                    self._emit(
+                        "tool_started",
+                        {
+                            "session_id": session_id,
+                            "name": "git_diff",
+                            "arguments": {},
+                            "source": "harness_precommit",
+                        },
+                    )
+                    try:
+                        diff_result = str(self.toolbox.execute("git_diff", {}))[-30000:]
+                    except Exception as exc:
+                        error = f"提交前 Git diff 检查失败：{type(exc).__name__}: {exc}"
+                        self.ledger.append(
+                            "tool_result",
+                            {
+                                "session_id": session_id,
+                                "name": "git_diff",
+                                "source": "harness_precommit",
+                                "error": error[:1000],
+                            },
+                        )
+                        self._emit(
+                            "tool_result",
+                            {
+                                "session_id": session_id,
+                                "name": "git_diff",
+                                "source": "harness_precommit",
+                                "result": error,
+                            },
+                        )
+                        session["status"] = "failed"
+                        session["error"] = error
+                        session["updated_at"] = now_iso()
+                        self._save_session(session)
+                        raise PermanentError(error) from exc
+                    messages.append({"role": "tool", "tool_call_id": call_id, "content": diff_result})
+                    self.ledger.append(
+                        "tool_result",
+                        {
+                            "session_id": session_id,
+                            "name": "git_diff",
+                            "source": "harness_precommit",
+                            "result": diff_result[:3000],
+                        },
+                    )
+                    self._emit(
+                        "tool_result",
+                        {
+                            "session_id": session_id,
+                            "name": "git_diff",
+                            "result": diff_result,
+                            "source": "harness_precommit",
+                        },
+                    )
+                    diff_verified_revision = workspace_revision
+                    session["updated_at"] = now_iso()
+                    self._save_session(session)
+                    continue
+
+                if content:
+                    self._emit("assistant", {"session_id": session_id, "text": content})
+                self._save_session(session)
                 summary = " ".join(prompt.split())[:72] or session_id
                 session["status"] = "completed"
                 session["final_message"] = content
-                session["git_result_sha"] = self.git.commit_changes(f"[codex] {summary}")
+                commit_paths, skipped_paths = self.git.filter_auto_commit_paths(changed_paths)
+                session["git_result_sha"] = self.git.commit_paths(f"[codex] {summary}", commit_paths)
+                session["git_auto_commit_skipped_paths"] = skipped_paths
+                commit_warning = self._auto_commit_warning(skipped_paths, session["git_result_sha"])
+                if commit_warning:
+                    session["git_auto_commit_warning"] = commit_warning
+                    session["final_message"] = f"{content.rstrip()}\n\n{commit_warning}".strip()
+                    payload = {
+                        "session_id": session_id,
+                        "skipped_paths": skipped_paths,
+                        "limit_bytes": self.git.MAX_AUTO_COMMIT_FILE_BYTES,
+                        "message": commit_warning,
+                    }
+                    self.ledger.append("git_auto_commit_skipped_paths", payload)
+                    self._emit("git_auto_commit_skipped_paths", payload)
                 session["updated_at"] = now_iso()
                 conversation_summary = self._summarize_session(provider, session, phase="final", turn=turn)
                 self._save_session(session)
@@ -1383,6 +1916,8 @@ class CodingAgent:
                         "git_result_sha": session["git_result_sha"],
                         "summary": conversation_summary,
                         "summary_path": session.get("summary_path", ""),
+                        "git_auto_commit_skipped_paths": skipped_paths,
+                        "git_auto_commit_warning": commit_warning,
                     },
                 )
                 return {
@@ -1391,6 +1926,8 @@ class CodingAgent:
                     "text": content,
                     "summary": conversation_summary,
                     "summary_path": session.get("summary_path", ""),
+                    "git_auto_commit_skipped_paths": skipped_paths,
+                    "git_auto_commit_warning": commit_warning,
                 }
 
             for call in tool_calls:
@@ -1398,14 +1935,26 @@ class CodingAgent:
                 name = str(function.get("name", ""))
                 call_id = str(call.get("id", new_id("tool")))
                 raw_arguments = function.get("arguments", "{}")
+                tool_succeeded = False
                 try:
                     arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
                     if not isinstance(arguments, dict):
                         raise ValueError("工具参数必须是 JSON 对象")
                     self._emit("tool_started", {"session_id": session_id, "name": name, "arguments": arguments})
                     result = self.toolbox.execute(name, arguments)
+                    tool_succeeded = True
                 except Exception as exc:  # Tool errors go back to the model for correction.
                     result = f"工具执行失败：{type(exc).__name__}: {exc}"
+                if tool_succeeded:
+                    if name in {"write_file", "replace_in_file"}:
+                        changed = set(session.get("agent_changed_paths") or [])
+                        changed.add(str(arguments.get("path", "")))
+                        session["agent_changed_paths"] = sorted(path for path in changed if path)
+                        workspace_revision += 1
+                    elif name == "run_command":
+                        workspace_revision += 1
+                    elif name == "git_diff":
+                        diff_verified_revision = workspace_revision
                 result = str(result)[-30000:]
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
                 self.ledger.append(

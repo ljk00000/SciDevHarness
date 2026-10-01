@@ -1,0 +1,2 @@
+# Pin the minimal Qt runtime used by standalone builds; upgrade only after package and UI smoke tests pass.
+PySide6-Essentials==6.11.2
