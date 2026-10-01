@@ -5,6 +5,7 @@
 - 收紧 SVG 修复目标选择：只在用户明确要求修复已有 `.svg` 时原位覆盖；普通创建仍避免覆盖已有文件。提示词增加可见眼睛、对比度等要求。
 - 增强本机烟测的语义结构检查与定向修复，并新增重复 ID、短鸟喙等回归测试。完整单测 80 项通过；编译、`pip check`、依赖 smoke、QML lint 通过。
 - 本机 Qwen 实测虽然通过 Harness 工具写出 SVG 并成功渲染，但画面仍难辨认且缺少可见眼睛，验收脚本正确判失败；没有把可渲染误报成生成质量合格。
+- 提交 `d4840dd` 已推送至公开仓库 `ljk00000/SciDevHarness`；远端 `master` SHA 一致，仓库确认公开、工作区干净。GitHub Actions Python 3.12/3.13/3.14 全部通过：[CI #36858516069](https://github.com/ljk00000/SciDevHarness/actions/runs/36858516069)。
 
 ## 2026-10-01 19:37（Asia/Shanghai）· GitHub CI 路径兼容修复通过
 
