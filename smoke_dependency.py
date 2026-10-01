@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix="scidev-client-smoke-") as temp:
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root))
     ledger = EventLedger(smoke_root)
-    assert ledger.events_path.parent == smoke_root / ".research"
+    assert ledger.events_path.parent == (smoke_root / ".research").resolve()
     source_file = smoke_root / "smoke_edit.py"
     source_file.write_text("value = 1\n", encoding="utf-8")
     window = ClientWindow(smoke_root)
