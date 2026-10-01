@@ -402,6 +402,8 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(localized_repair_names, {"read_file", "replace_in_file", "git_diff"})
             self.assertEqual(label_only_repair_names, {"read_file", "replace_in_file", "git_diff"})
             self.assertIn("replace_in_file", repair_names)
+            self.assertEqual(agent._tool_choice_for_tools(simple_names), "required")
+            self.assertEqual(agent._tool_choice_for_tools(localized_repair_names), "auto")
 
     def test_svg_repair_is_not_reclassified_as_creation_and_updates_its_named_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -735,29 +737,34 @@ class CoreTests(unittest.TestCase):
                 self.assertFalse(SummarySettings.load(root).enabled)
 
     def test_agent_prompt_requires_explicit_checks_to_be_run_before_completion(self) -> None:
-        self.assertIn("用户明确要求的工具调用或检查", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("依据工具结果汇报", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("工具 JSON 文本当作已发生的结果", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("文件读取和编辑可直接执行", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("不要只提出方案或在执行前二次询问", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("立即选用清楚的文件名并在工作区根目录调用 write_file", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("只有任务依赖现有文件时才调用 list_files", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("Use the narrowest available file tool", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("batch them in one replace_in_file call", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("Do not substitute code blocks or claims for an edit", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("Do not use shell commands or downloads for a simple SVG/artwork", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("Compose before styling: choose a canvas, orientation, and readable relative scale", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("nearby but disconnected shapes do not show the action", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("When an actor rides or operates a vehicle or tool", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("never replace these relationships with a solid block or detached blobs", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("treat quoted/original creation requests as context, not as a new-file instruction", CodingAgent.SYSTEM_PROMPT.casefold())
-        self.assertIn("Preserve defining anatomy and posture for any named biological subject", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("give major visible parts unique semantic IDs", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("call write_file exactly once", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("do not include a duplicate full artifact", CodingAgent.SYSTEM_PROMPT)
-        self.assertNotIn("pelican", CodingAgent.SYSTEM_PROMPT.casefold())
-        self.assertNotIn("bicycle", CodingAgent.SYSTEM_PROMPT.casefold())
-        self.assertIn("Never claim an SVG was rendered or visually verified", CodingAgent.SYSTEM_PROMPT)
+        prompt = CodingAgent.SYSTEM_PROMPT
+        self.assertLessEqual(len(prompt), 900)
+        for required_rule in (
+            "直接用工具完成用户在工作区内的请求",
+            "`write_file` 一次",
+            "不要为名称、路径、尺寸或风格追问",
+            "简单图像/SVG 不用 shell 或下载",
+            "将引用的旧请求只视为背景",
+            "同文件多项独立精确修改可一次批量调用",
+            "不得访问 `.git`、`.research`、密钥、环境变量、数据集或工作区外路径",
+            "运行命令须逐条经 UI 批准",
+            "不得重试、拆分或变形规避",
+            "用户点名的工具/检查必须实际执行",
+            "不能将请求、计划或工具 JSON 当作结果",
+            "完成后简述改动、验证和限制",
+            "实质歧义会改变结果",
+            "不要擅自运行长实验/训练或下载大文件",
+            "连接/接触关系",
+            "动作、承载、操作须表现真实支撑和接触点",
+            "分离的近邻形状或色块不代表交互",
+            "viewBox 裁切",
+            "少于 60 个元素并闭合标签",
+            "只有工具确实确认后才能声称已完成渲染/验证",
+        ):
+            with self.subTest(rule=required_rule):
+                self.assertIn(required_rule, prompt)
+        self.assertNotIn("pelican", prompt.casefold())
+        self.assertNotIn("bicycle", prompt.casefold())
 
     def test_summary_checkpoint_runs_every_configured_turns(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1364,10 +1371,11 @@ class CoreTests(unittest.TestCase):
             "http://localhost:11434/v1", "ollama", "qwen-test", text_tool_call_fallback=True
         )
         with patch("scidev_core.urlopen", return_value=BytesIO(response_body)) as opener:
-            parsed = enabled.chat(messages, tools=tools, max_tokens=12000)
+            parsed = enabled.chat(messages, tools=tools, max_tokens=12000, tool_choice="required")
         self.assertEqual(parsed["tool_calls"][0]["function"]["name"], "write_file")
         request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(request_body["max_tokens"], 12000)
+        self.assertEqual(request_body["tool_choice"], "required")
         self.assertTrue(request_body["stream"])
         self.assertTrue(request_body["messages"][0]["content"].startswith("Local tool compatibility mode:"))
 

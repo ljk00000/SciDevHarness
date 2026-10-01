@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-02 06:59（Asia/Shanghai）· 工具调用与 SVG 回归修正
+
+- 精简通用系统提示；工具单一为 `write_file` 时要求工具调用。修复 SVG 工具结果误判、局部编辑提示字段和对比度校验，并限制自动修复轮数。
+- 全量 `unittest` 138/138 通过，`git diff --check` 通过。固定 Qwen2.5-Coder-7B SVG smoke 仍产生未通过验证的结果；此项保持失败记录。
+- 常见凭据格式扫描未命中；`gitleaks` 未安装，扫描不等同完整凭据审计。
+
 ## 2026-10-02 06:01（Asia/Shanghai）· 创建并发布独立公开仓库
 
 - 新建公开仓库 [ljk00000/SciDevHarness-Research-IDE](https://github.com/ljk00000/SciDevHarness-Research-IDE)，默认分支 `main`。提交 `9c91d52e46620691f51f26cd2f17ee24b20ca52b` 已上传，`git ls-remote` 与本地 SHA 一致；原有六个公开仓库未覆盖。

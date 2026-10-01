@@ -67,8 +67,10 @@ REQUEST_METRIC_FIELDS = (
     "tool_argument_bytes",
 )
 MAX_SVG_BYTES = 2_000_000
+MAX_REPAIR_ATTEMPTS = 3
 RENDER_WIDTH = 1200
 RENDER_HEIGHT = 800
+SMOKE_BACKGROUND = QColor("#f4f7fb")
 
 _QT_GUI_APPLICATION: QGuiApplication | None = None
 
@@ -118,9 +120,13 @@ def pelican_repair_prompt(filename: str, failure_reason: str) -> str:
             repair_items.append(
                 "Replace each unsupported paint value with a valid hex color; use teal `#168b83`, "
                 "ochre `#e4b35b`, coral `#e9785b`, or navy `#18324b` as appropriate."
-            )
+        )
         if any("must be an unfilled, visibly outlined tire" in item for item in malformed_parts):
-            repair_items.append("Set both wheel shapes to `fill=\"none\"` with a visible navy stroke.")
+            repair_items.append(
+                "In each `<g id=\"left-wheel\">` and `<g id=\"right-wheel\">`, "
+                "edit only its child circle: preserve `cx`, `cy`, and `r`, set `fill=\"none\"`, "
+                "and add `stroke=\"#18324b\" stroke-width=\"8\"`."
+            )
         clipped = [item.removesuffix(" is clipped by the viewBox") for item in malformed_parts if item.endswith(" is clipped by the viewBox")]
         if clipped:
             repair_items.append(
@@ -132,7 +138,7 @@ def pelican_repair_prompt(filename: str, failure_reason: str) -> str:
         guidance = "\n".join(f"- {item}" for item in repair_items)
         return f"""Repair only these localized SVG issues in {target}; preserve the existing drawing and all passing geometry. Validator: {failure_reason}
 {guidance}
-Call the `replace_in_file` tool now with exact `old_string` and `new_string` arguments, then call `git_diff`. Do not print a Markdown diff or ask for confirmation instead of invoking the tools. Do not redraw the whole SVG or use shell."""
+Read the file first. Then call `replace_in_file` with one `edits` array; each item must use the tool's exact `old_text` and `new_text` keys and match one original circle tag. Call `git_diff` after the edit. Do not print a Markdown diff or ask for confirmation instead of invoking the tools. Do not redraw the whole SVG or use shell."""
     missing_guidance = {
         "left-wheel": "Give the rear wheel its own unfilled `<circle id=\"left-wheel\">` at the rear frame hub.",
         "right-wheel": "Give the front wheel its own unfilled `<circle id=\"right-wheel\">` at the front frame hub.",
@@ -160,7 +166,7 @@ Call the `replace_in_file` tool now with exact `old_string` and `new_string` arg
     ):
         ids = ", ".join(f"`{part}`" for part in missing_parts)
         return f"""The first SVG preflight found missing semantic IDs only; detailed geometry checks run after IDs are present. Repair only {target} using a targeted label-only edit for these already-visible matching shapes: {ids}.
-Preserve the existing drawing, coordinates, viewBox, colors, and layer order. Add IDs to existing shapes or wrap those shapes; do not add, move, resize, or redraw artwork in this pass. Make one `replace_in_file` call with an `edits` array containing all exact replacements; do not split the batch across turns. Do not output a full SVG or Markdown diff, and do not claim geometry is verified."""
+Read the file first. Preserve the existing drawing, coordinates, viewBox, colors, and layer order. Add each ID only to its matching visible shape; never label an unrelated shape. Use one `replace_in_file` call with an `edits` array; every item must use `old_text` and `new_text`, and `old_text` must be a complete unique SVG element tag copied exactly from the file. Do not use generic fragments such as `<circle>` or `fill=`. Do not add, move, resize, or redraw artwork in this pass. Do not output a full SVG or Markdown diff, and do not claim geometry is verified."""
     if missing_parts and len(missing_parts) <= 6 and not malformed_parts and not duplicate_ids:
         guidance_lines = []
         for part in missing_parts:
@@ -209,10 +215,10 @@ Read the file. If a correct visible shape exists, add its missing ID; otherwise 
             edits.append(f"- Add missing `{identifier}`: {instruction}")
         edits.extend(f"- {identifier}: {instruction}" for identifier, instruction in targeted_geometry.items())
         edit_instructions = "\n".join(edits)
-        return f"""Repair only the listed missing parts and geometry in {target}. Preserve all passing artwork, IDs, classes, and layer order. Validator: {failure_reason}
+        return f"""Make a targeted localized repair in {target} using only exact `replace_in_file` edits. Preserve all passing artwork, IDs, classes, and layer order. Validator: {failure_reason}
 Targeted shape edits:
 {edit_instructions}
-Read the existing SVG first. When an ID is on a `<g>`, edit only its child shape and keep the wrapper. Use small exact `replace_in_file` edits, then inspect `git_diff`; do not rewrite the file or use shell."""
+Read the existing SVG first. When an ID is on a `<g>`, edit only its child shape and keep the wrapper. Batch independent changes in one `edits` array with the tool's `old_text`/`new_text` fields, then inspect `git_diff`; do not rewrite the file or use shell."""
     if len(missing_parts) >= 7 or (len(malformed_parts) >= 3 and (duplicate_ids or unmatched_geometry)):
         return f"""Repair the existing SVG in {target}; it has several structural errors. Replace it once with a complete, polished pelican riding a bicycle, but preserve the valid artwork and layer order. Validator: {failure_reason}
 Use viewBox="0 0 640 420", balanced whitespace, navy outlines `#18324b`, teal `#168b83`, ochre `#e4b35b`, coral `#e9785b`, and background `#f4f7fb`; use only valid CSS/SVG color values, preferably these hex codes. Fixed layout: wheel centers (130,325) and (500,325), radius 60; frame polyline passes through both hubs and crank (390,265), with seat joint (275,230); saddle near (275,225), handlebar near (452,205); bird body around x=275..390/y=122..213, head centered (370,140) with radius 20, bill projecting right to x=468, and pouch hanging below. Connect both legs to the saddle/pedal and the reaching wing tip to the handlebar. Draw radial spokes, a fork and coherent anatomy; keep every shape inside the canvas.
@@ -221,12 +227,12 @@ Use each exact ID once: left-wheel, right-wheel, bicycle-frame, bicycle-fork, bi
         return f"""Repair duplicate SVG IDs in {target} only. Validator: {failure_reason}
 For each listed duplicate, preserve the ID on the correct primary shape and rename redundant copies to unique descriptive IDs; for `bicycle-spokes`, prefer one `<g id="bicycle-spokes">` around its spoke lines. Read the file, make the smallest exact `replace_in_file` edit(s), then inspect `git_diff`. Preserve all other artwork; do not use shell."""
     if "left-wheel" in missing_parts or "right-wheel" in missing_parts or "must be a circle" in failure_reason:
-        return f"""Repair only the wheel error in {target}. Validator: {failure_reason}
+        return f"""Repair only the localized wheel error in {target}. Validator: {failure_reason}
 Read the file, preserve all correct artwork, and use exact `replace_in_file` edits only. Replace both defective/prefixed wheel elements with these exact circles, then inspect `git_diff`; do not rewrite the whole SVG or use shell:
 `<circle id="left-wheel" cx="125" cy="326" r="72" fill="none" stroke="#18324B" stroke-width="8"/>`
 `<circle id="right-wheel" cx="515" cy="326" r="72" fill="none" stroke="#18324B" stroke-width="8"/>`"""
     if "viewBox is too small" in failure_reason:
-        return f"""Repair only the root `viewBox` in {target}. Validator: {failure_reason}
+        return f"""Repair only the localized root `viewBox` issue in {target}. Validator: {failure_reason}
 Read the current SVG. Preserve the drawing; adjust the root viewBox to fully contain it with dimensions at least 300x180, scaling the artwork uniformly if required. Use one precise `replace_in_file`, inspect `git_diff`, and do not use shell."""
     return f"""Repair only the reported issue in {target}. Validator: {failure_reason}
 Read the current SVG, preserve every passing element, and use the smallest exact `replace_in_file` edit(s). Inspect `git_diff`; do not rewrite the full file or use shell."""
@@ -275,16 +281,51 @@ def latest_svg_write_path(file_calls: list[dict[str, Any]]) -> str | None:
 
 
 def collect_svg_mutations(events: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
-    """Track both initial writes and targeted replacements of SVG artifacts."""
-    return [
-        data
-        for event_name, data in events
-        if event_name == "tool_started"
-        and data.get("source") != "harness_precommit"
-        and data.get("name") in {"write_file", "replace_in_file"}
-        and isinstance(data.get("arguments"), dict)
-        and str(data["arguments"].get("path", "")).casefold().endswith(".svg")
-    ]
+    """Track only successful initial writes and targeted replacements of SVG artifacts."""
+    pending: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    successful: list[dict[str, Any]] = []
+    for event_name, data in events:
+        name = str(data.get("name", ""))
+        session_id = str(data.get("session_id", ""))
+        key = (session_id, name)
+        if (
+            event_name == "tool_started"
+            and data.get("source") != "harness_precommit"
+            and name in {"write_file", "replace_in_file"}
+            and isinstance(data.get("arguments"), dict)
+            and str(data["arguments"].get("path", "")).casefold().endswith(".svg")
+        ):
+            pending.setdefault(key, []).append(data)
+        elif event_name == "tool_result" and pending.get(key):
+            call = pending[key].pop(0)
+            result = str(data.get("result", ""))
+            if data.get("success") is not False and not result.startswith("工具执行失败："):
+                successful.append(call)
+    return successful
+
+
+def repair_guidance_for_failed_edit(events: list[tuple[str, dict[str, Any]]], session_id: str) -> str:
+    """Return bounded, actionable guidance only for a failed exact SVG replacement."""
+    for event_name, data in reversed(events):
+        if (
+            event_name != "tool_result"
+            or str(data.get("session_id", "")) != session_id
+            or data.get("name") != "replace_in_file"
+        ):
+            continue
+        result = str(data.get("result", ""))
+        if "old_text matched" in result:
+            return (
+                "The previous `replace_in_file` call failed because `old_text` was not unique. "
+                "Reread the file and use the complete exact SVG element tag as `old_text`; do not "
+                "use a generic fragment or set `replace_all`."
+            )
+        if "Exact old_text not found" in result:
+            return (
+                "The previous `replace_in_file` call failed because `old_text` did not match. "
+                "Reread the file and copy the complete current SVG element exactly before retrying."
+            )
+    return ""
 
 
 def collect_shell_requests(events: list[tuple[str, dict[str, Any]]]) -> list[dict[str, str]]:
@@ -381,6 +422,23 @@ def _is_valid_svg_paint(value: str) -> bool:
     return QColor(paint).isValid()
 
 
+def _paint_is_visible_against_canvas(value: str) -> bool:
+    """Reject fills that disappear into the smoke preview's fixed canvas color."""
+    color = QColor(value)
+    if not color.isValid():
+        return False
+    alpha = color.alphaF()
+    effective = (
+        round(color.red() * alpha + SMOKE_BACKGROUND.red() * (1 - alpha)),
+        round(color.green() * alpha + SMOKE_BACKGROUND.green() * (1 - alpha)),
+        round(color.blue() * alpha + SMOKE_BACKGROUND.blue() * (1 - alpha)),
+    )
+    delta = math.sqrt(
+        sum((channel - background) ** 2 for channel, background in zip(effective, SMOKE_BACKGROUND.getRgb()[:3]))
+    )
+    return delta >= 24
+
+
 def _collect_illustration_geometry_issues(
     semantic_elements: dict[str, ET.Element],
     identified_elements: dict[str, ET.Element],
@@ -414,9 +472,14 @@ def _collect_illustration_geometry_issues(
     head_size = min(head_bounds.width(), head_bounds.height()) / 2
     if head_size < 8:
         issues.append("pelican-head is too small to read as a distinct bird head")
-    head_fill = _svg_presentation_value(head, "fill", parents, css_rules).casefold()
-    if head_fill in {"none", "transparent"}:
-        issues.append("pelican-head needs a filled silhouette, not an empty outlined ring")
+    head_fill = _svg_presentation_value(head, "fill", parents, css_rules)
+    head_stroke = _svg_presentation_value(head, "stroke", parents, css_rules)
+    if (
+        head_fill.casefold() in {"", "none", "transparent"}
+        or not _paint_is_visible_against_canvas(head_fill)
+        and not _paint_is_visible_against_canvas(head_stroke)
+    ):
+        issues.append("pelican-head needs a filled silhouette that contrasts with the canvas")
 
     eye = semantic_elements["pelican-eye"]
     eye_bounds = bounds["pelican-eye"]
@@ -440,9 +503,9 @@ def _collect_illustration_geometry_issues(
     body_tag = _svg_tag_name(body)
     if body_tag == "path" and not re.search(r"[cqst]", body.attrib.get("d", ""), re.I):
         issues.append("pelican-body path must use curved geometry rather than a rectangle-like polygon")
-    body_fill = _svg_presentation_value(body, "fill", parents, css_rules).casefold()
+    body_fill = _svg_presentation_value(body, "fill", parents, css_rules)
     body_stroke = _svg_presentation_value(body, "stroke", parents, css_rules)
-    if body_fill in {"", "none", "white", "#fff", "#ffffff"} and not body_stroke:
+    if not _paint_is_visible_against_canvas(body_fill) and not _paint_is_visible_against_canvas(body_stroke):
         issues.append("pelican-body has too little contrast against the blank canvas")
     body_bounds = bounds["pelican-body"]
     if min(body_bounds.width(), body_bounds.height(), head_bounds.width(), head_bounds.height()) <= 0:
@@ -462,9 +525,14 @@ def _collect_illustration_geometry_issues(
         issues.append("pelican-head is detached from the body instead of forming one rider silhouette")
 
     wing = semantic_elements["pelican-wing"]
-    wing_fill = _svg_presentation_value(wing, "fill", parents, css_rules).casefold()
-    if wing_fill in {"", "none", "transparent"}:
-        issues.append("pelican-wing must have a visible fill")
+    wing_fill = _svg_presentation_value(wing, "fill", parents, css_rules)
+    wing_stroke = _svg_presentation_value(wing, "stroke", parents, css_rules)
+    if (
+        wing_fill.casefold() in {"", "none", "transparent"}
+        or not _paint_is_visible_against_canvas(wing_fill)
+        and not _paint_is_visible_against_canvas(wing_stroke)
+    ):
+        issues.append("pelican-wing must have a visible fill or outline distinct from the canvas")
     wing_bounds = bounds["pelican-wing"]
     wing_area = max(1.0, wing_bounds.width() * wing_bounds.height())
     wing_overlap = body_bounds.intersected(wing_bounds)
@@ -475,8 +543,14 @@ def _collect_illustration_geometry_issues(
     pouch_path = pouch.attrib.get("d", "")
     if not re.search(r"[cqst]", pouch_path, re.I) or not re.search(r"z\s*$", pouch_path, re.I):
         issues.append("pelican-pouch must be a closed curved shape")
-    if _svg_presentation_value(pouch, "fill", parents, css_rules).casefold() in {"", "none", "transparent"}:
-        issues.append("pelican-pouch must have a visible fill")
+    pouch_fill = _svg_presentation_value(pouch, "fill", parents, css_rules)
+    pouch_stroke = _svg_presentation_value(pouch, "stroke", parents, css_rules)
+    if (
+        pouch_fill.casefold() in {"", "none", "transparent"}
+        or not _paint_is_visible_against_canvas(pouch_fill)
+        and not _paint_is_visible_against_canvas(pouch_stroke)
+    ):
+        issues.append("pelican-pouch must have a visible fill or outline distinct from the canvas")
     pouch_bounds = bounds["pelican-pouch"]
     if pouch_bounds.width() > head_size * 3.0 or pouch_bounds.top() <= head_bounds.center().y():
         issues.append("pelican-pouch must be a compact throat shape hanging below the head/bill")
@@ -505,7 +579,8 @@ def _collect_illustration_geometry_issues(
 
     reaching_wing = semantic_elements["pelican-wing-reaching"]
     reaching_wing_path = reaching_wing.attrib.get("d", "")
-    reaching_wing_fill = _svg_presentation_value(reaching_wing, "fill", parents, css_rules).casefold()
+    reaching_wing_fill = _svg_presentation_value(reaching_wing, "fill", parents, css_rules)
+    reaching_wing_stroke = _svg_presentation_value(reaching_wing, "stroke", parents, css_rules)
     svg_number = r"([-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?)"
     wing_tip_match = re.match(
         rf"\s*M\s*{svg_number}[\s,]+{svg_number}\s+C\s*"
@@ -520,7 +595,9 @@ def _collect_illustration_geometry_issues(
         _svg_tag_name(reaching_wing) != "path"
         or not re.search(r"[cq]", reaching_wing_path, re.I)
         or not re.search(r"z\s*$", reaching_wing_path, re.I)
-        or reaching_wing_fill in {"", "none", "transparent"}
+        or reaching_wing_fill.casefold() in {"", "none", "transparent"}
+        or not _paint_is_visible_against_canvas(reaching_wing_fill)
+        and not _paint_is_visible_against_canvas(reaching_wing_stroke)
         or wing_tip is None
         or not handlebar_contact_area.contains(*wing_tip)
         or reaching_wing_bounds.intersected(body_bounds).isEmpty()
@@ -681,7 +758,7 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
     if default_size.width() > 8192 or default_size.height() > 8192:
         raise RuntimeError("SVG dimensions exceed the 8192-pixel smoke-test limit")
 
-    background = QColor("#f4f7fb")
+    background = SMOKE_BACKGROUND
     image = QImage(RENDER_WIDTH, RENDER_HEIGHT, QImage.Format.Format_ARGB32_Premultiplied)
     image.fill(background)
     painter = QPainter(image)
@@ -1145,10 +1222,7 @@ def run_smoke(
         git = GitManager(root)
         git.commit_changes("pelican SVG smoke baseline")
         summary_settings = SummarySettings(
-            enabled=True,
-            model="",
-            max_tokens=MAX_TOKENS,
-            context_chars=18_000,
+            enabled=False,
             retries=0,
             interval_turns=0,
         )
@@ -1258,14 +1332,15 @@ def run_smoke(
         validation: dict[str, Any] | None = None
         relative_svg = ""
         svg_path = root
-        for repair_attempt in range(3):
+        deferred_edit_feedback = ""
+        for repair_attempt in range(MAX_REPAIR_ATTEMPTS + 1):
             relative_svg, svg_path = current_svg_path()
             shutil.copyfile(svg_path, saved_svg)
             try:
                 validation = validate_and_render_svg(svg_path.read_bytes(), preview_png)
                 break
             except RuntimeError as exc:
-                if repair_attempt == 2:
+                if repair_attempt >= MAX_REPAIR_ATTEMPTS:
                     diagnostic_path = persist_failure_diagnostic(
                         artifacts,
                         model=model,
@@ -1277,17 +1352,26 @@ def run_smoke(
                         request_metrics=wire_requests,
                     )
                     raise RuntimeError(
-                        f"pelican SVG still failed after two repairs: {exc}; "
+                        f"pelican SVG still failed after {MAX_REPAIR_ATTEMPTS} repairs: {exc}; "
                         f"diagnostic saved to {diagnostic_path}"
                     ) from exc
                 previous_write_count = len(file_calls)
                 repair_prompt = pelican_repair_prompt(Path(relative_svg).name, str(exc))
+                if deferred_edit_feedback:
+                    repair_prompt = f"{repair_prompt}\n\nPrevious tool error:\n{deferred_edit_feedback}"
+                    deferred_edit_feedback = ""
                 # CodingAgent intentionally resumes an existing session ID.
                 # A repair prompt is a new task, so it must never reuse the
                 # completed session that produced the invalid SVG.
                 result = run_agent(repair_prompt, smoke_session_id(repair_attempt + 1))
                 file_calls = collect_file_calls()
                 if len(file_calls) <= previous_write_count:
+                    failed_edit_guidance = repair_guidance_for_failed_edit(
+                        events, smoke_session_id(repair_attempt + 1)
+                    )
+                    if failed_edit_guidance and repair_attempt < MAX_REPAIR_ATTEMPTS:
+                        deferred_edit_feedback = failed_edit_guidance
+                        continue
                     diagnostic_path = persist_failure_diagnostic(
                         artifacts,
                         model=model,
@@ -1313,14 +1397,12 @@ def run_smoke(
             if event_name == "tool_started"
             and data.get("source") not in {"harness_precommit", "harness_svg_artifact_recovery"}
         ]
-        if not result.get("summary") or not result.get("summary_path"):
-            raise RuntimeError("automatic final conversation summary was not produced")
         ledger_events = [
             json.loads(line)
             for line in (root / ".research" / "events.jsonl").read_text(encoding="utf-8").splitlines()
         ]
         event_types = [event["event_type"] for event in ledger_events]
-        for required in ("git_commit_created", "coding_session_completed", "conversation_summary_created"):
+        for required in ("git_commit_created", "coding_session_completed"):
             if required not in event_types:
                 raise RuntimeError(f"event ledger is missing {required}")
         if not any(
@@ -1359,7 +1441,7 @@ def run_smoke(
             "elapsed_seconds": total_elapsed,
             "model_tool_calls": model_tools,
             "harness_artifact_recoveries": artifact_recoveries,
-            "summary_characters": len(str(result["summary"])),
+            "conversation_summary_enabled": summary_settings.enabled,
             "requests": wire_requests,
             "temporary_workspace_clean": True,
             **validation,

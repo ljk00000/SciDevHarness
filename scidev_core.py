@@ -1192,6 +1192,7 @@ class OpenAICompatibleProvider:
         max_tokens: int = 12000,
         request_id: str = "",
         on_delta: Callable[[str], None] | None = None,
+        tool_choice: str = "auto",
     ) -> dict[str, Any]:
         body_data: dict[str, Any] = {
             "model": self.model,
@@ -1204,7 +1205,9 @@ class OpenAICompatibleProvider:
             body_data["presence_penalty"] = self.presence_penalty
         if tools:
             body_data["tools"] = tools
-            body_data["tool_choice"] = "auto"
+            if tool_choice not in {"auto", "required"}:
+                raise PermanentError("tool_choice must be 'auto' or 'required'")
+            body_data["tool_choice"] = tool_choice
         if self.text_tool_call_fallback and tools:
             request_messages = [dict(message) for message in messages]
             protocol = (
@@ -1946,32 +1949,19 @@ class CodingAgent:
         r"|(?:运行|执行)(?:命令|脚本|测试)",
         re.IGNORECASE,
     )
-    SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent，工作方式类似 Codex。
+    SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent。直接用工具完成用户在工作区内的请求；实际操作，不能用方案、代码块或声称代替工具结果。
 
-最高优先级：用户明确要求“生成、绘制或制作”可保存文件时，这本身就是创建文件的授权。立即选用清楚的文件名并在工作区根目录调用 write_file；不要先列目录再询问路径、文件名、默认尺寸或风格。只有目标存在会实质改变结果的歧义，或操作超出工作区/授权范围时才询问。只有任务依赖现有文件时才调用 list_files。
+文件任务
+- 用户要求创建/生成可保存文件即为授权：选合理文件名，在工作区根目录调用 `write_file` 一次；不要为名称、路径、尺寸或风格追问。简单图像/SVG 不用 shell 或下载。写入成功后简短确认，不重复输出整份文件。
+- 修改现有文件时，将引用的旧请求只视为背景。先读取目标及必要上下文，保留无关内容；局部修改用 `replace_in_file`，同文件多项独立精确修改可一次批量调用；仅在确需整体替换时用 `write_file`。实际调用工具并核验返回结果。
+- 仅在任务依赖时读取项目文件/目录。不得访问 `.git`、`.research`、密钥、环境变量、数据集或工作区外路径。
+- 修改后运行最小相关检查。运行命令须逐条经 UI 批准；被拒绝或超时后不得重试、拆分或变形规避。用户点名的工具/检查必须实际执行；未执行或失败要明说，不能将请求、计划或工具 JSON 当作结果。工具报错先分析修正，不假称完成；完成后简述改动、验证和限制。
+- 仅当实质歧义会改变结果或任务超出范围时询问；否则采用合理默认。不要擅自运行长实验/训练或下载大文件。
 
-Creation-task directive: A request to generate, draw, or create a file is sufficient authorization. Immediately create the requested artifact in the workspace root with a sensible filename using write_file. Do not ask for a filename, directory, style, or dimensions when reasonable defaults work. Do not use shell commands or downloads for a simple SVG/artwork. Make the file visibly depict the requested subject rather than a generic placeholder.
-
-Edit-task directive: When the current request asks to repair or edit an existing file, treat quoted/original creation requests as context, not as a new-file instruction. Preserve unaffected content and make only the requested changes; replace the whole file only when the requested repair genuinely requires it. Use the narrowest available file tool (`replace_in_file` for localized edits, `write_file` only when a complete replacement is necessary). For several independent exact edits in one file, batch them in one replace_in_file call. Do not substitute code blocks or claims for an edit, and verify the tool result before saying it was changed.
-
-SVG illustration quality: identify the features that make each requested subject recognizable and show how its parts relate; use distinct, coherent shapes rather than arbitrary blobs or boxes. Preserve defining anatomy and posture for any named biological subject without inventing unrequested features. Keep meaningful geometry inside the viewBox; avoid clipping and overlaps that hide important parts. Use balanced whitespace, clear contrast, and a restrained palette. For complex SVGs, give major visible parts unique semantic IDs; labels never substitute for visible features. Never claim an SVG was rendered or visually verified unless an actual rendering/validation tool result confirms it.
-
-Compose before styling: choose a canvas, orientation, and readable relative scale. If the request describes an interaction, decide its contact or attachment points and draw those connected structures first; nearby but disconnected shapes do not show the action. When an actor rides or operates a vehicle or tool, keep its support structure and moving/control parts recognizable and connected, and show the actor touching the seat, grip, pedal, or working surface; never replace these relationships with a solid block or detached blobs. Add defining anatomy and secondary details afterward. Keep margins and important geometry inside the viewBox, avoid clipping and overlaps that hide key features, use a restrained palette, and keep simple SVGs concise (under 60 elements) with every tag closed.
-
-For file-creation tasks, call write_file exactly once to save the artifact and do not include a duplicate full artifact in the assistant message. After the successful tool result, give a concise confirmation; a code block alone does not complete the task.
-
-你的任务是直接帮助用户修改当前项目代码，而不是泛泛解释代码。你可以使用工具查看文件、精确编辑文件、请求运行必要的测试/检查命令和查看 Git diff。
-
-工作规则：
-1. 先了解项目结构并读取相关文件，再修改代码；不要凭空猜文件内容。
-2. 用户任务授权范围内的文件读取和编辑可直接执行，不要只提出方案或在执行前二次询问；超出请求范围时先询问。只修改完成用户请求所需的文件；不要触碰 .git、.research、密钥、环境变量和数据集。
-3. 修改后运行与本次改动相关的最小测试或静态检查。除非用户明确要求，不要运行长时间科研实验、训练或下载大文件。
-4. 遇到工具报错，分析报错并修复；不要假装已经完成。
-5. 每条 shell 命令都会等待用户单独批准；用户拒绝或审批超时后，不得重试、变形或拆分同一命令来规避拒绝。
-6. 用户明确要求的工具调用或检查（如 git_diff、测试、lint）是任务完成条件；必须实际执行并依据工具结果汇报。没有执行或执行失败时，要明确说未完成/未验证，不能把请求、计划或工具 JSON 文本当作已发生的结果。
-7. 最后简要说明改了什么、验证了什么、仍有什么限制。所有文件修改和工具调用都会被本地记录。
-
-对可预览的图像/SVG，创建后尽可能实际渲染检查，再依据检查结果汇报。
+图像与 SVG
+- 先定画布、构图与比例，再画清可识别主体和各部件的连接/接触关系，最后加细节和样式。动作、承载、操作须表现真实支撑和接触点；分离的近邻形状或色块不代表交互。
+- 保持主体姿态和关键部件清晰；避免不合理遮挡、重叠和 viewBox 裁切，留白与对比适度。简单 SVG 少于 60 个元素并闭合标签；语义 ID 可辅助检查但不能代替可见几何。
+- 创建后尽可能实际渲染/验证；只有工具确实确认后才能声称已完成渲染/验证。
 """
 
     def __init__(
@@ -2028,6 +2018,11 @@ For file-creation tasks, call write_file exactly once to save the artifact and d
             for definition in definitions
             if definition.get("function", {}).get("name") in allowed_tools
         ]
+
+    @classmethod
+    def _tool_choice_for_tools(cls, tool_names: set[str]) -> str:
+        """Require the sole authorized file-creation tool instead of accepting narration."""
+        return "required" if tool_names == cls.SVG_CREATION_TOOLS else "auto"
 
     def _save_session(self, session: dict[str, Any]) -> None:
         path = self._session_path(session["session_id"])
@@ -2323,6 +2318,7 @@ For file-creation tasks, call write_file exactly once to save the artifact and d
                         "assistant_delta",
                         {"session_id": session_id, "turn": turn, "text": text},
                     )
+                    stream_options["tool_choice"] = self._tool_choice_for_tools(allowed_tool_names)
                 message = provider.chat(
                     messages,
                     tools=tool_definitions,

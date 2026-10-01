@@ -11,6 +11,7 @@ from pathlib import Path
 
 from scidev_core import SvgArtifactAdapter
 from scripts.smoke_pelican_svg import (
+    MAX_REPAIR_ATTEMPTS,
     PELICAN_PROMPT,
     _TimedResponse,
     collect_svg_mutations,
@@ -19,6 +20,7 @@ from scripts.smoke_pelican_svg import (
     pelican_repair_prompt,
     persist_failure_diagnostic,
     record_smoke_event,
+    repair_guidance_for_failed_edit,
     smoke_session_id,
     validate_and_render_svg,
 )
@@ -174,10 +176,17 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertEqual(record["elapsed_seconds"], 0.8)
 
     def test_each_visual_repair_uses_a_fresh_completed_session_id(self) -> None:
-        session_ids = [smoke_session_id(attempt) for attempt in range(3)]
+        session_ids = [smoke_session_id(attempt) for attempt in range(MAX_REPAIR_ATTEMPTS + 1)]
         self.assertEqual(len(session_ids), len(set(session_ids)))
         self.assertEqual(session_ids[0], "live_pelican_svg_smoke")
-        self.assertEqual(session_ids[1:], ["live_pelican_svg_smoke_repair_1", "live_pelican_svg_smoke_repair_2"])
+        self.assertEqual(
+            session_ids[1:],
+            [
+                "live_pelican_svg_smoke_repair_1",
+                "live_pelican_svg_smoke_repair_2",
+                "live_pelican_svg_smoke_repair_3",
+            ],
+        )
 
     def test_latest_svg_output_wins_when_repair_creates_a_new_filename(self) -> None:
         calls = [
@@ -188,33 +197,85 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertEqual(latest_svg_write_path(calls), "pelican_bicycle-1.svg")
         self.assertIsNone(latest_svg_write_path([{ "arguments": {"path": "notes.md"} }]))
 
-    def test_svg_mutation_tracking_counts_write_and_replace_but_not_reads(self) -> None:
+    def test_svg_mutation_tracking_counts_only_successful_write_and_replace_results(self) -> None:
         events = [
-            ("tool_started", {"name": "write_file", "arguments": {"path": "pelican.svg"}}),
+            (
+                "tool_started",
+                {"session_id": "initial", "name": "write_file", "arguments": {"path": "failed.svg"}},
+            ),
+            (
+                "tool_result",
+                {"session_id": "initial", "name": "write_file", "result": "工具执行失败：PermanentError"},
+            ),
             (
                 "tool_started",
                 {
+                    "session_id": "initial",
                     "name": "write_file",
                     "source": "harness_svg_artifact_recovery",
                     "arguments": {"path": "recovered.svg"},
                 },
             ),
-            ("tool_started", {"name": "read_file", "arguments": {"path": "pelican.svg"}}),
-            ("tool_started", {"name": "replace_in_file", "arguments": {"path": "pelican.svg"}}),
+            (
+                "tool_result",
+                {"session_id": "initial", "name": "write_file", "result": "已写入 recovered.svg"},
+            ),
+            ("tool_started", {"session_id": "repair", "name": "read_file", "arguments": {"path": "pelican.svg"}}),
+            (
+                "tool_started",
+                {"session_id": "repair", "name": "replace_in_file", "arguments": {"path": "pelican.svg"}},
+            ),
+            (
+                "tool_result",
+                {"session_id": "repair", "name": "replace_in_file", "result": "Applied 1 exact replacement"},
+            ),
             (
                 "tool_started",
                 {
+                    "session_id": "repair",
                     "name": "replace_in_file",
                     "source": "harness_precommit",
                     "arguments": {"path": "pelican.svg"},
                 },
             ),
-            ("tool_started", {"name": "replace_in_file", "arguments": {"path": "notes.md"}}),
+            (
+                "tool_result",
+                {"session_id": "repair", "name": "replace_in_file", "source": "harness_precommit", "result": "diff"},
+            ),
+            (
+                "tool_started",
+                {"session_id": "repair", "name": "replace_in_file", "arguments": {"path": "notes.md"}},
+            ),
+            (
+                "tool_result",
+                {"session_id": "repair", "name": "replace_in_file", "result": "Applied 1 exact replacement"},
+            ),
         ]
         self.assertEqual(
             [item["name"] for item in collect_svg_mutations(events)],
-            ["write_file", "write_file", "replace_in_file"],
+            ["write_file", "replace_in_file"],
         )
+
+    def test_failed_ambiguous_svg_edit_produces_bounded_specific_retry_guidance(self) -> None:
+        events = [
+            (
+                "tool_result",
+                {
+                    "session_id": "repair_2",
+                    "name": "replace_in_file",
+                    "result": "工具执行失败：PermanentError: old_text matched 85 times in drawing.svg",
+                },
+            ),
+            (
+                "tool_result",
+                {"session_id": "other_session", "name": "replace_in_file", "result": "old_text matched 9 times"},
+            ),
+        ]
+        guidance = repair_guidance_for_failed_edit(events, "repair_2")
+        self.assertIn("was not unique", guidance)
+        self.assertIn("complete exact SVG element tag", guidance)
+        self.assertNotIn("85", guidance)
+        self.assertEqual(repair_guidance_for_failed_edit(events, "initial"), "")
 
     def test_shell_request_trace_omits_the_command_text(self) -> None:
         events = [
@@ -253,6 +314,33 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertNotIn("pelican-body", prompt)
         self.assertLess(len(prompt), 900)
 
+    def test_filled_wheel_repair_uses_existing_tool_argument_schema(self) -> None:
+        prompt = pelican_repair_prompt(
+            "pelican_bicycle.svg",
+            "SVG visual checks failed; malformed=['left-wheel must be an unfilled, visibly outlined tire', "
+            "'right-wheel must be an unfilled, visibly outlined tire']; duplicate_ids=[]",
+        )
+        self.assertIn("preserve `cx`, `cy`, and `r`", prompt)
+        self.assertIn('fill="none"', prompt)
+        self.assertIn('stroke="#18324b" stroke-width="8"', prompt)
+        self.assertIn("one `edits` array", prompt)
+        self.assertIn("`old_text` and `new_text`", prompt)
+        self.assertNotIn("old_string", prompt)
+        self.assertNotIn("new_string", prompt)
+        self.assertTrue(SvgArtifactAdapter.is_local_repair_request(prompt))
+
+    def test_multiple_geometry_repairs_are_scoped_to_exact_file_edits(self) -> None:
+        prompt = pelican_repair_prompt(
+            "pelican_bicycle.svg",
+            "SVG visual checks failed; malformed=['pelican-body has too little contrast against the blank canvas', "
+            "'SVG bicycle frame needs a visible stroke']; missing=[]; duplicate_ids=[]",
+        )
+        self.assertTrue(SvgArtifactAdapter.is_local_repair_request(prompt))
+        self.assertIn("pelican-body", prompt)
+        self.assertIn("bicycle-frame", prompt)
+        self.assertIn("`old_text`/`new_text`", prompt)
+        self.assertNotIn("complete, polished", prompt)
+
     def test_four_missing_parts_get_a_targeted_repair_instead_of_a_full_redraw(self) -> None:
         prompt = pelican_repair_prompt(
             "pelican_bicycle.svg",
@@ -288,8 +376,12 @@ class PelicanSvgTests(unittest.TestCase):
         )
         self.assertIn("missing semantic IDs only", prompt)
         self.assertIn("Preserve the existing drawing, coordinates, viewBox", prompt)
-        self.assertIn("do not add, move, resize, or redraw artwork", prompt)
+        self.assertIn("Do not add, move, resize, or redraw artwork in this pass", prompt)
         self.assertIn("one `replace_in_file` call with an `edits` array", prompt)
+        self.assertIn("`old_text` and `new_text`", prompt)
+        self.assertIn("complete unique SVG element tag", prompt)
+        self.assertIn("Do not use generic fragments", prompt)
+        self.assertTrue(SvgArtifactAdapter.is_local_repair_request(prompt))
         self.assertNotIn("complete, polished", prompt)
 
     def test_repair_prompt_uses_one_rebuild_for_multiple_shape_errors(self) -> None:
@@ -317,7 +409,8 @@ class PelicanSvgTests(unittest.TestCase):
             "'bicycle-spokes must contain visible radial spoke lines']; duplicate_ids=[]"
         )
         prompt = pelican_repair_prompt("pelican_bicycle.svg", reason)
-        self.assertIn("Repair only the listed missing parts and geometry", prompt)
+        self.assertIn("Make a targeted localized repair", prompt)
+        self.assertTrue(SvgArtifactAdapter.is_local_repair_request(prompt))
         self.assertIn("Add missing `pelican-head`", prompt)
         self.assertIn("Lengthen the tapered bill", prompt)
         self.assertIn("Connect the far leg", prompt)
@@ -693,8 +786,14 @@ class PelicanSvgTests(unittest.TestCase):
             b'<circle id="pelican-head" cx="195" cy="62" r="12" fill="none" stroke="#27374a"/>',
         )
         with tempfile.TemporaryDirectory() as temporary:
-            with self.assertRaisesRegex(RuntimeError, "filled silhouette"):
+            with self.assertRaisesRegex(RuntimeError, "contrasts with the canvas"):
                 validate_and_render_svg(empty_head, Path(temporary) / "preview.png")
+
+    def test_subject_fill_matching_the_preview_background_is_rejected(self) -> None:
+        invisible_body = VALID_PELICAN_SVG.replace(b'fill="#f4a261"', b'fill="#f4f7fb"', 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "pelican-body has too little contrast"):
+                validate_and_render_svg(invisible_body, Path(temporary) / "preview.png")
 
     def test_flat_rectangular_body_is_rejected_by_rendered_geometry(self) -> None:
         flat_body = VALID_PELICAN_SVG.replace(
