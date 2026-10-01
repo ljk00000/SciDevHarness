@@ -1807,6 +1807,7 @@ class CodingAgent:
 
     MAX_TURNS = 32
     MAX_SVG_CREATION_RETRIES = 1
+    SVG_CREATION_TOOLS = frozenset({"write_file"})
     SVG_ARTIFACT_TOOLS = frozenset({"read_file", "write_file", "replace_in_file", "git_diff"})
     EXPLICIT_COMMAND_INTENT = re.compile(
         r"\b(?:run|execute)\s+(?:(?:the|a)\s+)?(?:commands?|scripts?|tests?|test suite|checks?)\b"
@@ -1822,9 +1823,9 @@ Creation-task directive: A request to generate, draw, or create a file is suffic
 
 Edit-task directive: When the current request asks to repair or edit an existing file, treat quoted/original creation requests as context, not as a new-file instruction. Preserve unaffected content and make only the requested changes; replace the whole file only when the requested repair genuinely requires it.
 
-SVG illustration quality: identify the features that make each requested subject recognizable and show how its parts relate; use distinct, coherent shapes rather than arbitrary blobs or boxes. When objects interact, make contact, alignment, scale, and pose visually legible instead of merely juxtaposing unrelated silhouettes. Preserve defining anatomy and posture for any named biological subject without inventing unrequested features. Keep meaningful geometry inside the viewBox; avoid clipping and overlaps that hide important parts. Use balanced whitespace, clear contrast, and a restrained palette. For complex SVGs, give major visible parts unique semantic IDs; labels never substitute for visible features. Never claim an SVG was rendered or visually verified unless an actual rendering/validation tool result confirms it.
+SVG illustration quality: identify the features that make each requested subject recognizable and show how its parts relate; use distinct, coherent shapes rather than arbitrary blobs or boxes. Preserve defining anatomy and posture for any named biological subject without inventing unrequested features. Keep meaningful geometry inside the viewBox; avoid clipping and overlaps that hide important parts. Use balanced whitespace, clear contrast, and a restrained palette. For complex SVGs, give major visible parts unique semantic IDs; labels never substitute for visible features. Never claim an SVG was rendered or visually verified unless an actual rendering/validation tool result confirms it.
 
-Before writing an illustration, choose a canvas orientation and composition suited to the requested scene; place subjects at readable relative scales, preserve margins, and layer background before foreground. Draw one clean silhouette per meaningful feature; avoid tiling, repeated details, duplicate paths, or diagram-like boxes used as anatomy. Keep simple artwork concise (under 60 elements) and close every SVG tag exactly once.
+Compose before styling: choose a canvas, orientation, and readable relative scale. If the request describes an interaction, decide its contact or attachment points and draw those connected structures first; nearby but disconnected shapes do not show the action. Add defining anatomy and secondary details afterward. Keep margins and important geometry inside the viewBox, avoid clipping and overlaps that hide key features, use a restrained palette, and keep simple SVGs concise (under 60 elements) with every tag closed.
 
 If you include a complete SVG in your reply, still call write_file to save it; a code block or asking whether to save does not complete a file-creation task.
 
@@ -1879,12 +1880,18 @@ If you include a complete SVG in your reply, still call write_file to save it; a
 
     def _tool_definitions_for_prompt(self, prompt: str) -> list[dict[str, Any]]:
         definitions = self.toolbox.definitions()
-        if not SvgArtifactAdapter.is_svg_artifact_request(prompt) or self.EXPLICIT_COMMAND_INTENT.search(prompt):
+        if self.EXPLICIT_COMMAND_INTENT.search(prompt):
+            return definitions
+        if SvgArtifactAdapter.is_creation_request(prompt):
+            allowed_tools = self.SVG_CREATION_TOOLS
+        elif SvgArtifactAdapter.is_repair_request(prompt):
+            allowed_tools = self.SVG_ARTIFACT_TOOLS
+        else:
             return definitions
         return [
             definition
             for definition in definitions
-            if definition.get("function", {}).get("name") in self.SVG_ARTIFACT_TOOLS
+            if definition.get("function", {}).get("name") in allowed_tools
         ]
 
     def _save_session(self, session: dict[str, Any]) -> None:

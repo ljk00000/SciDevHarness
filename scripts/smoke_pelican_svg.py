@@ -25,7 +25,7 @@ from unittest.mock import patch
 from urllib.request import Request
 
 from PySide6.QtCore import QByteArray, QRectF
-from PySide6.QtGui import QColor, QImage, QPainter
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +69,19 @@ REQUEST_METRIC_FIELDS = (
 MAX_SVG_BYTES = 2_000_000
 RENDER_WIDTH = 1200
 RENDER_HEIGHT = 800
+
+_QT_GUI_APPLICATION: QGuiApplication | None = None
+
+
+def _ensure_qt_gui_application() -> QGuiApplication:
+    """Keep standalone SVG rendering on Qt's supported GUI application path."""
+    global _QT_GUI_APPLICATION
+    application = QGuiApplication.instance()
+    if application is not None:
+        return application
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    _QT_GUI_APPLICATION = QGuiApplication(["SciDevHarness SVG validator"])
+    return _QT_GUI_APPLICATION
 
 
 def smoke_session_id(attempt: int) -> str:
@@ -647,6 +660,7 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         if isinstance(element.tag, str) and element.attrib.get("id"):
             identified_elements.setdefault(str(element.attrib["id"]).casefold(), element)
 
+    _ensure_qt_gui_application()
     renderer = QSvgRenderer(QByteArray(source))
     if not renderer.isValid():
         raise RuntimeError("Qt could not parse the generated SVG")

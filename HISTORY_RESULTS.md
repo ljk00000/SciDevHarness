@@ -1,5 +1,16 @@
 # 历史与结果
 
+## 2026-10-02 03:43（Asia/Shanghai）· 工具范围缩减与提示结构对照
+
+- 固定提示词原文未变。Qwen2.5-Coder-7B 首次生成只开放 `write_file` 后，本次请求 14 次、累计 72.8 秒、响应体约 1.18 MB；此前一次为 17 次、284.9 秒、5.32 MB。单次对照显示开销明显下降，但最终预览仍不能识别为鹈鹕骑车，仍缺全部自行车关键 ID。
+- 所有 `tool_argument_bytes` 仍为 0：模型没有发出原生函数参数，文件依靠 Harness 从文本 SVG 安全恢复。已更新通用提示，明确先规划对象接触/连接关系、再添加细节；待同模型固定提示复测。
+
+## 2026-10-02 03:29（Asia/Shanghai）· 固定提示词模型对照与 Qt 渲染故障
+
+- 用户提示词保持精确为 `Generate an SVG of a pelican riding a bicycle`；缓存的 Qwen3.5 4.7B 未下载，Harness 请求 `max_tokens=12000`，但 Ollama 实际上下文为 4096。初稿仍未形成正确车架/骑乘关系。
+- 对照进程曾以 `0xC0000409` 崩溃，Windows 事件确认故障模块为 `Qt6Core.dll`。原因是 headless 验证器未创建 `QGuiApplication`；现已修复，复测真实失败产物返回可读结构错误，含 `<text>/<tspan>` 的隔离子进程回归测试通过。
+- 纯 SVG 新建时工具集缩减为 `write_file`；修复任务仍能读取、精确编辑和检查 diff。定向回归测试通过，待固定提示词重跑和全套测试确认整体效果。
+
 ## 2026-10-02 03:02（Asia/Shanghai）· 创建并公开发布新仓库
 
 - 新建 [ljk00000/SciDevHarness-Public](https://github.com/ljk00000/SciDevHarness-Public)，公开可见，默认分支 `main`；推送提交 `527410fc8a050802703d15e3839efa064ccfc168`，远端 SHA 核验一致。

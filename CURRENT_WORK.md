@@ -1,7 +1,7 @@
 # 当前工作
 
-## 2026-10-02 03:02（Asia/Shanghai）· 新公开仓库发布完成
+## 2026-10-02 03:43（Asia/Shanghai）· 对照工具范围与交互式提示
 
-- [SciDevHarness-Public](https://github.com/ljk00000/SciDevHarness-Public) 已公开，`main` 与本地 `527410f` SHA 一致；旧远程未改动。
-- 128 项 `unittest` 通过；凭据形态扫描无命中；`.venv`、`.research` 与模型权重未上传。
-- 下一步：如继续开发，检查该仓库首轮 GitHub Actions；仅在失败时按日志修复。
+- 已修复 headless SVG smoke 在 Qt6Core 崩溃：渲染前惰性创建 offscreen `QGuiApplication`；真实失败产物现返回正常结构错误，独立子进程回归测试通过。
+- SVG 新建任务仅暴露 `write_file` 后，主力 Qwen2.5 由 17 次请求/284.9 秒降到 14 次/72.8 秒、响应体约 5.32 MB 降到 1.18 MB；但仍未画清骑行关系，模型原生工具参数为 0，靠 Harness 文本回收保存。
+- 已将通用图像指令改为“先规划接触点和连接结构，再加细节”；下一步用同一固定提示词复测，比较渲染、原生工具调用和流量，再跑全套测试。原生 UI 截图工具仍受 Qt/Windows 捕获错误限制；离屏响应式截图已通过。

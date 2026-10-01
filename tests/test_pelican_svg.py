@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -504,6 +507,37 @@ class PelicanSvgTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             result = validate_and_render_svg(unlabeled, Path(temporary) / "preview.png")
         self.assertGreater(result["non_background_samples"], 25)
+
+    def test_standalone_svg_renderer_initializes_qt_for_text_and_tspan(self) -> None:
+        text_svg = VALID_PELICAN_SVG.replace(
+            b"</svg>",
+            b'<text x="8" y="18" font-family="Arial" font-size="10"><tspan>Preview</tspan></text></svg>',
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "text.svg"
+            preview = root / "preview.png"
+            source.write_bytes(text_svg)
+            environment = os.environ.copy()
+            environment.pop("QT_QPA_PLATFORM", None)
+            code = (
+                "import sys\n"
+                "from pathlib import Path\n"
+                "from scripts.smoke_pelican_svg import validate_and_render_svg\n"
+                "validate_and_render_svg(Path(sys.argv[1]).read_bytes(), Path(sys.argv[2]))\n"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", code, str(source), str(preview)],
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(preview.is_file())
 
     def test_invalid_or_active_svg_content_is_rejected(self) -> None:
         invalid_documents = (

@@ -379,8 +379,10 @@ class CoreTests(unittest.TestCase):
                     "Original request: Generate an SVG. Repair only the existing drawing in pelican.svg."
                 )
             }
+            self.assertEqual(simple_names, {"write_file"})
             self.assertNotIn("run_command", simple_names)
             self.assertIn("run_command", explicit_names)
+            self.assertEqual(repair_names, {"read_file", "write_file", "replace_in_file", "git_diff"})
             self.assertNotIn("run_command", repair_names)
             self.assertIn("replace_in_file", repair_names)
 
@@ -721,7 +723,8 @@ class CoreTests(unittest.TestCase):
         self.assertIn("立即选用清楚的文件名并在工作区根目录调用 write_file", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("只有任务依赖现有文件时才调用 list_files", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("Do not use shell commands or downloads for a simple SVG/artwork", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("When objects interact, make contact, alignment, scale, and pose visually legible", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("Compose before styling: choose a canvas, orientation, and readable relative scale", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("nearby but disconnected shapes do not show the action", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("treat quoted/original creation requests as context, not as a new-file instruction", CodingAgent.SYSTEM_PROMPT.casefold())
         self.assertIn("Preserve defining anatomy and posture for any named biological subject", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("give major visible parts unique semantic IDs", CodingAgent.SYSTEM_PROMPT)
