@@ -1510,16 +1510,25 @@ class MessageBubble(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 9)
         layout.setSpacing(4)
-        role = QLabel(speaker)
-        role.setObjectName("BubbleRole")
-        layout.addWidget(role)
-        body = QLabel(message)
-        body.setObjectName("ToolText" if kind == "tool" else "BubbleText")
-        body.setTextFormat(Qt.TextFormat.PlainText)
-        body.setWordWrap(True)
-        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(body)
+        self.role_label = QLabel(speaker)
+        self.role_label.setObjectName("BubbleRole")
+        layout.addWidget(self.role_label)
+        self.body_label = QLabel(message)
+        self.body_label.setObjectName("ToolText" if kind == "tool" else "BubbleText")
+        self.body_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.body_label.setWordWrap(True)
+        self.body_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.body_label)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+
+    def set_speaker(self, speaker: str) -> None:
+        self.role_label.setText(speaker)
+
+    def set_message(self, message: str) -> None:
+        self.body_label.setText(message)
+
+    def append_message(self, text: str) -> None:
+        self.body_label.setText(self.body_label.text() + text)
 
 
 class ClientWindow(QMainWindow):
@@ -1538,6 +1547,7 @@ class ClientWindow(QMainWindow):
         self.signals = AppSignals()
         self.current_session_id: str | None = None
         self.active_task_id: str | None = None
+        self._streaming_bubbles: dict[tuple[str, int], MessageBubble] = {}
         self.current_file: Path | None = None
         self._editor_paths: dict[QWidget, Path] = {}
         self._editor_titles: dict[QWidget, str] = {}
@@ -3028,6 +3038,7 @@ class ClientWindow(QMainWindow):
             self._set_state(self.chat_status, "工作中 · Agent 正在修改项目", "StateWorking")
             self._set_state(self.workspace_state, "● 工作中", "StateWorking")
         elif event == "task_retry" and task_id == self.active_task_id:
+            self._interrupt_streaming_bubbles("Agent · 网络中断，等待自动重试")
             self._set_state(self.chat_status, "等待网络 · 自动重试中", "StateWorking")
             self._set_state(self.workspace_state, "● 重试中", "StateWorking")
             self._refresh_open_file_after_task()
@@ -3036,6 +3047,7 @@ class ClientWindow(QMainWindow):
             self._set_state(self.chat_status, "就绪 · 可以继续对话", "StateReady")
             self._set_state(self.workspace_state, "● 就绪", "StateReady")
         elif event == "task_failed" and task_id == self.active_task_id:
+            self._interrupt_streaming_bubbles("Agent · 响应中断")
             self.active_task_id = None
             self._set_state(self.chat_status, "任务失败 · 可从历史重试", "StateError")
             self._set_state(self.workspace_state, "● 出错", "StateError")
@@ -3077,8 +3089,17 @@ class ClientWindow(QMainWindow):
             self._append_log(f"{label}失败，未影响代码任务")
         if event == "model_call_started":
             self._append_log(f"正在请求模型 · 第 {payload['turn']} 轮")
+        elif event == "svg_creation_retry_scheduled":
+            self._append_chat(
+                "Harness · SVG 生成补救",
+                "模型上一轮没有写出 SVG 文件，Harness 正在自动补问一次。",
+                "meta",
+            )
+            self._append_log("模型未生成 SVG 文件，已安排一次自动补救")
+        elif event == "assistant_delta":
+            self._append_assistant_delta(payload)
         elif event == "assistant":
-            self._append_chat("Agent", payload.get("text", ""), "agent")
+            self._finish_streamed_assistant(payload)
         elif event == "tool_started":
             args = json.dumps(payload.get("arguments", {}), ensure_ascii=False)
             self._append_chat(self._tool_event_speaker(payload), args, "tool")
@@ -3098,6 +3119,39 @@ class ClientWindow(QMainWindow):
             self._refresh_open_file_after_task()
             self.refresh_git_status()
             self._refresh_development_tree()
+
+    def _append_assistant_delta(self, payload: dict[str, Any]) -> None:
+        text = str(payload.get("text", ""))
+        if not text:
+            return
+        key = (str(payload.get("session_id", "")), int(payload.get("turn", 0)))
+        bubble = self._streaming_bubbles.get(key)
+        if bubble is None:
+            bubble = MessageBubble("Agent · 正在生成", "", "agent")
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
+            self._streaming_bubbles[key] = bubble
+        bubble.append_message(text)
+        QTimer.singleShot(0, lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()))
+
+    def _finish_streamed_assistant(self, payload: dict[str, Any]) -> None:
+        session_id = str(payload.get("session_id", ""))
+        try:
+            turn = int(payload.get("turn", 0))
+        except (TypeError, ValueError):
+            turn = 0
+        bubble = self._streaming_bubbles.pop((session_id, turn), None)
+        text = str(payload.get("text", ""))
+        if bubble is None:
+            self._append_chat("Agent", text, "agent")
+            return
+        bubble.set_speaker("Agent")
+        bubble.set_message(text)
+        QTimer.singleShot(0, lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()))
+
+    def _interrupt_streaming_bubbles(self, speaker: str) -> None:
+        for bubble in self._streaming_bubbles.values():
+            bubble.set_speaker(speaker)
+        self._streaming_bubbles.clear()
 
     @staticmethod
     def _worker_message(event: str, payload: dict[str, Any]) -> str:

@@ -35,6 +35,52 @@ class SvgArtifactAdapterTests(unittest.TestCase):
             {"path": "pelican_bicycle.svg", "content": SAFE_SVG_RESPONSE.split("```xml\n", 1)[1].split("\n```", 1)[0]},
         )
 
+    def test_xml_fenced_declared_write_file_envelope_is_recovered_safely(self) -> None:
+        source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><circle cx="90" cy="150" r="30"/></svg>'
+        envelope = json.dumps(
+            {"name": "write_file", "arguments": {"path": "pelican_bicycle.svg", "content": source}}
+        )
+        response = f"```xml\n{envelope}\n```"
+        with tempfile.TemporaryDirectory() as temporary:
+            call = SvgArtifactAdapter.create_tool_call(
+                "Generate an SVG of a pelican riding a bicycle", response, Path(temporary)
+            )
+
+        self.assertIsNotNone(call)
+        assert call is not None
+        self.assertEqual(
+            json.loads(call["function"]["arguments"]),
+            {"path": "pelican_bicycle.svg", "content": source},
+        )
+
+    def test_xml_fenced_tool_envelopes_reject_unknown_tools_and_unsafe_paths(self) -> None:
+        source = '<svg xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="5"/></svg>'
+        envelopes = (
+            {"name": "run_command", "arguments": {"path": "art.svg", "content": source}},
+            {"name": "write_file", "arguments": {"path": "../art.svg", "content": source}},
+            {"name": "write_file", "arguments": {"path": "art.svg", "content": source, "mode": "append"}},
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for envelope in envelopes:
+                response = f"```xml\n{json.dumps(envelope)}\n```"
+                with self.subTest(envelope=envelope):
+                    self.assertIsNone(
+                        SvgArtifactAdapter.create_tool_call("Generate an SVG", response, Path(temporary))
+                    )
+
+    def test_complete_svg_is_salvaged_from_a_truncated_write_file_envelope(self) -> None:
+        source = '<svg xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="5"/></svg>'
+        response = (
+            '```xml\n{"name":"write_file","arguments":{"path":"art.svg",'
+            f'"content":"{source}\n```'
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            call = SvgArtifactAdapter.create_tool_call("Generate an SVG", response, Path(temporary))
+
+        self.assertIsNotNone(call)
+        assert call is not None
+        self.assertEqual(json.loads(call["function"]["arguments"]), {"path": "art.svg", "content": source})
+
     def test_non_creation_request_and_multiple_svg_blocks_are_not_recovered(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -88,6 +134,42 @@ class SvgArtifactAdapterTests(unittest.TestCase):
         self.assertIsNotNone(call)
         assert call is not None
         self.assertEqual(json.loads(call["function"]["arguments"])["path"], "pelican_bicycle.svg")
+
+    def test_numbered_tool_response_svg_is_recovered_for_explicit_repair(self) -> None:
+        source = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">\n'
+            "  <title>Pelican on a bicycle</title>\n"
+            '  <circle cx="90" cy="150" r="30"/>\n'
+            "</svg>"
+        )
+        wrapped = "<tool_response>\n" + "\n".join(
+            f"{line_number}: {line}" for line_number, line in enumerate(source.splitlines(), start=1)
+        ) + "\n</tool_response>"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pelican_bicycle.svg").write_text("old", encoding="utf-8")
+            call = SvgArtifactAdapter.create_tool_call(
+                "Create a corrected version of the existing pelican_bicycle.svg",
+                wrapped,
+                root,
+            )
+
+        self.assertIsNotNone(call)
+        assert call is not None
+        self.assertEqual(json.loads(call["function"]["arguments"]), {
+            "path": "pelican_bicycle.svg",
+            "content": source,
+        })
+
+    def test_raw_svg_recovery_rejects_surrounding_prose_and_multiple_roots(self) -> None:
+        raw_svg = '<svg xmlns="http://www.w3.org/2000/svg"><title>pelican</title></svg>'
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for response in (f"Here is the SVG:\n{raw_svg}", raw_svg + raw_svg):
+                with self.subTest(response=response[:32]):
+                    self.assertIsNone(
+                        SvgArtifactAdapter.create_tool_call("Generate an SVG", response, root)
+                    )
 
 
 if __name__ == "__main__":

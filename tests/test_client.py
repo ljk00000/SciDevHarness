@@ -267,5 +267,58 @@ class UnsavedCloseTests(unittest.TestCase):
                 self.app.processEvents()
 
 
+class StreamingAgentUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_streamed_text_updates_one_bubble_and_finalizes_without_duplication(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-streaming-chat-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                initial_count = window.chat_layout.count()
+                partial = {"session_id": "session-1", "turn": 2, "text": "A pelican "}
+                window._handle_agent_event("assistant_delta", partial)
+                window._handle_agent_event("assistant_delta", {**partial, "text": "is drawing."})
+                self.app.processEvents()
+
+                self.assertEqual(len(window._streaming_bubbles), 1)
+                bubble = window._streaming_bubbles[("session-1", 2)]
+                self.assertEqual(bubble.body_label.text(), "A pelican is drawing.")
+                self.assertEqual(bubble.role_label.text(), "Agent · 正在生成")
+
+                window._handle_agent_event(
+                    "assistant",
+                    {"session_id": "session-1", "turn": 2, "text": "A pelican is drawing."},
+                )
+                self.app.processEvents()
+
+                self.assertEqual(window.chat_layout.count(), initial_count + 1)
+                self.assertEqual(bubble.body_label.text(), "A pelican is drawing.")
+                self.assertEqual(bubble.role_label.text(), "Agent")
+                self.assertEqual(window._streaming_bubbles, {})
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_interrupted_stream_is_marked_before_retry(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-streaming-retry-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._handle_agent_event(
+                    "assistant_delta",
+                    {"session_id": "session-2", "turn": 1, "text": "Partial answer"},
+                )
+                bubble = window._streaming_bubbles[("session-2", 1)]
+                window._interrupt_streaming_bubbles("Agent · 网络中断，等待自动重试")
+
+                self.assertEqual(bubble.role_label.text(), "Agent · 网络中断，等待自动重试")
+                self.assertEqual(bubble.body_label.text(), "Partial answer")
+                self.assertEqual(window._streaming_bubbles, {})
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
 if __name__ == "__main__":
     unittest.main()

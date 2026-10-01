@@ -21,6 +21,8 @@ if errorlevel 1 (
 set "SCIDEV_API_BASE=http://127.0.0.1:11434/v1"
 set "SCIDEV_API_KEY=ollama"
 set "SCIDEV_TEXT_TOOL_CALL_FALLBACK=1"
+if not defined SCIDEV_REQUEST_TIMEOUT_SECONDS set "SCIDEV_REQUEST_TIMEOUT_SECONDS=240"
+if not defined SCIDEV_STREAMING set "SCIDEV_STREAMING=1"
 
 call "%~dp0start_client.bat" %*
 exit /b %errorlevel%

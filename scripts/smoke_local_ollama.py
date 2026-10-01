@@ -194,6 +194,8 @@ def configure_local_environment(base_url: str, model: str, api_key: str) -> None
     os.environ["SCIDEV_API_BASE"] = base_url
     os.environ["SCIDEV_API_KEY"] = api_key
     os.environ["SCIDEV_MODEL"] = model
+    os.environ.setdefault("SCIDEV_REQUEST_TIMEOUT_SECONDS", "240")
+    os.environ["SCIDEV_STREAMING"] = "1"
     os.environ["SCIDEV_TEXT_TOOL_CALL_FALLBACK"] = "1"
     os.environ["SCIDEV_SUMMARY_ENABLED"] = "1"
     os.environ["SCIDEV_SUMMARY_INTERVAL_TURNS"] = "0"

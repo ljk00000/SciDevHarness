@@ -924,12 +924,14 @@ class OpenAICompatibleProvider:
         model: str,
         timeout: float = 90.0,
         text_tool_call_fallback: bool = False,
+        streaming: bool = True,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.text_tool_call_fallback = text_tool_call_fallback
+        self.streaming = streaming
 
     def with_model(self, model: str) -> "OpenAICompatibleProvider":
         return type(self)(
@@ -938,6 +940,7 @@ class OpenAICompatibleProvider:
             model.strip() or self.model,
             self.timeout,
             self.text_tool_call_fallback,
+            self.streaming,
         )
 
     @classmethod
@@ -951,13 +954,31 @@ class OpenAICompatibleProvider:
         model = (os.getenv("SCIDEV_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5").strip()
         if not api_key:
             raise PermanentError("未配置 SCIDEV_API_KEY 或 OPENAI_API_KEY")
+        raw_timeout = os.getenv("SCIDEV_REQUEST_TIMEOUT_SECONDS", "90").strip()
+        try:
+            request_timeout = float(raw_timeout)
+        except ValueError as exc:
+            raise PermanentError("SCIDEV_REQUEST_TIMEOUT_SECONDS 必须是 5 到 600 秒之间的数字") from exc
+        if not 5 <= request_timeout <= 600:
+            raise PermanentError("SCIDEV_REQUEST_TIMEOUT_SECONDS 必须是 5 到 600 秒之间的数字")
+        raw_streaming = os.getenv("SCIDEV_STREAMING", "true").strip().lower()
+        if raw_streaming not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
+            raise PermanentError("SCIDEV_STREAMING 必须是 true/false")
+        streaming = raw_streaming in {"1", "true", "yes", "on"}
         text_tool_call_fallback = os.getenv("SCIDEV_TEXT_TOOL_CALL_FALLBACK", "").strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
         }
-        return cls(base_url, api_key, model, text_tool_call_fallback=text_tool_call_fallback)
+        return cls(
+            base_url,
+            api_key,
+            model,
+            timeout=request_timeout,
+            text_tool_call_fallback=text_tool_call_fallback,
+            streaming=streaming,
+        )
 
     @staticmethod
     def _coerce_text_tool_calls(
@@ -1060,19 +1081,109 @@ class OpenAICompatibleProvider:
             return self.base_url + "/chat/completions"
         return self.base_url + "/v1/chat/completions"
 
+    @staticmethod
+    def _stream_message(
+        response: Any,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Assemble an OpenAI-compatible SSE response, including fragmented tool calls."""
+        content_parts: list[str] = []
+        tool_parts: dict[int, dict[str, Any]] = {}
+        saw_done = False
+        saw_finish = False
+        for raw_line in response:
+            line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else str(raw_line)
+            line = line.strip()
+            if not line or line.startswith(":") or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                saw_done = True
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise PermanentError("Provider returned malformed SSE JSON") from exc
+            if isinstance(chunk, dict) and chunk.get("error"):
+                raise RetryableError(f"Provider stream error: {str(chunk['error'])[:500]}")
+            choices = chunk.get("choices", []) if isinstance(chunk, dict) else []
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                if choice.get("finish_reason") is not None:
+                    saw_finish = True
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    delta = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+                text = delta.get("content")
+                if isinstance(text, str) and text:
+                    content_parts.append(text)
+                    if on_delta:
+                        on_delta(text)
+                elif isinstance(text, list):
+                    for part in text:
+                        if not isinstance(part, dict) or part.get("type") not in {"text", "output_text"}:
+                            continue
+                        piece = str(part.get("text", ""))
+                        if piece:
+                            content_parts.append(piece)
+                            if on_delta:
+                                on_delta(piece)
+
+                raw_tool_calls = delta.get("tool_calls") or []
+                if not isinstance(raw_tool_calls, list):
+                    continue
+                for position, fragment in enumerate(raw_tool_calls):
+                    if not isinstance(fragment, dict):
+                        continue
+                    try:
+                        index = int(fragment.get("index", position))
+                    except (TypeError, ValueError):
+                        index = position
+                    target = tool_parts.setdefault(
+                        index,
+                        {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                    )
+                    if fragment.get("id"):
+                        target["id"] = str(fragment["id"])
+                    if fragment.get("type"):
+                        target["type"] = str(fragment["type"])
+                    function = fragment.get("function")
+                    if isinstance(function, dict):
+                        if function.get("name"):
+                            target["function"]["name"] += str(function["name"])
+                        if function.get("arguments") is not None:
+                            target["function"]["arguments"] += str(function["arguments"])
+
+        if not saw_done and not saw_finish:
+            raise RetryableError("Provider stream ended before a completion marker")
+        message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+        if tool_parts:
+            message["tool_calls"] = [
+                {
+                    **tool_parts[index],
+                    "id": tool_parts[index]["id"] or new_id("call"),
+                }
+                for index in sorted(tool_parts)
+            ]
+        return message
+
     def chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 12000,
         request_id: str = "",
+        on_delta: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         body_data: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": 0.2,
-            "stream": False,
+            "stream": self.streaming,
         }
         if tools:
             body_data["tools"] = tools
@@ -1112,7 +1223,10 @@ class OpenAICompatibleProvider:
         )
         try:
             with urlopen(request, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
+                if self.streaming:
+                    message = self._stream_message(response, on_delta=on_delta)
+                else:
+                    data = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:500]
             if exc.code == 429 or exc.code >= 500:
@@ -1120,6 +1234,10 @@ class OpenAICompatibleProvider:
             raise PermanentError(f"HTTP {exc.code}: {detail}") from exc
         except (URLError, TimeoutError, OSError) as exc:
             raise RetryableError(f"网络连接失败：{exc}") from exc
+        if self.streaming:
+            if self.text_tool_call_fallback and tools and not message.get("tool_calls"):
+                message = self._coerce_text_tool_calls(message, tools)
+            return message
         try:
             message = data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as exc:
@@ -1459,18 +1577,123 @@ class SvgArtifactAdapter:
 
     _REQUEST_VERBS = re.compile(r"\b(generate|create|draw|make|produce)\b|生成|绘制|制作|画", re.IGNORECASE)
     _SVG_BLOCK = re.compile(r"```(?:svg|xml)\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+    _TOOL_RESPONSE = re.compile(r"\s*<tool_response>\s*(.*?)\s*</tool_response>\s*", re.IGNORECASE | re.DOTALL)
+    _RAW_SVG = re.compile(r"\A(?:<\?xml\s+[^?]*\?>\s*)?<svg\b.*</svg\s*>\Z", re.IGNORECASE | re.DOTALL)
     _SAFE_FILENAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_.-]{0,79}\.svg\Z", re.IGNORECASE)
     _ACTIVE_ELEMENTS = {"script", "foreignobject", "iframe", "object", "embed"}
 
     @classmethod
+    def is_creation_request(cls, prompt: str) -> bool:
+        return bool(cls._REQUEST_VERBS.search(prompt) and "svg" in prompt.casefold())
+
+    @classmethod
+    def _recover_complete_svg_from_tool_text(cls, candidate: str) -> tuple[str, str] | None:
+        """Recover a complete SVG from a malformed but explicit write_file envelope."""
+        if not re.search(r'"name"\s*:\s*"write_file"', candidate):
+            return None
+        path_match = re.search(
+            r'"path"\s*:\s*"([A-Za-z0-9][A-Za-z0-9_.-]{0,79}\.svg)"',
+            candidate,
+            re.IGNORECASE,
+        )
+        content_match = re.search(r'"content"\s*:\s*"', candidate)
+        if not path_match or not content_match:
+            return None
+        content_start = content_match.end()
+        svg_start = candidate.find("<svg", content_start)
+        svg_end = candidate.find("</svg>", svg_start)
+        if svg_start < 0 or svg_end < 0 or candidate.find("<svg", svg_start + 4) >= 0:
+            return None
+        encoded = candidate[svg_start : svg_end + len("</svg>")]
+        try:
+            source = json.loads('"' + encoded + '"')
+        except json.JSONDecodeError:
+            # The closing root proves the artifact is complete; normalize only
+            # JSON's two common string escapes, then retain strict SVG checks.
+            source = encoded.replace(r"\n", "\n").replace(r"\t", "\t").replace(r'\"', '"')
+        if not cls._RAW_SVG.fullmatch(source):
+            return None
+        return source, path_match.group(1)
+
+    @classmethod
+    def _extract_svg_payload(cls, response: str) -> tuple[str, str | None] | None:
+        """Accept one SVG or a narrowly validated textual write_file envelope."""
+        matches = list(cls._SVG_BLOCK.finditer(response))
+        if matches:
+            if len(matches) != 1:
+                return None
+            candidate = matches[0].group(1).strip()
+            payload_filename: str | None = None
+            try:
+                envelope = json.loads(candidate)
+            except json.JSONDecodeError:
+                recovered = cls._recover_complete_svg_from_tool_text(candidate)
+                if recovered:
+                    return recovered
+                envelope = None
+            if isinstance(envelope, dict):
+                arguments = envelope.get("arguments")
+                if (
+                    envelope.get("name") != "write_file"
+                    or not isinstance(arguments, dict)
+                    or set(arguments) != {"path", "content"}
+                    or not isinstance(arguments.get("path"), str)
+                    or not cls._SAFE_FILENAME.fullmatch(arguments["path"])
+                    or not isinstance(arguments.get("content"), str)
+                ):
+                    return None
+                candidate = arguments["content"].strip()
+                payload_filename = arguments["path"]
+            if cls._RAW_SVG.fullmatch(candidate):
+                return candidate, payload_filename
+            return None
+
+        candidate = response.strip()
+        wrapped = cls._TOOL_RESPONSE.fullmatch(candidate)
+        if wrapped:
+            candidate = wrapped.group(1)
+            # Some local models mimic a tool result by prefixing each XML line
+            # with a display line number. Normalize only this narrowly matched
+            # wrapper; arbitrary prose around an SVG is never recovered.
+            candidate = re.sub(r"(?m)^\s*\d+\s*:\s?", "", candidate)
+        candidate = candidate.strip()
+        payload_filename = None
+        try:
+            envelope = json.loads(candidate)
+        except json.JSONDecodeError:
+            recovered = cls._recover_complete_svg_from_tool_text(candidate)
+            if recovered:
+                return recovered
+            envelope = None
+        if isinstance(envelope, dict):
+            arguments = envelope.get("arguments")
+            if (
+                envelope.get("name") != "write_file"
+                or not isinstance(arguments, dict)
+                or set(arguments) != {"path", "content"}
+                or not isinstance(arguments.get("path"), str)
+                or not cls._SAFE_FILENAME.fullmatch(arguments["path"])
+                or not isinstance(arguments.get("content"), str)
+            ):
+                return None
+            candidate = arguments["content"].strip()
+            payload_filename = arguments["path"]
+        return (candidate, payload_filename) if cls._RAW_SVG.fullmatch(candidate) else None
+
+    @classmethod
+    def _extract_svg_source(cls, response: str) -> str | None:
+        payload = cls._extract_svg_payload(response)
+        return payload[0] if payload else None
+
+    @classmethod
     def create_tool_call(cls, prompt: str, response: str, project_root: Path) -> dict[str, Any] | None:
         """Return a normal write_file call only for one clear, safe SVG artifact."""
-        if not cls._REQUEST_VERBS.search(prompt) or "svg" not in prompt.casefold():
+        if not cls.is_creation_request(prompt):
             return None
-        matches = list(cls._SVG_BLOCK.finditer(response))
-        if len(matches) != 1:
+        payload = cls._extract_svg_payload(response)
+        if payload is None:
             return None
-        source = matches[0].group(1).strip()
+        source, payload_filename = payload
         if not source or len(source.encode("utf-8")) > CodingToolbox.MAX_WRITE_BYTES:
             return None
         lowered = source.casefold()
@@ -1519,7 +1742,7 @@ class SvgArtifactAdapter:
             ),
             "",
         )
-        filename = overwrite_target or next(
+        filename = overwrite_target or payload_filename or next(
             (name for name in reversed(names) if cls._SAFE_FILENAME.fullmatch(name)),
             "generated.svg",
         )
@@ -1546,13 +1769,16 @@ class CodingAgent:
     """Codex-style coding loop: inspect, edit, run checks, inspect diff, commit."""
 
     MAX_TURNS = 32
+    MAX_SVG_CREATION_RETRIES = 1
     SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent，工作方式类似 Codex。
 
 最高优先级：用户明确要求“生成、绘制或制作”可保存文件时，这本身就是创建文件的授权。立即选用清楚的文件名并在工作区根目录调用 write_file；不要先列目录再询问路径、文件名、默认尺寸或风格。只有目标存在会实质改变结果的歧义，或操作超出工作区/授权范围时才询问。只有任务依赖现有文件时才调用 list_files。
 
 Creation-task directive: A request to generate, draw, or create a file is sufficient authorization. Immediately create the requested artifact in the workspace root with a sensible filename using write_file. Do not ask for a filename, directory, style, or dimensions when reasonable defaults work. Do not use shell commands or downloads for a simple SVG/artwork. Make the file visibly depict the requested subject rather than a generic placeholder.
 
-SVG illustration quality: identify the recognizable visual features of every named subject and their relationships; draw them as distinct, coherent shapes rather than arbitrary circles, blobs, or rectangles. When a bicycle is requested, include two well-separated wheels joined by a clear frame, plus a saddle and handlebar. When a bird is requested, include a distinct body, head, visible eye, wing, and beak; preserve named species features (a pelican has a long bill and throat pouch). Use enough color contrast for every part to remain visible against the canvas. Choose a viewBox that contains the full scene with margin. A concise title/description and semantic IDs can help inspection, but labels must never replace visible features.
+SVG illustration quality: identify the recognizable visual features of every named subject and their relationships; draw them as distinct, coherent shapes rather than arbitrary circles, blobs, or rectangles. When a bicycle is requested, include two well-separated wheels joined by a clear frame, plus a saddle and handlebar. The rider must visibly sit on the saddle and interact with the bicycle; do not merely place two unrelated objects together. When a bird is requested, include a distinct body, head, small circular eye, wing, and beak; preserve named species features (a pelican has a long, broad bill projecting at least one head-width forward and a visible curved throat pouch hanging below it). Keep all meaningful geometry inside the viewBox; avoid clipped/oversized ground rectangles and shapes that cover the bicycle. Use strong contrast and coherent overlaps so every part remains visible. A concise title/description and semantic IDs can help inspection, but labels must never replace visible features. Never claim an SVG was rendered or visually verified unless an actual rendering/validation tool result confirms it.
+
+Before writing an illustration, choose a landscape canvas and plan relative positions: keep paired wheels on one baseline with generous separation; connect both hubs through a readable frame triangle; put the saddle above that frame; place the rider directly over the saddle, with limbs reaching the controls/pedals. For a pelican, orient its head and long tapered bill forward, make the eye a small dark circle, and draw the throat pouch as one visibly curved filled shape hanging from the bill. Draw one clean silhouette per feature, give IDs unique values, preserve margins, and layer bicycle before rider. Do not tile shapes, repeat eyes, duplicate identical paths, or use chart/table-like rectangles as anatomy. Keep a simple illustration concise (under 60 elements) and close every SVG tag exactly once.
 
 If you include a complete SVG in your reply, still call write_file to save it; a code block or asking whether to save does not complete a file-creation task.
 
@@ -1857,6 +2083,7 @@ If you include a complete SVG in your reply, still call write_file to save it; a
         if session.get("last_prompt") != prompt:
             session["git_preexisting_paths"] = sorted(self.git.status_paths())
             session["agent_changed_paths"] = []
+            session["svg_creation_retries"] = 0
             session["messages"].append(
                 {
                     "role": "user",
@@ -1876,11 +2103,18 @@ If you include a complete SVG in your reply, still call write_file to save it; a
         for turn in range(1, self.MAX_TURNS + 1):
             self.ledger.append("model_call_started", {"session_id": session_id, "turn": turn})
             self._emit("model_call_started", {"session_id": session_id, "turn": turn})
+            stream_options: dict[str, Any] = {}
+            if isinstance(provider, OpenAICompatibleProvider):
+                stream_options["on_delta"] = lambda text: self._emit(
+                    "assistant_delta",
+                    {"session_id": session_id, "turn": turn, "text": text},
+                )
             message = provider.chat(
                 messages,
                 tools=self.toolbox.definitions(),
                 max_tokens=12000,
                 request_id=f"{session_id}-turn-{turn}",
+                **stream_options,
             )
             content = self._text_content(message.get("content"))
             tool_calls = message.get("tool_calls") or []
@@ -1909,7 +2143,10 @@ If you include a complete SVG in your reply, still call write_file to save it; a
                 assistant_message["tool_calls"] = tool_calls
             messages.append(assistant_message)
             if content and tool_calls:
-                self._emit("assistant", {"session_id": session_id, "text": content})
+                display_text = content
+                if recovered_tool_ids and len(recovered_tool_ids) == len(tool_calls):
+                    display_text = "Harness 识别到 SVG 文件内容，正在安全保存。"
+                self._emit("assistant", {"session_id": session_id, "turn": turn, "text": display_text})
             if tool_calls:
                 self._save_session(session)
 
@@ -1918,6 +2155,58 @@ If you include a complete SVG in your reply, still call write_file to save it; a
                 changed_paths = (self.git.status_paths() - preexisting_paths) | (
                     set(session.get("agent_changed_paths") or []) - preexisting_paths
                 )
+                has_svg_output = any(path.casefold().endswith(".svg") for path in changed_paths)
+                svg_retries = int(session.get("svg_creation_retries", 0) or 0)
+                missing_svg = SvgArtifactAdapter.is_creation_request(prompt) and not has_svg_output
+                if missing_svg and svg_retries < self.MAX_SVG_CREATION_RETRIES:
+                    if content:
+                        self._emit("assistant", {"session_id": session_id, "turn": turn, "text": content})
+                    # A malformed, very long artifact response can dominate the
+                    # next prompt and make a local model repeat the same failure.
+                    # Keep the audit event, but replace that non-actionable turn
+                    # in session context with a concise marker before retrying.
+                    if messages and messages[-1].get("role") == "assistant" and not messages[-1].get("tool_calls"):
+                        messages[-1] = {
+                            "role": "assistant",
+                            "content": "The previous response did not save an SVG file.",
+                        }
+                    svg_retries += 1
+                    session["svg_creation_retries"] = svg_retries
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous reply did not create an SVG file, so this task is not complete. "
+                                "Immediately call the declared write_file tool exactly once with a safe .svg "
+                                "filename and complete SVG markup. Do not return a JSON tool-call object or "
+                                "wrap the tool call in XML. If a tool call cannot be emitted, return only one "
+                                "complete fenced svg block. Keep the requested subject recognizable and all "
+                                "drawing geometry inside the viewBox."
+                            ),
+                        }
+                    )
+                    retry_event = {
+                        "session_id": session_id,
+                        "attempt": svg_retries,
+                        "reason": "explicit SVG creation returned without creating an SVG file",
+                    }
+                    self.ledger.append("svg_creation_retry_scheduled", retry_event)
+                    self._emit("svg_creation_retry_scheduled", retry_event)
+                    session["updated_at"] = now_iso()
+                    self._save_session(session)
+                    continue
+                if missing_svg:
+                    session["status"] = "failed"
+                    session["error"] = "模型在一次自动补救后仍未创建 SVG 文件；任务未标记为完成。"
+                    session["updated_at"] = now_iso()
+                    failure = {
+                        "session_id": session_id,
+                        "error": session["error"],
+                        "svg_creation_retries": svg_retries,
+                    }
+                    self.ledger.append("coding_session_failed", failure)
+                    self._save_session(session)
+                    raise PermanentError(session["error"])
                 if changed_paths and diff_verified_revision != workspace_revision:
                     # The model's premature final text is not shown or retained;
                     # it must review the actual diff before producing a final answer.
@@ -1999,7 +2288,7 @@ If you include a complete SVG in your reply, still call write_file to save it; a
                     continue
 
                 if content:
-                    self._emit("assistant", {"session_id": session_id, "text": content})
+                    self._emit("assistant", {"session_id": session_id, "turn": turn, "text": content})
                 self._save_session(session)
                 summary = " ".join(prompt.split())[:72] or session_id
                 session["status"] = "completed"

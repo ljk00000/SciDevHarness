@@ -166,6 +166,8 @@ class LocalOllamaSmokeTests(unittest.TestCase):
 
             self.assertEqual(os.environ["SCIDEV_API_BASE"], "http://127.0.0.1:11434/v1")
             self.assertEqual(os.environ["SCIDEV_MODEL"], "local-model")
+            self.assertEqual(os.environ["SCIDEV_REQUEST_TIMEOUT_SECONDS"], "240")
+            self.assertEqual(os.environ["SCIDEV_STREAMING"], "1")
             self.assertEqual(os.environ["SCIDEV_TEXT_TOOL_CALL_FALLBACK"], "1")
             self.assertEqual(os.environ["SCIDEV_SUMMARY_ENABLED"], "1")
             self.assertIn(".example.test", os.environ["NO_PROXY"])
@@ -173,6 +175,18 @@ class LocalOllamaSmokeTests(unittest.TestCase):
                 self.assertIn(host, os.environ["NO_PROXY"])
                 self.assertIn(host, os.environ["no_proxy"])
             self.assertIn("internal", os.environ["no_proxy"])
+
+    def test_local_environment_preserves_explicit_request_timeout(self) -> None:
+        with patch.dict(os.environ, {"SCIDEV_REQUEST_TIMEOUT_SECONDS": "360"}, clear=True):
+            configure_local_environment("http://127.0.0.1:11434/v1", "local-model", "ollama")
+            self.assertEqual(os.environ["SCIDEV_REQUEST_TIMEOUT_SECONDS"], "360")
+
+    def test_qwen_launcher_sets_process_scoped_streaming_and_timeout_defaults(self) -> None:
+        launcher = Path(__file__).resolve().parents[1] / "start_qwen_local.bat"
+        source = launcher.read_text(encoding="utf-8")
+        self.assertIn('if not defined SCIDEV_REQUEST_TIMEOUT_SECONDS set "SCIDEV_REQUEST_TIMEOUT_SECONDS=240"', source)
+        self.assertIn('if not defined SCIDEV_STREAMING set "SCIDEV_STREAMING=1"', source)
+        self.assertIn("setlocal", source.casefold())
 
     def test_wire_guard_rejects_remote_requests_and_small_token_budgets(self) -> None:
         requests: list[dict] = []

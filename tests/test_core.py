@@ -50,6 +50,63 @@ class FakeCodingProvider:
         return {"role": "assistant", "content": "代码已完成并检查了修改。", "tool_calls": []}
 
 
+class MissingSvgThenWriteProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.message_histories: list[list[dict]] = []
+
+    def chat(self, messages, tools=None, max_tokens=12000, request_id=""):
+        self.calls += 1
+        self.message_histories.append([dict(message) for message in messages])
+        if self.calls == 1:
+            return {"role": "assistant", "content": "Here is a plan, but no file yet.", "tool_calls": []}
+        if self.calls == 2:
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_svg_write",
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": json.dumps(
+                                {
+                                    "path": "pelican.svg",
+                                    "content": '<svg xmlns="http://www.w3.org/2000/svg"><title>Pelican</title></svg>',
+                                }
+                            ),
+                        },
+                    }
+                ],
+            }
+        return {"role": "assistant", "content": "The SVG file is saved.", "tool_calls": []}
+
+
+class TextSvgEnvelopeProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(self, _messages, tools=None, max_tokens=12000, request_id=""):
+        self.calls += 1
+        if self.calls == 1:
+            source = '<svg xmlns="http://www.w3.org/2000/svg"><title>Pelican</title></svg>'
+            envelope = json.dumps(
+                {"name": "write_file", "arguments": {"path": "pelican.svg", "content": source}}
+            )
+            return {"role": "assistant", "content": f"```xml\n{envelope}\n```", "tool_calls": []}
+        return {"role": "assistant", "content": "The SVG is saved.", "tool_calls": []}
+
+
+class NeverCreatesSvgProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(self, _messages, tools=None, max_tokens=12000, request_id=""):
+        self.calls += 1
+        return {"role": "assistant", "content": "I will create it now.", "tool_calls": []}
+
+
 class CoreTests(unittest.TestCase):
     def test_ledger_writes_event_and_session(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -225,6 +282,115 @@ class CoreTests(unittest.TestCase):
             ]
             self.assertEqual(len(diff_results), 1)
             self.assertLess(diff_results[0], event_types.index("git_commit_created"))
+
+    def test_svg_creation_without_a_file_gets_one_bounded_recovery_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            events = []
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                event_callback=lambda event, data: events.append((event, data)),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            provider = MissingSvgThenWriteProvider()
+            prompt = "Generate an SVG of a pelican riding a bicycle"
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {"session_id": "svg_creation_retry", "prompt": prompt}})
+
+            self.assertTrue((root / "pelican.svg").is_file())
+            self.assertTrue(result["git_result_sha"])
+            self.assertEqual(provider.calls, 4)
+            retry_message = provider.message_histories[1][-1]
+            self.assertEqual(retry_message["role"], "user")
+            self.assertIn("this task is not complete", retry_message["content"])
+            failed_response = provider.message_histories[1][-2]
+            self.assertEqual(failed_response["role"], "assistant")
+            self.assertEqual(
+                failed_response["content"],
+                "The previous response did not save an SVG file.",
+            )
+            self.assertEqual(sum(event == "svg_creation_retry_scheduled" for event, _data in events), 1)
+            ledger_events = [
+                json.loads(line)
+                for line in (root / ".research" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertIn("svg_creation_retry_scheduled", [event["event_type"] for event in ledger_events])
+            event_types = [event["event_type"] for event in ledger_events]
+            self.assertIn("file_changed", event_types)
+            self.assertIn("git_commit_created", event_types)
+            self.assertIn("coding_session_completed", event_types)
+            diff_results = [
+                index
+                for index, event in enumerate(ledger_events)
+                if event["event_type"] == "tool_result"
+                and event["payload"].get("name") == "git_diff"
+                and event["payload"].get("source") == "harness_precommit"
+            ]
+            self.assertEqual(len(diff_results), 1)
+            self.assertLess(diff_results[0], event_types.index("git_commit_created"))
+
+    def test_textual_svg_write_file_envelope_runs_through_normal_tool_and_git_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            events = []
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                event_callback=lambda event, data: events.append((event, data)),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            provider = TextSvgEnvelopeProvider()
+            prompt = "Generate an SVG of a pelican riding a bicycle"
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {"session_id": "svg_text_tool_call", "prompt": prompt}})
+
+            self.assertTrue((root / "pelican.svg").is_file())
+            self.assertTrue(result["git_result_sha"])
+            recovered_writes = [
+                data for event, data in events
+                if event == "tool_started" and data.get("source") == "harness_svg_artifact_recovery"
+            ]
+            self.assertEqual(len(recovered_writes), 1)
+            assistant_results = [data for event, data in events if event == "assistant"]
+            self.assertIn("正在安全保存", assistant_results[0]["text"])
+
+    def test_svg_creation_is_failed_not_completed_after_the_bounded_retry_exhausts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            agent = CodingAgent(root, ledger, GitManager(root), summary_settings=SummarySettings(enabled=False))
+            provider = NeverCreatesSvgProvider()
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "未创建 SVG 文件"):
+                    agent.run(
+                        {
+                            "payload": {
+                                "session_id": "svg_never_created",
+                                "prompt": "Generate an SVG of a pelican riding a bicycle",
+                            }
+                        }
+                    )
+
+            session = json.loads(
+                (root / ".research" / "sessions" / "svg_never_created.json").read_text(encoding="utf-8")
+            )
+            records = [
+                json.loads(line)
+                for line in (root / ".research" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(provider.calls, 2)
+            self.assertEqual(session["status"], "failed")
+            self.assertTrue(any(event["event_type"] == "coding_session_failed" for event in records))
+            self.assertFalse(any(event["event_type"] == "coding_session_completed" for event in records))
 
     def test_precommit_diff_is_rechecked_after_a_later_agent_edit(self) -> None:
         class EditAfterDiffProvider:
@@ -430,8 +596,9 @@ class CoreTests(unittest.TestCase):
         self.assertIn("只有任务依赖现有文件时才调用 list_files", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("Do not use shell commands or downloads for a simple SVG/artwork", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("two well-separated wheels joined by a clear frame", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("a pelican has a long bill and throat pouch", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("distinct body, head, visible eye, wing, and beak", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("a pelican has a long, broad bill projecting at least one head-width forward", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("distinct body, head, small circular eye, wing, and beak", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("Never claim an SVG was rendered or visually verified", CodingAgent.SYSTEM_PROMPT)
 
     def test_summary_checkpoint_runs_every_configured_turns(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -898,6 +1065,29 @@ class CoreTests(unittest.TestCase):
         }
         self.assertNotIn("tool_calls", provider._coerce_text_tool_calls(unexpected_argument, no_arg_tools))
 
+    def test_provider_request_timeout_is_configurable_and_bounded(self) -> None:
+        provider_environment = {
+            "SCIDEV_API_BASE": "http://127.0.0.1:11434/v1",
+            "SCIDEV_API_KEY": "local-test-key",
+            "SCIDEV_MODEL": "local-test-model",
+        }
+        with patch.dict(os.environ, provider_environment, clear=True):
+            configured = OpenAICompatibleProvider.from_env()
+            self.assertEqual(configured.timeout, 90)
+            self.assertTrue(configured.streaming)
+        with patch.dict(os.environ, {**provider_environment, "SCIDEV_REQUEST_TIMEOUT_SECONDS": "240"}, clear=True):
+            self.assertEqual(OpenAICompatibleProvider.from_env().timeout, 240)
+        with patch.dict(os.environ, {**provider_environment, "SCIDEV_STREAMING": "off"}, clear=True):
+            self.assertFalse(OpenAICompatibleProvider.from_env().streaming)
+        for timeout in ("4", "601", "not-a-number"):
+            with self.subTest(timeout=timeout), patch.dict(
+                os.environ,
+                {**provider_environment, "SCIDEV_REQUEST_TIMEOUT_SECONDS": timeout},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(PermanentError, "5 到 600 秒"):
+                    OpenAICompatibleProvider.from_env()
+
     def test_bare_json_tool_call_is_parsed_only_when_opted_in(self) -> None:
         tools = [
             {
@@ -914,8 +1104,13 @@ class CoreTests(unittest.TestCase):
         ]
         raw_call = json.dumps({"name": "write_file", "arguments": {"path": "hello.py", "content": "print(1)"}})
         response_body = json.dumps(
-            {"choices": [{"message": {"role": "assistant", "content": raw_call}}]},
+            {"choices": [{"index": 0, "delta": {"content": raw_call}}]},
         ).encode("utf-8")
+        response_body = (
+            b"data: " + response_body + b"\n\n"
+            + b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+            + b"data: [DONE]\n\n"
+        )
         messages = [{"role": "user", "content": "Create a file"}]
         enabled = OpenAICompatibleProvider(
             "http://localhost:11434/v1", "ollama", "qwen-test", text_tool_call_fallback=True
@@ -925,13 +1120,65 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(parsed["tool_calls"][0]["function"]["name"], "write_file")
         request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(request_body["max_tokens"], 12000)
+        self.assertTrue(request_body["stream"])
         self.assertTrue(request_body["messages"][0]["content"].startswith("Local tool compatibility mode:"))
 
-        disabled = OpenAICompatibleProvider("http://localhost:11434/v1", "ollama", "qwen-test")
-        with patch("scidev_core.urlopen", return_value=BytesIO(response_body)):
+        disabled = OpenAICompatibleProvider("http://localhost:11434/v1", "ollama", "qwen-test", streaming=False)
+        non_stream_response = json.dumps(
+            {"choices": [{"message": {"role": "assistant", "content": raw_call}}]},
+        ).encode("utf-8")
+        with patch("scidev_core.urlopen", return_value=BytesIO(non_stream_response)):
             untouched = disabled.chat(messages, tools=tools, max_tokens=12000)
         self.assertEqual(untouched["content"], raw_call)
         self.assertNotIn("tool_calls", untouched)
+
+    def test_provider_streams_text_and_reassembles_fragmented_tool_calls(self) -> None:
+        chunks = [
+            {"choices": [{"index": 0, "delta": {"content": "Working "}}]},
+            {
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {
+                            "name": "write_", "arguments": '{"path":'
+                        }}],
+                    },
+                }]
+            },
+            {
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{"index": 0, "function": {
+                            "name": "file", "arguments": '"hello.py","content":"print(1)"}'
+                        }}],
+                    },
+                    "finish_reason": "tool_calls",
+                }]
+            },
+        ]
+        stream_body = b"".join(
+            b"data: " + json.dumps(chunk).encode("utf-8") + b"\n\n" for chunk in chunks
+        ) + b"data: [DONE]\n\n"
+        provider = OpenAICompatibleProvider("http://localhost:11434/v1", "ollama", "qwen-test")
+        deltas: list[str] = []
+        with patch("scidev_core.urlopen", return_value=BytesIO(stream_body)) as opener:
+            message = provider.chat([{"role": "user", "content": "create"}], on_delta=deltas.append)
+
+        self.assertEqual(deltas, ["Working "])
+        self.assertEqual(message["content"], "Working ")
+        self.assertEqual(message["tool_calls"][0]["function"]["name"], "write_file")
+        self.assertEqual(
+            json.loads(message["tool_calls"][0]["function"]["arguments"]),
+            {"path": "hello.py", "content": "print(1)"},
+        )
+        request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
+        self.assertTrue(request_body["stream"])
+
+    def test_provider_rejects_streams_ending_before_completion(self) -> None:
+        partial_stream = b'data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n'
+        with self.assertRaisesRegex(RetryableError, "before a completion marker"):
+            OpenAICompatibleProvider._stream_message(BytesIO(partial_stream))
 
     def test_git_probe_is_safe_when_git_cli_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
