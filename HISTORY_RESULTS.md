@@ -1,11 +1,16 @@
 # 历史与结果
 
+## 2026-10-01 23:51（Asia/Shanghai）· 新建公开仓库并上传
+
+- 新建公开仓库 [ljk00000/SciDevHarness-IDE](https://github.com/ljk00000/SciDevHarness-IDE)，推送完整 Git 历史到 `master`；本地与远端 SHA 均为 `3c4cfe09fc2be9d17023ac9c0bb9d66066e6c70a`。新增 `ide-public` 远程，旧 `origin` 与 `desktop-public` 未改动。
+- 107 项单测通过；常见凭据格式扫描无命中，历史中无超过 20 MiB 的文件对象；虚拟环境、模型权重与 `.research` 数据未提交。仓库沿用 Apache-2.0。GitHub Actions（CI 与依赖更新检查）上传后正在运行。
+
 ## 2026-10-01 23:30（Asia/Shanghai）· 低分辨率工作台响应式适配
 
 - 把三栏工作台最小尺寸从 940×620 降到 780×480，并加入紧凑宽度阈值；Explorer、编辑器、Agent 始终可见。窄屏总结 chip 使用短文案，同时保留完整 tooltip/accessibility 状态；Explorer 版本树入口防止副标题裁切。
 - Git 页面低高度时收起非关键统计卡片，给树和详情区留空间；QML 画布依据实际尺寸隐藏第二行说明并缩短缩放提示，修复节点卡与说明重叠。
 - 截图 smoke 覆盖宽、中、窄、最小窗口及宽屏短高度，在 100%/125% DPI 下通过；分支节点完整可见，标题栏、chip、入口文案无裁切。另有 107 项测试、编译、QML lint、diff 检查通过。
-- Computer-use 未返回可见桌面应用；本轮使用 Qt 离屏真实控件截图，未声称完成原生桌面验收。源码改动留在本地，未推送。
+- Computer-use 未返回可见桌面应用；本轮使用 Qt 离屏真实控件截图，未声称完成原生桌面验收。改动当时留在本地，随后于 23:51 随提交 `3c4cfe0` 上传至 `SciDevHarness-IDE`。
 
 ## 2026-10-01 23:01（Asia/Shanghai）· 新建并验证公开桌面客户端仓库
 
