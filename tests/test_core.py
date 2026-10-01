@@ -431,6 +431,7 @@ class CoreTests(unittest.TestCase):
         self.assertIn("Do not use shell commands or downloads for a simple SVG/artwork", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("two well-separated wheels joined by a clear frame", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("a pelican has a long bill and throat pouch", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("distinct body, head, visible eye, wing, and beak", CodingAgent.SYSTEM_PROMPT)
 
     def test_summary_checkpoint_runs_every_configured_turns(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

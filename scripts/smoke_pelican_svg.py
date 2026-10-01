@@ -107,6 +107,13 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         for element in root.iter()
         if isinstance(element.tag, str) and element.tag.rsplit("}", 1)[-1].casefold() in {"title", "desc"}
     ).casefold()
+    identified_ids = [
+        str(element.attrib["id"]).casefold()
+        for element in root.iter()
+        if isinstance(element.tag, str) and element.attrib.get("id")
+    ]
+    if len(identified_ids) != len(set(identified_ids)):
+        raise RuntimeError("SVG contains duplicate semantic IDs, so its subject parts are ambiguous")
     identified_elements = {
         str(element.attrib.get("id", "")).casefold(): element
         for element in root.iter()
@@ -149,6 +156,7 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         "bicycle-frame",
         "pelican-body",
         "pelican-head",
+        "pelican-eye",
         "pelican-wing",
         "pelican-beak",
         "pelican-pouch",
@@ -168,11 +176,47 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
     (left_x, left_y, left_radius), (right_x, right_y, right_radius) = wheel_data
     if left_radius <= 0 or right_radius <= 0:
         raise RuntimeError("SVG bicycle wheels must have positive radii")
+    for wheel_id in ("left-wheel", "right-wheel"):
+        wheel = identified_elements[wheel_id]
+        fill = wheel.attrib.get("fill", "").strip().casefold()
+        if fill not in {"none", "white", "#fff", "#ffffff"} or not wheel.attrib.get("stroke"):
+            raise RuntimeError(f"SVG {wheel_id} must be a visibly outlined, unfilled tire")
     wheel_distance = math.hypot(right_x - left_x, right_y - left_y)
     if wheel_distance < 0.9 * (left_radius + right_radius):
         raise RuntimeError("SVG bicycle wheels overlap instead of forming a readable bicycle")
     if abs(right_y - left_y) > 0.35 * (left_radius + right_radius):
         raise RuntimeError("SVG bicycle wheels are not aligned at a readable height")
+    head = identified_elements["pelican-head"]
+    head_tag = head.tag.rsplit("}", 1)[-1].casefold()
+    if head_tag == "circle":
+        head_size = float(head.attrib.get("r", "0"))
+    elif head_tag == "ellipse":
+        head_size = min(float(head.attrib.get("rx", "0")), float(head.attrib.get("ry", "0")))
+    else:
+        raise RuntimeError("pelican-head must be a distinct circle or ellipse, not an abstract path")
+    if head_size < 8:
+        raise RuntimeError("pelican-head is too small to read as a head")
+    eye = identified_elements["pelican-eye"]
+    if eye.tag.rsplit("}", 1)[-1].casefold() != "circle" or float(eye.attrib.get("r", "0")) < 2:
+        raise RuntimeError("pelican-eye must be a visible small circle, not omitted decoration")
+    beak = identified_elements["pelican-beak"]
+    if beak.tag.rsplit("}", 1)[-1].casefold() != "polygon":
+        raise RuntimeError("pelican-beak must be a distinct pointed polygon")
+    beak_numbers = [float(value) for value in re.findall(r"[-+]?(?:\d*\.\d+|\d+\.?\d*)", beak.attrib.get("points", ""))]
+    if len(beak_numbers) < 6 or len(beak_numbers) % 2:
+        raise RuntimeError("pelican-beak polygon has too few valid points")
+    if max(beak_numbers[::2]) - min(beak_numbers[::2]) < 40:
+        raise RuntimeError("pelican-beak is too short to read as a pelican bill")
+    body = identified_elements["pelican-body"]
+    body_fill = body.attrib.get("fill", "").strip().casefold()
+    if body_fill in {"", "none", "white", "#fff", "#ffffff"} and not body.attrib.get("stroke"):
+        raise RuntimeError("pelican-body has too little contrast against the blank canvas")
+    wing = identified_elements["pelican-wing"]
+    if wing.tag.rsplit("}", 1)[-1].casefold() not in {"path", "ellipse", "polygon"}:
+        raise RuntimeError("pelican-wing must be a filled, recognizable shape")
+    pouch = identified_elements["pelican-pouch"]
+    if pouch.tag.rsplit("}", 1)[-1].casefold() not in {"path", "ellipse", "polygon"}:
+        raise RuntimeError("pelican-pouch must be a curved or oval throat pouch, not a box")
     for wheel_id, (wheel_x, wheel_y, wheel_radius) in zip(("left-wheel", "right-wheel"), wheel_data):
         if (
             wheel_x - wheel_radius < view_x
@@ -325,26 +369,30 @@ def run_smoke(
         validation: dict[str, Any] | None = None
         relative_svg = ""
         svg_path = root
-        for repair_attempt in range(2):
+        for repair_attempt in range(3):
             relative_svg, svg_path = current_svg_path()
             shutil.copyfile(svg_path, saved_svg)
             try:
                 validation = validate_and_render_svg(svg_path.read_bytes(), preview_png)
                 break
             except RuntimeError as exc:
-                if repair_attempt == 1:
-                    raise RuntimeError(f"pelican SVG still failed after one repair: {exc}") from exc
+                if repair_attempt == 2:
+                    raise RuntimeError(f"pelican SVG still failed after two repairs: {exc}") from exc
                 previous_write_count = len(file_calls)
                 repair_prompt = (
-                    "Create a corrected version of the existing pelican_bicycle.svg; the original request remains: "
+                    f"Create a corrected version of the existing {Path(relative_svg).name}; the original request remains: "
                     f"{PELICAN_PROMPT}. The rendered SVG failed a structural visual check: {exc}. "
                     "Rewrite the SVG using write_file; do not use shell commands. Use viewBox=\"0 0 480 320\". "
                     "Draw two unfilled bicycle tire circles with centers near (100,245) and (380,245), radius about 35. "
-                    "The bicycle-frame must be a polyline that passes through both wheel centers and a higher center "
-                    "vertex; add visible saddle and handlebar. Draw a recognizable pelican perched above the saddle: "
-                    "separate body, head, wing, a long pointed bill extending forward, and a throat pouch below the bill. "
+                    "Use unfilled bicycle tire circles with visible strokes. The bicycle-frame must be an actual "
+                    "<polyline id=\"bicycle-frame\" points=\"100,245 190,170 250,245 100,245 250,245 380,245\" /> "
+                    "that passes through both wheel centers and a higher center vertex; add visible saddle and handlebar. "
+                    "Draw a recognizable pelican perched above the saddle: a contrasting tan/orange body with a "
+                    "distinct circular head and visible dark eye, a contrasting filled wing, a long narrow yellow "
+                    "bill polygon projecting forward (at least 40 units long), and an orange curved/oval throat pouch "
+                    "hanging below the bill; never use white-on-white or box shapes for the bird's identity features. "
                     "Use the exact semantic IDs left-wheel, right-wheel, bicycle-frame, pelican-body, pelican-head, "
-                    "pelican-wing, pelican-beak, and pelican-pouch on visible shapes. Keep the entire scene inside the "
+                    "pelican-eye, pelican-wing, pelican-beak, and pelican-pouch on visible shapes. Keep the entire scene inside the "
                     "viewBox with margin. Then inspect the Git diff and briefly report completion."
                 )
                 result = run_agent(repair_prompt)

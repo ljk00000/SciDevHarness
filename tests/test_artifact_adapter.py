@@ -75,6 +75,20 @@ class SvgArtifactAdapterTests(unittest.TestCase):
         assert call is not None
         self.assertEqual(json.loads(call["function"]["arguments"])["path"], "pelican_bicycle-1.svg")
 
+    def test_explicit_repair_of_an_existing_svg_updates_that_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pelican_bicycle.svg").write_text("old", encoding="utf-8")
+            call = SvgArtifactAdapter.create_tool_call(
+                "Create a corrected version of the existing pelican_bicycle.svg",
+                SAFE_SVG_RESPONSE,
+                root,
+            )
+
+        self.assertIsNotNone(call)
+        assert call is not None
+        self.assertEqual(json.loads(call["function"]["arguments"])["path"], "pelican_bicycle.svg")
+
 
 if __name__ == "__main__":
     unittest.main()

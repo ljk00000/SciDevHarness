@@ -1503,16 +1503,33 @@ class SvgArtifactAdapter:
                 ):
                     return None
 
+        filename_pattern = r"(?<![A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9_.-]{0,79}\.svg)(?![A-Za-z0-9_.-])"
         names = re.findall(
-            r"(?<![A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9_.-]{0,79}\.svg)(?![A-Za-z0-9_.-])",
+            filename_pattern,
             response,
             re.I,
         )
-        filename = next((name for name in reversed(names) if cls._SAFE_FILENAME.fullmatch(name)), "generated.svg")
+        existing_targets = re.findall(filename_pattern, prompt, re.I)
+        overwrite_target = next(
+            (
+                name
+                for name in existing_targets
+                if cls._SAFE_FILENAME.fullmatch(name)
+                and re.search(rf"\bexisting\s+`?{re.escape(name)}\b`?", prompt, re.I)
+            ),
+            "",
+        )
+        filename = overwrite_target or next(
+            (name for name in reversed(names) if cls._SAFE_FILENAME.fullmatch(name)),
+            "generated.svg",
+        )
         workspace = Path(project_root).resolve()
         candidate = filename
         suffix = 1
-        while (workspace / candidate).exists() or CodingToolbox.is_protected_path(candidate):
+        while (
+            (not overwrite_target and (workspace / candidate).exists())
+            or CodingToolbox.is_protected_path(candidate)
+        ):
             candidate = f"{Path(filename).stem}-{suffix}.svg"
             suffix += 1
         return {
@@ -1535,7 +1552,7 @@ class CodingAgent:
 
 Creation-task directive: A request to generate, draw, or create a file is sufficient authorization. Immediately create the requested artifact in the workspace root with a sensible filename using write_file. Do not ask for a filename, directory, style, or dimensions when reasonable defaults work. Do not use shell commands or downloads for a simple SVG/artwork. Make the file visibly depict the requested subject rather than a generic placeholder.
 
-SVG illustration quality: identify the recognizable visual features of every named subject and their relationships; draw them as distinct, coherent shapes rather than arbitrary circles, blobs, or rectangles. When a bicycle is requested, include two well-separated wheels joined by a clear frame, plus a saddle and handlebar. When a bird is requested, include a distinct body, head, wing, and beak; preserve named species features (a pelican has a long bill and throat pouch). Choose a viewBox that contains the full scene with margin. A concise title/description and semantic IDs can help inspection, but labels must never replace visible features.
+SVG illustration quality: identify the recognizable visual features of every named subject and their relationships; draw them as distinct, coherent shapes rather than arbitrary circles, blobs, or rectangles. When a bicycle is requested, include two well-separated wheels joined by a clear frame, plus a saddle and handlebar. When a bird is requested, include a distinct body, head, visible eye, wing, and beak; preserve named species features (a pelican has a long bill and throat pouch). Use enough color contrast for every part to remain visible against the canvas. Choose a viewBox that contains the full scene with margin. A concise title/description and semantic IDs can help inspection, but labels must never replace visible features.
 
 If you include a complete SVG in your reply, still call write_file to save it; a code block or asking whether to save does not complete a file-creation task.
 

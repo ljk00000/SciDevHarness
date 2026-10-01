@@ -14,8 +14,9 @@ VALID_PELICAN_SVG = b'''<svg xmlns="http://www.w3.org/2000/svg" width="320" heig
   <polyline id="bicycle-frame" points="90,150 135,95 180,150 90,150 230,150 180,150 195,105 230,150" fill="none" stroke="#27374a" stroke-width="5"/>
   <path id="pelican-body" d="M145 83 Q166 45 200 65 Q186 110 155 107Z" fill="#f4a261"/>
   <circle id="pelican-head" cx="195" cy="62" r="12" fill="#f4a261"/>
+  <circle id="pelican-eye" cx="199" cy="60" r="3" fill="#27374a"/>
   <path id="pelican-wing" d="M154 77 Q174 58 190 78 Q175 90 154 77Z" fill="#e9c46a"/>
-  <path id="pelican-beak" d="M198 66 240 76 198 80Z" fill="#e76f51"/>
+  <polygon id="pelican-beak" points="198,66 240,76 198,80" fill="#e76f51"/>
   <path id="pelican-pouch" d="M198 79 Q207 103 188 104" fill="none" stroke="#e76f51" stroke-width="4"/>
 </svg>'''
 
@@ -31,7 +32,7 @@ class PelicanSvgTests(unittest.TestCase):
             self.assertGreater(preview.stat().st_size, 1000)
             self.assertGreater(result["non_background_samples"], 25)
             self.assertEqual(result["intrinsic_width"], 320)
-            self.assertEqual(result["element_counts"]["circle"], 3)
+            self.assertEqual(result["element_counts"]["circle"], 4)
 
     def test_invalid_or_active_svg_content_is_rejected(self) -> None:
         invalid_documents = (
@@ -67,6 +68,15 @@ class PelicanSvgTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(RuntimeError, "wheels overlap"):
                 validate_and_render_svg(overlapping, Path(temporary) / "preview.png")
+
+    def test_short_pelican_beak_is_rejected(self) -> None:
+        short_beak = VALID_PELICAN_SVG.replace(
+            b'points="198,66 240,76 198,80"',
+            b'points="198,66 210,70 198,80"',
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "too short to read as a pelican bill"):
+                validate_and_render_svg(short_beak, Path(temporary) / "preview.png")
 
 
 if __name__ == "__main__":
