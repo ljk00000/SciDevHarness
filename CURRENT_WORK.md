@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-10-01 14:01（Asia/Shanghai）· 本地提交与 GitHub 目标确认
+
+- 已将当前 31 个项目文件提交为 `c7c7ada`（`feat: finalize desktop research coding harness`），提交后工作区干净；暂存内容检查未发现模型权重、大文件或常见密钥格式。
+- GitHub CLI 已认证且具备仓库权限，但本地无 remote，认证账号下也没有同名 SciDevHarness 仓库；因此尚未推送。待确认现有仓库 URL，或是否在当前账号新建仓库及其公开/私有可见性。
+
 ## 2026-10-01 12:30（Asia/Shanghai）· Qwen 工具往返修复与编码验证
 
 - 修复本机 Ollama 工具往返：工具调用轮次不再把模型旁白混入后续消息（仍向界面显示）；兼容经白名单/参数校验的 `<tool_request>`；`read_file` 标明行号不是原文；`replace_in_file` 可用 LF 片段匹配并保留 CRLF 文件行尾。文件编辑已在用户授权范围内时明确要求直接执行、不重复确认。
