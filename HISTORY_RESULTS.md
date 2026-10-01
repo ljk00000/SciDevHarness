@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-01 23:01（Asia/Shanghai）· 新建并验证公开桌面客户端仓库
+
+- 创建公开仓库 [ljk00000/SciDevHarness-Desktop](https://github.com/ljk00000/SciDevHarness-Desktop)，推送 `master`；功能提交 `aeb342d1b17b091d0a32f8f532efc60c38ba4d3d` 与远端哈希一致。原有公开仓库保留为 `origin`，新仓库使用 `desktop-public` 远端。
+- 107 项本地测试通过；GitHub Windows CI 在 Python 3.12、3.13、3.14 均通过测试、编译、依赖检查/smoke、普通与 125% DPI UI 截图及 QML lint。
+- 发布前检查未发现已跟踪的大型模型文件或常见密钥格式；新仓库与旧项目仓库互不覆盖。
+
 ## 2026-10-01 22:41（Asia/Shanghai）· 收紧鹈鹕触把的实际几何门槛
 
 - 人工看图发现前伸翼与车把仍有可见小间隙；把触点验收从包围框重叠改为第一段三次曲线端点落在把手轮廓附近（2 SVG 单位容差），并要求闭合填充曲线。复合 path 辐条按子路径而非元素数计数。

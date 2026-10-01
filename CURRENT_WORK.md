@@ -1,11 +1,8 @@
 # 当前工作
 
-## 2026-10-01 22:42（Asia/Shanghai）· 严格接触验收下的 Qwen SVG 闭环
+## 2026-10-01 23:01（Asia/Shanghai）· 发布公开桌面客户端仓库
 
-- OpenAI-compatible provider 支持 SSE 实时文字/分片工具调用、可配置 5–600 秒超时；本机启动器进程级默认 240 秒。SVG 文本工具调用恢复安全接入原有文件/Git 链路。
-- 修复无文件补救把超长失败回答原样带入下一轮的问题；保留账本记录但在重试上下文中压缩为短标记。模型重复 SVG 路径、缺车轮/车座或肢体未接触的输出不会伪报完成。
-- 本机 `scidev-qwen2.5-coder-7b:q4_k_m` 用精确原始提示再跑严格版：71.1 秒、8 次 loopback 请求、每次 `max_tokens=12000`；两次真实 `write_file`，自动 Git commit `8879ed8`、对话摘要、工作区干净。安全检查、17 个语义部件和 Qt 1200×800 渲染均通过；PNG 人工检查确认轮/车架/骑手接触关系清晰，画风仍为简洁矢量。
-- 完整单测 107 项、`py_compile`、`pip check`、依赖/UI smoke、QML lint、`git diff --check` 通过。近期 Qt 离屏截图在 1500×920、1180×760、940×620 和 125% DPI 下无面板重叠；不是原生桌面截图。
-- Markdown 文档保持 5 个。当前工作区仍有未提交修改；本轮未提交或推送。测试产物和 commit 均在临时项目目录。
+- 新仓库：[ljk00000/SciDevHarness-Desktop](https://github.com/ljk00000/SciDevHarness-Desktop)，公开；`master` 包含本轮 13 个文件的功能改动，代码提交 `aeb342d` 已推送并核验远端哈希一致。旧仓库 `ljk00000/SciDevHarness` 保持不变。
+- 本地 107 项测试通过；GitHub Windows CI 的 Python 3.12、3.13、3.14 均通过测试、依赖 smoke、IDE/版本树普通与 125% DPI 截图及 QML lint。根目录 Markdown 仍为 5 个。
 
-下一步：继续提升生成插画的比例和精致度，复核发布级 UI 细节与实际桌面截图；另“新建并公开 GitHub 仓库”尚需用户给新仓库名称（现有同名项目已公开，不能擅自另起名）。
+下一步：补齐 940px 以下的紧凑响应式工作台布局，保留 Explorer、编辑器和 Agent 三栏，并做更窄分辨率验收；原生桌面截图通道恢复后再补实机截图检查。
