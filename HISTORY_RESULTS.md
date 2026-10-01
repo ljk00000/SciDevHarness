@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-02 07:03（Asia/Shanghai）· 创建并验证新公开仓库
+
+- 新仓库 [ljk00000/SciDevHarness-Research-IDE-v2](https://github.com/ljk00000/SciDevHarness-Research-IDE-v2) 已公开，默认分支 `main`。提交 `628af9cfa1b5857235aafbe719b35faec47ddc70` 的 `git ls-remote` SHA 与本地一致；已有仓库未覆盖。
+- `unittest` 138/138 通过；Windows CI 仍在排队。凭据常见格式扫描未命中；`gitleaks` 未安装，故不宣称完整凭据审计。
+- 上传时按项目规则绕开预设代理、直连 GitHub HTTPS 成功；仅移除单次命令进程代理变量。
+
 ## 2026-10-02 06:59（Asia/Shanghai）· 工具调用与 SVG 回归修正
 
 - 精简通用系统提示；工具单一为 `write_file` 时要求工具调用。修复 SVG 工具结果误判、局部编辑提示字段和对比度校验，并限制自动修复轮数。
