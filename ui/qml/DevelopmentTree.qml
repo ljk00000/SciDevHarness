@@ -19,6 +19,7 @@ Item {
                             ? Math.min(270, Math.max(132, (width - 44) / 2))
                             : Math.min(270, Math.max(180, width * 0.31))
     property real trunkX: width / 2
+    property bool compactHeader: width < 520 || height < 360
 
     signal nodeSelected(string nodeId)
     signal nodeMoved(string nodeId, real offsetX, real offsetY)
@@ -666,13 +667,16 @@ Item {
         anchors.right: parent.right
         anchors.rightMargin: 18
         y: 11
-        text: Math.round(root.zoom * 100) + "%  ·  Ctrl+滚轮缩放 · 拖动分支 / 平移画布"
+        text: root.compactHeader
+              ? Math.round(root.zoom * 100) + "% · Ctrl+滚轮"
+              : Math.round(root.zoom * 100) + "%  ·  Ctrl+滚轮缩放 · 拖动分支 / 平移画布"
         color: "#a2afbd"
         font.family: "Microsoft YaHei UI"
-        font.pixelSize: 13
+        font.pixelSize: root.compactHeader ? 11 : 13
     }
     Text {
         z: 5
+        visible: !root.compactHeader
         x: 18
         y: 32
         width: Math.max(100, parent.width - 36)

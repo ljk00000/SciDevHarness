@@ -75,6 +75,39 @@ def verify_screenshot_content(window: ClientWindow, name: str) -> None:
         raise RuntimeError(f"screenshot looks blank or incomplete for {name}: only {len(colors)} sampled colors")
 
 
+def verify_title_bar_layout(window: ClientWindow, name: str) -> None:
+    title_bar = window.centralWidget().layout().itemAt(0).widget()
+    if title_bar is None:
+        raise RuntimeError(f"window title bar is missing for {name}")
+    layout = title_bar.layout()
+    visible_widgets = [
+        item.widget()
+        for index in range(layout.count())
+        if (item := layout.itemAt(index)).widget() is not None and item.widget().isVisible()
+    ]
+    rectangles = [widget.geometry() for widget in visible_widgets]
+    if any(
+        rect.left() < 0
+        or rect.top() < 0
+        or rect.right() >= title_bar.width()
+        or rect.bottom() >= title_bar.height()
+        for rect in rectangles
+    ):
+        raise RuntimeError(
+            f"title-bar control is outside the visible window for {name}: "
+            f"{[(widget.objectName(), widget.geometry()) for widget in visible_widgets]} "
+            f"within {title_bar.size()}"
+        )
+    if any(left.intersects(right) for index, left in enumerate(rectangles) for right in rectangles[index + 1 :]):
+        raise RuntimeError(f"title-bar controls overlap for {name}: {rectangles}")
+    minimum_search_width = 120 if window.width() < 1120 else 190
+    if window.command_search.width() < minimum_search_width:
+        raise RuntimeError(
+            f"command search is clipped for {name}: {window.command_search.width()}px "
+            f"< {minimum_search_width}px"
+        )
+
+
 def verify_attempt_accent_pixel(
     window: ClientWindow,
     image: QImage,
@@ -124,7 +157,7 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
     QApplication.processEvents()
     splitter = window.workbench
     panes = [splitter.widget(index) for index in range(splitter.count())]
-    minimum_widths = (240, 360, 280)
+    minimum_widths = window._workbench_minimum_widths()
     sizes = splitter.sizes()
     if len(panes) != 3 or len(sizes) != 3:
         raise RuntimeError(f"unexpected workbench pane count for {name}: {len(panes)}")
@@ -136,6 +169,18 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
         raise RuntimeError(f"workbench panes overlap for {name}: {rectangles}")
     if not window.chat_input.isVisible() or window.chat_input.width() < 200:
         raise RuntimeError(f"Agent composer is not usable for {name}: {window.chat_input.size()}")
+    git_entry_width = window.git_entry_button.contentsRect().width()
+    for line in window.git_entry_button.text().splitlines():
+        if window.git_entry_button.fontMetrics().horizontalAdvance(line) > git_entry_width:
+            raise RuntimeError(
+                f"Explorer development-tree label is clipped for {name}: "
+                f"{line!r} needs more than {git_entry_width}px"
+            )
+    if not window.git_entry_button.toolTip():
+        raise RuntimeError(f"Explorer development-tree entry lost its full description for {name}")
+    composer = window.chat_input.parentWidget()
+    if composer is None or not composer.rect().contains(window.chat_input.geometry()):
+        raise RuntimeError(f"Agent input is clipped inside its composer for {name}")
     for chip in (window.chat_mode_chip, window.retry_chip, window.summary_chip):
         rendered_width = chip.fontMetrics().horizontalAdvance(chip.text())
         available_width = chip.contentsRect().width()
@@ -144,6 +189,9 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
                 f"chat composer chip is clipped for {name}: {chip.text()!r} "
                 f"needs {rendered_width}px, has {available_width}px"
             )
+    summary_status = window._summary_status_text()
+    if window.summary_chip.toolTip() != summary_status or window.summary_chip.accessibleName() != summary_status:
+        raise RuntimeError(f"compact summary status lost its full accessible description for {name}")
     labels = [window.project_label]
     if window.title_project_label.isVisible():
         labels.append(window.title_project_label)
@@ -155,8 +203,9 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
             )
         if visible_text_width < label.fontMetrics().horizontalAdvance(label.full_text) and "…" not in label.text():
             raise RuntimeError(f"workspace name was truncated without an ellipsis for {name}: {label.text()!r}")
+    verify_title_bar_layout(window, name)
     verify_screenshot_content(window, name)
-    print(f"{name} workbench widths={sizes}")
+    print(f"{name} size={window.width()}x{window.height()} workbench widths={sizes}")
 
 
 def capture_unsaved_close_confirmation(
@@ -234,6 +283,7 @@ def capture_unsaved_close_confirmation(
 def verify_git_splitter_layout(window: ClientWindow, name: str, orientation: Qt.Orientation) -> None:
     page = window.git_page
     splitter = window.git_tree_splitter
+    root = window.git_tree.rootObject()
     if splitter.orientation() != orientation:
         raise RuntimeError(f"unexpected version-tree splitter orientation for {name}: {splitter.orientation()}")
     page_width = page.contentsRect().width()
@@ -251,6 +301,20 @@ def verify_git_splitter_layout(window: ClientWindow, name: str, orientation: Qt.
             f"version-tree splitter is not responsive for {name}: "
             f"{policy.horizontalPolicy().name}/{policy.verticalPolicy().name}"
         )
+    short_layout = window.height() < 560
+    if window.git_metrics_panel.isHidden() != short_layout:
+        raise RuntimeError(f"version-tree metrics do not match the short-screen layout for {name}")
+    expected_header_height = 56 if short_layout else 68
+    if window.git_page_header.height() != expected_header_height:
+        raise RuntimeError(
+            f"version-tree header has the wrong height for {name}: "
+            f"{window.git_page_header.height()}px != {expected_header_height}px"
+        )
+    expected_compact_canvas_header = (
+        float(root.property("width")) < 520 or float(root.property("height")) < 360
+    )
+    if bool(root.property("compactHeader")) != expected_compact_canvas_header:
+        raise RuntimeError(f"version-tree canvas header did not adapt to its viewport for {name}")
     for index in range(splitter.count()):
         child = splitter.widget(index)
         rect = child.geometry()
@@ -476,12 +540,16 @@ def main(argv: list[str] | None = None) -> int:
         capture(window, app, output_dir, "tree-medium", (1180, 760))
         verify_workbench_layout(window, "tree-medium")
         verify_git_splitter_layout(window, "tree-medium", Qt.Orientation.Vertical)
-        narrow_tree_image = capture(window, app, output_dir, "tree-narrow", (940, 620))
+        narrow_tree_image = capture(window, app, output_dir, "tree-narrow", (820, 600))
         verify_workbench_layout(window, "tree-narrow")
         verify_git_splitter_layout(window, "tree-narrow", Qt.Orientation.Vertical)
         if window.git_tree_splitter.orientation() != Qt.Orientation.Vertical:
             raise RuntimeError("narrow version tree did not switch to a stacked layout")
         verify_attempt_accent_pixel(window, narrow_tree_image, "tree-narrow", "fast-warmup")
+        minimum_tree_image = capture(window, app, output_dir, "tree-minimum", (780, 480))
+        verify_workbench_layout(window, "tree-minimum")
+        verify_git_splitter_layout(window, "tree-minimum", Qt.Orientation.Vertical)
+        verify_attempt_accent_pixel(window, minimum_tree_image, "tree-minimum", "fast-warmup")
         branch_card = window.git_tree._positions()[0]["fast-warmup"][2]
         root = window.git_tree.rootObject()
         visible_branch_bottom = (
@@ -509,7 +577,7 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError("plain mouse wheel did not scroll the narrow version tree")
         if float(root.property("zoom")) != initial_zoom:
             raise RuntimeError("plain mouse wheel unexpectedly zoomed the version tree")
-        capture(window, app, output_dir, "tree-narrow-scrolled", (940, 620))
+        capture(window, app, output_dir, "tree-narrow-scrolled", (820, 600))
         initial_scroll = scroll_bar.value()
         send_wheel(window, Qt.KeyboardModifier.ControlModifier, angle_delta_y=120)
         app.processEvents()
@@ -530,12 +598,23 @@ def main(argv: list[str] | None = None) -> int:
         if any(abs(value - expected) > 0.02 for value, expected in zip(restored_view, compact_restore)):
             raise RuntimeError(
                 f"wide-layout version-tree zoom/pan was not restored: {restored_view} != {compact_restore}"
-            )
+        )
         if window._git_tree_compact_restore is not None:
             raise RuntimeError("compact-layout view state was not cleared after returning wide")
+        capture(window, app, output_dir, "tree-wide-short", (1500, 520))
+        verify_workbench_layout(window, "tree-wide-short")
+        verify_git_splitter_layout(window, "tree-wide-short", Qt.Orientation.Horizontal)
+        capture(window, app, output_dir, "tree-wide-short-restored", (1500, 920))
+        verify_workbench_layout(window, "tree-wide-short-restored")
+        verify_git_splitter_layout(window, "tree-wide-short-restored", Qt.Orientation.Horizontal)
         window.show_workspace()
-        capture(window, app, output_dir, "editor-narrow", (940, 620))
-        verify_workbench_layout(window, "editor-narrow")
+        for name, size in (
+            ("editor-narrow", (940, 620)),
+            ("editor-compact", (820, 600)),
+            ("editor-minimum", (780, 480)),
+        ):
+            capture(window, app, output_dir, name, size)
+            verify_workbench_layout(window, name)
         hint = window.workspace_hint
         if hint.fontMetrics().horizontalAdvance(hint.text()) > hint.width():
             raise RuntimeError("workspace footer status is clipped at the narrow layout")

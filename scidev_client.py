@@ -1532,13 +1532,17 @@ class MessageBubble(QFrame):
 
 
 class ClientWindow(QMainWindow):
+    WORKBENCH_COMPACT_BREAKPOINT = 1000
+    WORKBENCH_WIDE_MINIMUMS = (240, 360, 280)
+    WORKBENCH_COMPACT_MINIMUMS = (200, 320, 232)
+
     def __init__(self, project_root: Path):
         super().__init__()
         self.project_root = Path(project_root).resolve()
         self.setWindowTitle("SciDevHarness — Coding Workspace")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.resize(1500, 920)
-        self.setMinimumSize(940, 620)
+        self.setMinimumSize(780, 480)
         self.setStyleSheet(THEME)
         self.ledger = EventLedger(self.project_root)
         self.git = GitManager(self.project_root)
@@ -1574,6 +1578,7 @@ class ClientWindow(QMainWindow):
         self._titlebar_compact: bool | None = None
         self._git_tree_compact_restore: tuple[float, float, float] | None = None
         self._git_tree_compact_auto_view: tuple[float, float, float] | None = None
+        self._git_tree_short_layout: bool | None = None
 
         self.agent = CodingAgent(
             self.project_root,
@@ -1613,6 +1618,7 @@ class ClientWindow(QMainWindow):
         workbench.setHandleWidth(5)
         workbench.addWidget(self._build_left_panel())
         self.workspace_stack = QStackedWidget()
+        self.workspace_stack.setMinimumWidth(self.WORKBENCH_COMPACT_MINIMUMS[1])
         self.workspace_page = self._build_workspace()
         self.git_page = self._build_git_page()
         self.workspace_stack.addWidget(self.workspace_page)
@@ -1898,7 +1904,7 @@ class ClientWindow(QMainWindow):
 
     def _build_left_panel(self) -> QWidget:
         shell = QWidget()
-        shell.setMinimumWidth(240)
+        shell.setMinimumWidth(self.WORKBENCH_COMPACT_MINIMUMS[0])
         shell.setMaximumWidth(480)
         shell.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout = QHBoxLayout(shell)
@@ -1983,7 +1989,10 @@ class ClientWindow(QMainWindow):
         git_entry_layout.setContentsMargins(0, 0, 0, 0)
         git_entry_button = QPushButton("开发版本树\n查看主线与尝试方向")
         git_entry_button.setObjectName("GitEntryButton")
+        git_entry_button.setToolTip("查看主线与成功、失败、取消中的尝试方向；这是 Harness 开发树，不是 Git 分支")
+        git_entry_button.setAccessibleName("开发版本树：查看主线与尝试方向")
         git_entry_button.clicked.connect(self.show_git)
+        self.git_entry_button = git_entry_button
         git_entry_layout.addWidget(git_entry_button)
         explorer_layout.addWidget(git_entry)
 
@@ -2183,6 +2192,11 @@ class ClientWindow(QMainWindow):
             if total > 0 and len(sizes) == 3:
                 self._workbench_user_ratios = (sizes[0] / total, sizes[2] / total)
 
+    def _workbench_minimum_widths(self) -> tuple[int, int, int]:
+        if self.width() < self.WORKBENCH_COMPACT_BREAKPOINT:
+            return self.WORKBENCH_COMPACT_MINIMUMS
+        return self.WORKBENCH_WIDE_MINIMUMS
+
     def _adapt_workbench_layout(self) -> None:
         self._workbench_adapt_pending = False
         if not hasattr(self, "workbench"):
@@ -2197,21 +2211,45 @@ class ClientWindow(QMainWindow):
             left_ratio, chat_ratio = self._workbench_user_ratios
             left = int(total * left_ratio)
             chat = int(total * chat_ratio)
-        left = min(440, max(240, left))
-        chat = min(460, max(280, chat))
+        left_minimum, center_minimum, chat_minimum = self._workbench_minimum_widths()
+        left = min(440, max(left_minimum, left))
+        chat = min(460, max(chat_minimum, chat))
         center = total - left - chat
-        if center < 360:
-            deficit = 360 - center
-            chat_reduction = min(deficit, max(0, chat - 280))
+        if center < center_minimum:
+            deficit = center_minimum - center
+            chat_reduction = min(deficit, max(0, chat - chat_minimum))
             chat -= chat_reduction
             deficit -= chat_reduction
-            left -= min(deficit, max(0, left - 240))
+            left -= min(deficit, max(0, left - left_minimum))
             center = total - left - chat
         self._workbench_adapting = True
         try:
             self.workbench.setSizes([left, max(1, center), chat])
         finally:
             self._workbench_adapting = False
+        self._adapt_explorer_density()
+        self._adapt_chat_composer_density()
+
+    def _adapt_explorer_density(self) -> None:
+        git_entry = getattr(self, "git_entry_button", None)
+        if git_entry is None:
+            return
+        compact = self.width() < self.WORKBENCH_COMPACT_BREAKPOINT
+        git_entry.setText("开发版本树\n主线 · 尝试" if compact else "开发版本树\n查看主线与尝试方向")
+
+    def _adapt_chat_composer_density(self) -> None:
+        composer_layout = getattr(self, "chat_composer_layout", None)
+        composer_top = getattr(self, "chat_composer_top", None)
+        if composer_layout is None or composer_top is None:
+            return
+        compact = self.width() < self.WORKBENCH_COMPACT_BREAKPOINT
+        horizontal_margin = 8 if compact else 12
+        composer_layout.setContentsMargins(horizontal_margin, 10, horizontal_margin, 10)
+        composer_top.setSpacing(2 if compact else 6)
+        if hasattr(self, "summary_chip"):
+            self.summary_chip.setText(self._summary_chip_text())
+            self.summary_chip.setToolTip(self._summary_status_text())
+            self.summary_chip.setAccessibleName(self._summary_status_text())
 
     def resizeEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         super().resizeEvent(event)
@@ -2241,6 +2279,11 @@ class ClientWindow(QMainWindow):
         if not hasattr(self, "git_tree_splitter"):
             return
         narrow = self.git_tree_splitter.width() < 700
+        short_layout = self.height() < 560
+        short_layout_changed = self._git_tree_short_layout != short_layout
+        self._git_tree_short_layout = short_layout
+        self.git_page_header.setFixedHeight(56 if short_layout else 68)
+        self.git_metrics_panel.setVisible(not short_layout)
         if hasattr(self, "git_page_subtitle"):
             self.git_page_subtitle.setText(
                 "主线与尝试方向"
@@ -2282,11 +2325,15 @@ class ClientWindow(QMainWindow):
             self.git_details_scroll.setMaximumWidth(16777215)
             self.git_tree_scroll.setMinimumHeight(0)
             self.git_details_scroll.setMinimumHeight(0)
-            if orientation_changed:
+            if orientation_changed or short_layout_changed:
+                self.git_page.layout().activate()
                 split_height = max(1, self.git_tree_splitter.height())
                 # Leave enough room for both a useful tree canvas and the
-                # selected-node summary; the canvas is auto-fitted below.
-                self.git_tree_splitter.setSizes([int(split_height * 0.62), int(split_height * 0.38)])
+                # selected-node summary; hide only redundant metrics on short screens.
+                details_ratio = 0.43 if short_layout else 0.42
+                self.git_tree_splitter.setSizes(
+                    [int(split_height * (1 - details_ratio)), int(split_height * details_ratio)]
+                )
         else:
             self.git_tree_splitter.setStretchFactor(0, 1)
             self.git_tree_splitter.setStretchFactor(1, 0)
@@ -2503,6 +2550,7 @@ class ClientWindow(QMainWindow):
         header = QFrame()
         header.setObjectName("GitPageHeader")
         header.setFixedHeight(68)
+        self.git_page_header = header
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(18, 0, 14, 0)
         icon = QLabel("G")
@@ -2539,14 +2587,17 @@ class ClientWindow(QMainWindow):
         header_layout.addWidget(init)
         layout.addWidget(header)
 
-        metrics = QHBoxLayout()
+        metrics_panel = QWidget()
+        metrics_panel.setObjectName("GitMetricsPanel")
+        metrics = QHBoxLayout(metrics_panel)
         metrics.setContentsMargins(18, 12, 18, 12)
         metrics.setSpacing(10)
+        self.git_metrics_panel = metrics_panel
         self.git_main_value = self._metric_card(metrics, "主线", "0")
         self.git_attempt_value = self._metric_card(metrics, "尝试", "0")
         self.git_failed_value = self._metric_card(metrics, "失败", "0")
         self.git_head_value = self._metric_card(metrics, "HEAD", "暂无")
-        layout.addLayout(metrics)
+        layout.addWidget(metrics_panel)
 
         tree_splitter = QSplitter(Qt.Orientation.Horizontal)
         tree_splitter.setChildrenCollapsible(False)
@@ -2777,7 +2828,7 @@ class ClientWindow(QMainWindow):
     def _build_chat_panel(self) -> QWidget:
         chat = QFrame()
         chat.setObjectName("ChatPane")
-        chat.setMinimumWidth(280)
+        chat.setMinimumWidth(self.WORKBENCH_COMPACT_MINIMUMS[2])
         chat.setMaximumWidth(500)
         layout = QVBoxLayout(chat)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2897,6 +2948,8 @@ class ClientWindow(QMainWindow):
         composer_layout.setContentsMargins(12, 10, 12, 10)
         composer_layout.setSpacing(7)
         composer_top = QHBoxLayout()
+        self.chat_composer_layout = composer_layout
+        self.chat_composer_top = composer_top
         self.chat_mode_chip = QLabel("Agent")
         self.chat_mode_chip.setObjectName("Chip")
         composer_top.addWidget(self.chat_mode_chip)
@@ -2908,6 +2961,7 @@ class ClientWindow(QMainWindow):
         self.summary_chip = QLabel(self._summary_chip_text())
         self.summary_chip.setObjectName("Chip")
         self.summary_chip.setToolTip(self._summary_status_text())
+        self.summary_chip.setAccessibleName(self._summary_status_text())
         composer_top.addWidget(self.summary_chip)
         context_button = QToolButton()
         context_button.setObjectName("IconButton")
@@ -2946,9 +3000,12 @@ class ClientWindow(QMainWindow):
 
     def _summary_chip_text(self) -> str:
         settings = getattr(self, "summary_settings", SummarySettings())
+        compact = self.width() < self.WORKBENCH_COMPACT_BREAKPOINT
         if not settings.enabled:
-            return "总结关"
-        return f"总结 {settings.interval_turns}轮" if settings.interval_turns else "总结结束"
+            return "关" if compact else "总结关"
+        if settings.interval_turns:
+            return f"{settings.interval_turns}轮" if compact else f"总结 {settings.interval_turns}轮"
+        return "结束" if compact else "总结结束"
 
     def toggle_summary_settings(self) -> None:
         visible = not self.summary_settings_panel.isVisible()
@@ -2973,6 +3030,7 @@ class ClientWindow(QMainWindow):
             self.summary_state_label.setText(state)
             self.summary_chip.setText(self._summary_chip_text())
             self.summary_chip.setToolTip(state)
+            self.summary_chip.setAccessibleName(state)
         except OSError as exc:
             self._append_log(f"总结设置保存失败: {exc}")
 
