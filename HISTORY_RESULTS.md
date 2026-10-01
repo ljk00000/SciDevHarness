@@ -3,7 +3,7 @@
 ## 2026-10-01 23:51（Asia/Shanghai）· 新建公开仓库并上传
 
 - 新建公开仓库 [ljk00000/SciDevHarness-IDE](https://github.com/ljk00000/SciDevHarness-IDE)，推送完整 Git 历史到 `master`；本地与远端 SHA 均为 `3c4cfe09fc2be9d17023ac9c0bb9d66066e6c70a`。新增 `ide-public` 远程，旧 `origin` 与 `desktop-public` 未改动。
-- 107 项单测通过；常见凭据格式扫描无命中，历史中无超过 20 MiB 的文件对象；虚拟环境、模型权重与 `.research` 数据未提交。仓库沿用 Apache-2.0。GitHub Actions（CI 与依赖更新检查）上传后正在运行。
+- 107 项单测通过；常见凭据格式扫描无命中，历史中无超过 20 MiB 的文件对象；虚拟环境、模型权重与 `.research` 数据未提交。仓库沿用 Apache-2.0。代码提交 `3c4cfe0` 的 [Windows CI](https://github.com/ljk00000/SciDevHarness-IDE/actions/runs/36887597180) 在 Python 3.12/3.13/3.14 全部通过（测试、依赖 smoke、普通/125% DPI 截图、QML lint）。
 
 ## 2026-10-01 23:30（Asia/Shanghai）· 低分辨率工作台响应式适配
 
