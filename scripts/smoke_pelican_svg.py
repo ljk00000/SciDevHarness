@@ -20,7 +20,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import patch
 from urllib.request import Request
 
@@ -48,6 +48,24 @@ from smoke_local_ollama import (
 
 PELICAN_PROMPT = "Generate an SVG of a pelican riding a bicycle"
 SMOKE_SESSION_PREFIX = "live_pelican_svg_smoke"
+REQUEST_METRIC_FIELDS = (
+    "phase",
+    "streaming",
+    "max_tokens",
+    "tools",
+    "http_status",
+    "headers_seconds",
+    "first_body_byte_seconds",
+    "first_event_seconds",
+    "first_content_seconds",
+    "body_seconds",
+    "elapsed_seconds",
+    "request_bytes",
+    "response_bytes",
+    "sse_content_bytes",
+    "sse_reasoning_bytes",
+    "tool_argument_bytes",
+)
 MAX_SVG_BYTES = 2_000_000
 RENDER_WIDTH = 1200
 RENDER_HEIGHT = 800
@@ -62,40 +80,79 @@ def smoke_session_id(attempt: int) -> str:
 
 
 def pelican_repair_prompt(filename: str, failure_reason: str) -> str:
-    """Give a local model a concrete, checkable and visually connected repair plan."""
-    return f"""Replace the whole existing {Path(filename).name}. Original user request: {PELICAN_PROMPT}.
-Previous visual/structure failure: {failure_reason}
-Call write_file once. Do not use shell. Use viewBox="0 0 640 420". Make a polished, cheerful editorial vector illustration with clean, confident linework, a restrained navy/teal/ochre/coral palette, balanced whitespace and a faint ground shadow. It must read instantly as a pelican actually riding a complete bicycle, not as floating disconnected symbols.
-
-Attach every ID to the actual visible shape (not a parent group). Use only valid hex colors. Draw the bicycle first, then the rider. Bike geometry: exactly two unfilled outlined tire circles `left-wheel` and `right-wheel`, centers (125,326)/(515,326), radius 72. Draw a thin, visible `bicycle-spokes` group with 8 radial spokes per wheel and small hub circles. Make a conventional, connected diamond frame with `polyline id="bicycle-frame" points="125,326 270,245 420,250 335,285 125,326 270,245"`; include a visible seatpost, a slim fork from the head tube (420,250) to front hub (515,326), curved handlebar attached at the head tube, teal saddle at x=270,y=245, and crank/pedals centered at (335,285). Avoid extra diagonals crossing the frame.
-
-Pelican: one organic closed ochre body around x=230..350,y=132..228; one distinct filled round head centered near (350,130), radius 30, with a dark outline and visible dark eye. Add a contrasting curved wing inside the body, a long tapered coral/orange bill pointing right (x=378..510), and a compact closed curved throat pouch below it. Do not use a rectangle/box, empty ring head, short bill, open pouch, gull, or seagull.
-
-Show the bird actively riding: the body sits on the saddle, a near leg visibly touches both body and saddle, and the far leg visibly reaches from the body to a pedal. Add a separate tapered `pelican-wing-reaching` shape: it starts inside the shoulder/wing area, extends forward, and visibly grips/touches the handlebar. Keep this reaching wing behind the head and bill, with clean overlap and no floating gap. Keep the complete scene inside the viewBox with margin.
-
-Make rider contact explicit with these shapes: `<path id="bicycle-saddle" d="M253 245 Q270 237 287 245" fill="none" stroke="#18324B" stroke-width="6"/>`; `<path id="bicycle-handlebar" d="M410 250 Q416 226 430 228 Q440 228 444 237" fill="none" stroke="#18324B" stroke-width="5"/>`; `<path id="bicycle-pedals" d="M318 285 H352 M328 279 V291" fill="none" stroke="#18324B" stroke-width="5"/>`; `<path id="pelican-leg-near" d="M270 211 Q270 229 270 242" fill="none" stroke="#18324B" stroke-width="5"/>`; `<path id="pelican-leg-far" d="M307 211 Q320 240 335 285" fill="none" stroke="#18324B" stroke-width="5"/>`. The near leg must touch body and saddle; the far leg must touch body and pedal.
-
-Copy these exact bicycle SVG elements (do not replace tire circles with paths, do not omit the saddle, and do not confuse the fork with the handlebar):
+    """Choose a repair scope that matches the reported failure, minimizing tokens and rewrites."""
+    missing_match = re.search(r"missing=\[([^\]]*)\]", failure_reason)
+    missing_parts = re.findall(r"'([^']+)'", missing_match.group(1)) if missing_match else []
+    malformed_match = re.search(r"malformed=\[([^\]]*)\]", failure_reason)
+    malformed_parts = re.findall(r"'([^']+)'", malformed_match.group(1)) if malformed_match else []
+    duplicate_match = re.search(r"duplicate_ids=\[([^\]]*)\]", failure_reason)
+    duplicate_ids = re.findall(r"'([^']+)'", duplicate_match.group(1)) if duplicate_match else []
+    target = Path(filename).name
+    color_or_wheel_fill_only = (
+        not missing_parts
+        and not duplicate_ids
+        and bool(malformed_parts)
+        and all(
+            item.startswith("invalid paint ") or "must be an unfilled, visibly outlined tire" in item
+            for item in malformed_parts
+        )
+    )
+    if color_or_wheel_fill_only:
+        return f"""Original task: {PELICAN_PROMPT}
+Repair only SVG paint/fill errors in {target}. Validator: {failure_reason}
+Replace unsupported color names with valid hex colors: teal `#168b83`, ochre `#e4b35b`, coral `#e9785b`, navy `#18324b`. Set both wheel circles to `fill="none"` and a visible navy stroke. Preserve every path, position, and other style. Use the smallest exact `replace_in_file` edit(s), then inspect `git_diff`; do not use shell."""
+    missing_guidance = {
+        "left-wheel": "Give the rear wheel its own unfilled `<circle id=\"left-wheel\">` at the rear frame hub.",
+        "right-wheel": "Give the front wheel its own unfilled `<circle id=\"right-wheel\">` at the front frame hub.",
+        "pelican-wing": "Add a distinct curved, filled wing inside the pelican body silhouette.",
+        "pelican-wing-reaching": "Add a distinct closed, filled curved wing from the shoulder to the existing handlebar.",
+        "bicycle-frame": "Identify the connected frame polyline through both wheel hubs and the crank.",
+        "bicycle-fork": "Identify the visible fork joining the front frame to the front wheel hub.",
+        "bicycle-spokes": "Use one `<g id=\"bicycle-spokes\">` containing radial lines in both wheels.",
+        "bicycle-saddle": "Identify the visible saddle above the frame.",
+        "bicycle-handlebar": "Identify the handlebar ahead of the saddle.",
+        "bicycle-pedals": "Identify the pedal/crank at the frame's crank joint.",
+        "pelican-body": "Identify the bird's organic body silhouette.",
+        "pelican-head": "Identify the distinct filled head shape.",
+        "pelican-eye": "Identify the small dark circular eye.",
+        "pelican-beak": "Identify the long forward-pointing polygon beak.",
+        "pelican-pouch": "Identify the closed curved throat pouch below the bill.",
+        "pelican-leg-near": "Identify a leg visibly joining the body to the saddle.",
+        "pelican-leg-far": "Identify a leg visibly joining the body to the pedal.",
+    }
+    if missing_parts and len(missing_parts) <= 6 and not malformed_parts and not duplicate_ids:
+        guidance_lines = []
+        for part in missing_parts:
+            detail = missing_guidance.get(part, f"Add one visible shape with exact ID `{part}`.")
+            guidance_lines.append(f"- {detail}")
+        guidance = "\n".join(guidance_lines)
+        return f"""Original task: {PELICAN_PROMPT}
+Repair only the missing SVG parts in {target}; preserve the existing drawing. Validator: {failure_reason}
+Missing-part instructions:
+{guidance}
+Read the file. If a correct visible shape exists, add its missing ID; otherwise insert only the missing shape(s) before `</svg>`. Keep IDs unique, use existing geometry/color style, and preserve every passing element. Make minimal `replace_in_file` edit(s), then inspect `git_diff`; do not rewrite the full SVG or use shell."""
+    if len(missing_parts) >= 7 or len(malformed_parts) >= 3:
+        return f"""Original task: {PELICAN_PROMPT}
+The existing {target} has several structural errors. Replace it once with a complete, polished pelican riding a bicycle; do not preserve broken geometry. Validator: {failure_reason}
+Use viewBox="0 0 640 420", balanced whitespace, navy outlines `#18324b`, teal `#168b83`, ochre `#e4b35b`, coral `#e9785b`, and background `#f4f7fb`; use only valid CSS/SVG color values, preferably these hex codes. Fixed layout: wheel centers (130,325) and (500,325), radius 60; frame polyline passes through both hubs and crank (390,265), with seat joint (275,230); saddle near (275,225), handlebar near (452,205); bird body around x=275..390/y=122..213, head centered (370,140) with radius 20, bill projecting right to x=468, and pouch hanging below. Connect both legs to the saddle/pedal and the reaching wing tip to the handlebar. Draw radial spokes, a fork and coherent anatomy; keep every shape inside the canvas.
+Use each exact ID once: left-wheel, right-wheel, bicycle-frame, bicycle-fork, bicycle-spokes, bicycle-saddle, bicycle-handlebar, bicycle-pedals, pelican-body, pelican-head, pelican-eye, pelican-wing, pelican-wing-reaching, pelican-beak, pelican-pouch, pelican-leg-near, pelican-leg-far. Wheels are `<circle>`; frame is `<polyline>`; spokes are one `<g>` containing radial lines; beak is `<polygon>`; body is a curved `<path>` or `<ellipse>`; head/eye are circles; pouch is a closed curved path. Call `write_file` once and inspect `git_diff`. Do not use shell."""
+    if duplicate_ids:
+        return f"""Original task: {PELICAN_PROMPT}
+Repair duplicate SVG IDs in {target} only. Validator: {failure_reason}
+For each listed duplicate, preserve the ID on the correct primary shape and rename redundant copies to unique descriptive IDs; for `bicycle-spokes`, prefer one `<g id="bicycle-spokes">` around its spoke lines. Read the file, make the smallest exact `replace_in_file` edit(s), then inspect `git_diff`. Preserve all other artwork; do not use shell."""
+    if "left-wheel" in missing_parts or "right-wheel" in missing_parts or "must be a circle" in failure_reason:
+        return f"""Original task: {PELICAN_PROMPT}
+Repair only the wheel error in {target}. Validator: {failure_reason}
+Read the file, preserve all correct artwork, and use exact `replace_in_file` edits only. Replace both defective/prefixed wheel elements with these exact circles, then inspect `git_diff`; do not rewrite the whole SVG or use shell:
 `<circle id="left-wheel" cx="125" cy="326" r="72" fill="none" stroke="#18324B" stroke-width="8"/>`
-`<circle id="right-wheel" cx="515" cy="326" r="72" fill="none" stroke="#18324B" stroke-width="8"/>`
-`<g id="bicycle-spokes" stroke="#78909C" stroke-width="2"><path d="M125 254V398 M53 326H197 M74 275L176 377 M176 275L74 377 M515 254V398 M443 326H587 M464 275L566 377 M566 275L464 377"/></g>`
-`<polyline id="bicycle-frame" points="125,326 270,245 420,250 335,285 125,326 270,245" fill="none" stroke="#18324B" stroke-width="6"/>`
-`<path id="bicycle-fork" d="M420 250 L515 326" fill="none" stroke="#18324B" stroke-width="6"/>`
-`<path id="bicycle-saddle" d="M253 245 Q270 237 287 245" fill="none" stroke="#18324B" stroke-width="6"/>`
-`<path id="bicycle-handlebar" d="M420 250 L420 230 Q420 222 430 222 H440 Q447 222 447 230" fill="none" stroke="#18324B" stroke-width="5"/>`
-The required reaching wing must be a filled silhouette, not a bare line; make it extend from shoulder to grip.
-
-Use these exact bird silhouettes and palette as the base (you may add restrained details, spokes, hubs, and a ground shadow):
-`<path id="pelican-body" d="M230 180 C240 145 282 132 318 149 C342 160 350 187 331 207 C306 228 258 220 236 198 Z" fill="#D9A45B" stroke="#18324B" stroke-width="4"/>`
-`<path id="pelican-wing" d="M250 178 C270 150 305 158 320 180 C300 197 270 198 250 178 Z" fill="#C58335" stroke="#18324B" stroke-width="2"/>`
-`<circle id="pelican-head" cx="350" cy="130" r="30" fill="#D9A45B" stroke="#18324B" stroke-width="4"/>`
-`<circle id="pelican-eye" cx="361" cy="122" r="4" fill="#18324B"/>`
-`<polygon id="pelican-beak" points="378,122 510,132 378,140" fill="#F28C28" stroke="#18324B" stroke-width="2"/>`
-`<path id="pelican-pouch" d="M384 135 C405 143 420 158 412 177 C408 190 394 188 397 174 C402 158 393 147 380 141 Z" fill="#F28C28" stroke="#18324B" stroke-width="2"/>`
-The reaching wing should be a smooth, narrow filled path linking the body/wing around (310,180) to the handlebar around (414,230); avoid a detached line. Use smooth closed organic paths exactly once. Keep the main wing inside the body and render the reaching wing behind head/bill.
-Use this exact reaching-wing contour so the first cubic ends on the handlebar center; then return to the shoulder and keep the final Z to close the filled silhouette: `<path id="pelican-wing-reaching" d="M310 180 C350 180 390 210 419 230 Q411 237 403 230 C370 205 340 195 310 200 Z" fill="#C58335" stroke="#18324B" stroke-width="2"/>`.
-
-Required IDs must each occur exactly once on these visible parts: left-wheel, right-wheel, bicycle-frame, bicycle-fork, bicycle-spokes, bicycle-saddle, bicycle-handlebar, bicycle-pedals, pelican-body, pelican-head, pelican-eye, pelican-wing, pelican-wing-reaching, pelican-beak, pelican-pouch, pelican-leg-near, pelican-leg-far. No repeated tiles, no oversized background/panel, no invalid color names, no floating rider parts. Save the complete SVG and inspect the Git diff."""
+`<circle id="right-wheel" cx="515" cy="326" r="72" fill="none" stroke="#18324B" stroke-width="8"/>`"""
+    if "viewBox is too small" in failure_reason:
+        return f"""Original task: {PELICAN_PROMPT}
+Repair only the root `viewBox` of {target}. Validator: {failure_reason}
+Read the current SVG. Preserve the drawing; adjust the root viewBox to fully contain it with dimensions at least 300x180, scaling the artwork uniformly if required. Use one precise `replace_in_file`, inspect `git_diff`, and do not use shell."""
+    return f"""Original task: {PELICAN_PROMPT}
+Repair only the reported issue in {target}. Validator: {failure_reason}
+Read the current SVG, preserve every passing element, and use the smallest exact `replace_in_file` edit(s). Inspect `git_diff`; do not rewrite the full file or use shell."""
 
 
 def record_smoke_event(
@@ -140,6 +197,33 @@ def latest_svg_write_path(file_calls: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def collect_svg_mutations(events: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Track both initial writes and targeted replacements of SVG artifacts."""
+    return [
+        data
+        for event_name, data in events
+        if event_name == "tool_started"
+        and data.get("source") != "harness_precommit"
+        and data.get("name") in {"write_file", "replace_in_file"}
+        and isinstance(data.get("arguments"), dict)
+        and str(data["arguments"].get("path", "")).casefold().endswith(".svg")
+    ]
+
+
+def collect_shell_requests(events: list[tuple[str, dict[str, Any]]]) -> list[dict[str, str]]:
+    """Record that shell was requested without copying potentially sensitive commands."""
+    return [
+        {
+            "session_id": str(data.get("session_id", ""))[:160],
+            "source": str(data.get("source", ""))[:160],
+        }
+        for event_name, data in events
+        if event_name == "tool_started"
+        and data.get("name") == "run_command"
+        and data.get("source") != "harness_precommit"
+    ]
+
+
 def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]:
     """Validate static SVG safety and render it into a non-empty PNG preview."""
     if not source or len(source) > MAX_SVG_BYTES:
@@ -164,8 +248,12 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         view_x, view_y, view_width, view_height = (float(value) for value in view_box)
     except (TypeError, ValueError) as exc:
         raise RuntimeError("SVG must define a four-number viewBox") from exc
+    viewbox_problem = None
     if view_width < 300 or view_height < 180:
-        raise RuntimeError("SVG viewBox is too small for the requested two-object illustration")
+        viewbox_problem = (
+            "SVG viewBox is too small for the requested two-object illustration "
+            f"(got {view_width:g}x{view_height:g}; need at least 300x180)"
+        )
 
     counts: Counter[str] = Counter()
     invalid_paints: list[str] = []
@@ -201,13 +289,12 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         for element in root.iter()
         if isinstance(element.tag, str) and element.attrib.get("id")
     ]
-    if len(identified_ids) != len(set(identified_ids)):
-        raise RuntimeError("SVG contains duplicate semantic IDs, so its subject parts are ambiguous")
-    identified_elements = {
-        str(element.attrib.get("id", "")).casefold(): element
-        for element in root.iter()
-        if isinstance(element.tag, str) and element.attrib.get("id")
-    }
+    id_counts = Counter(identified_ids)
+    duplicate_ids = sorted(identifier for identifier, count in id_counts.items() if count > 1)
+    identified_elements: dict[str, ET.Element] = {}
+    for element in root.iter():
+        if isinstance(element.tag, str) and element.attrib.get("id"):
+            identified_elements.setdefault(str(element.attrib["id"]).casefold(), element)
 
     renderer = QSvgRenderer(QByteArray(source))
     if not renderer.isValid():
@@ -237,8 +324,6 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
     preview_path.parent.mkdir(parents=True, exist_ok=True)
     if not image.save(str(preview_path), "PNG"):
         raise RuntimeError(f"failed to save SVG preview: {preview_path}")
-    if invalid_paints:
-        raise RuntimeError(f"SVG has invalid paint colors: {invalid_paints[:6]}")
     required_parts = {
         "left-wheel",
         "right-wheel",
@@ -259,16 +344,52 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         "pelican-leg-far",
     }
     missing_parts = sorted(required_parts - identified_elements.keys())
-    malformed_parts = [
-        f"{wheel_id} must be a circle (got {identified_elements[wheel_id].tag.rsplit('}', 1)[-1]})"
-        for wheel_id in ("left-wheel", "right-wheel")
-        if wheel_id in identified_elements
-        and identified_elements[wheel_id].tag.rsplit("}", 1)[-1].casefold() != "circle"
-    ]
-    if missing_parts or malformed_parts:
+    near_matches = {
+        missing: sorted(
+            candidate
+            for candidate in identified_elements
+            if candidate.endswith(f"-{missing}") or candidate.startswith(f"{missing}-")
+        )
+        for missing in missing_parts
+    }
+    near_matches = {missing: candidates for missing, candidates in near_matches.items() if candidates}
+    expected_tags = {
+        "left-wheel": ({"circle"}, "a circle"),
+        "right-wheel": ({"circle"}, "a circle"),
+        "bicycle-frame": ({"polyline"}, "a connected polyline"),
+        "bicycle-spokes": ({"g"}, "a group containing spoke shapes"),
+        "pelican-head": ({"circle", "ellipse"}, "a circle or ellipse"),
+        "pelican-eye": ({"circle"}, "a circle"),
+        "pelican-beak": ({"polygon"}, "a polygon"),
+        "pelican-body": ({"path", "ellipse"}, "an organic path or ellipse"),
+        "pelican-wing": ({"path", "ellipse", "polygon"}, "a filled path, ellipse, or polygon"),
+        "pelican-pouch": ({"path"}, "a curved path"),
+        "pelican-wing-reaching": ({"path"}, "a curved path"),
+    }
+    malformed_parts = []
+    for identifier, (allowed_tags, description) in expected_tags.items():
+        element = identified_elements.get(identifier)
+        if element is None:
+            continue
+        actual_tag = element.tag.rsplit("}", 1)[-1].casefold()
+        if actual_tag not in allowed_tags:
+            malformed_parts.append(f"{identifier} must be {description} (got {actual_tag})")
+    malformed_parts.extend(f"invalid paint {paint}" for paint in invalid_paints[:6])
+    for wheel_id in ("left-wheel", "right-wheel"):
+        wheel = identified_elements.get(wheel_id)
+        if wheel is None or wheel.tag.rsplit("}", 1)[-1].casefold() != "circle":
+            continue
+        fill = wheel.attrib.get("fill", "").strip().casefold()
+        stroke = wheel.attrib.get("stroke", "").strip()
+        if fill not in {"none", "white", "#fff", "#ffffff"} or not stroke or stroke.casefold() in {"none", "transparent"}:
+            malformed_parts.append(f"{wheel_id} must be an unfilled, visibly outlined tire")
+    if viewbox_problem or missing_parts or malformed_parts or duplicate_ids:
         raise RuntimeError(
-            "SVG lacks separately identified visual parts or uses incorrect core shapes: "
-            f"missing={missing_parts}; malformed={malformed_parts}"
+            f"SVG preflight failed; {viewbox_problem or 'viewBox dimensions are adequate'}; "
+            "lacks separately identified visual parts or uses incorrect core shapes: "
+            f"invalid paint colors={invalid_paints[:6]}; missing={missing_parts}; "
+            f"malformed={malformed_parts}; duplicate_ids={duplicate_ids}; "
+            f"near_matches={near_matches}"
         )
     wheel_data = []
     for wheel_id in ("left-wheel", "right-wheel"):
@@ -496,6 +617,7 @@ def persist_failure_diagnostic(
     reason: str,
     events: list[tuple[str, dict[str, Any]]],
     request_count: int,
+    request_metrics: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Keep a bounded, credential-free trace when the live visual task fails."""
     trace: list[dict[str, Any]] = []
@@ -506,10 +628,13 @@ def persist_failure_diagnostic(
                 item[field] = str(data[field])[:160]
         arguments = data.get("arguments")
         if isinstance(arguments, dict):
-            item["arguments"] = {
-                "path": str(arguments.get("path", ""))[:240],
-                "content_characters": len(str(arguments.get("content", ""))),
-            }
+            if data.get("name") == "run_command":
+                item["arguments"] = {"command_omitted": True}
+            elif data.get("name") in {"write_file", "replace_in_file"}:
+                item["arguments"] = {
+                    "path": str(arguments.get("path", ""))[:240],
+                    "content_characters": len(str(arguments.get("content", ""))),
+                }
         if event_name == "assistant_delta":
             item["text_characters"] = int(data.get("characters", 0))
             response_text = data.get("tail", "")
@@ -522,6 +647,11 @@ def persist_failure_diagnostic(
                 item["text_tail"] = rendered_text[-1200:]
         trace.append(item)
 
+    metrics = request_metrics or []
+    safe_request_metrics = [
+        {field: request[field] for field in REQUEST_METRIC_FIELDS if field in request}
+        for request in metrics[-64:]
+    ]
     diagnostic = {
         "prompt": PELICAN_PROMPT,
         "model": model,
@@ -529,12 +659,232 @@ def persist_failure_diagnostic(
         "session_id": session_id,
         "failure_reason": reason[:1000],
         "local_request_count": request_count,
+        "request_metrics": safe_request_metrics,
+        "request_metrics_truncated": max(0, len(metrics) - len(safe_request_metrics)),
+        "blocked_shell_requests": collect_shell_requests(events),
         "recent_events": trace,
         "credential_fields_omitted": True,
     }
     path = artifact_dir / "pelican_failure_diagnostics.json"
     path.write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+class _TimedResponse:
+    """Measure response-body consumption, not just the time to receive headers."""
+
+    def __init__(
+        self,
+        response: Any,
+        record: dict[str, Any],
+        *,
+        started_at: float,
+        headers_at: float,
+        streaming: bool,
+        clock: Callable[[], float] = time.perf_counter,
+    ) -> None:
+        self._response = response
+        self._record = record
+        self._started_at = started_at
+        self._headers_at = headers_at
+        self._streaming = streaming
+        self._clock = clock
+        self._finished = False
+        record.update(
+            streaming=streaming,
+            headers_seconds=round(headers_at - started_at, 3),
+            first_body_byte_seconds=None,
+            first_event_seconds=None,
+            first_content_seconds=None,
+            body_seconds=None,
+            elapsed_seconds=None,
+            response_bytes=0,
+            sse_content_bytes=0,
+            sse_reasoning_bytes=0,
+            tool_argument_bytes=0,
+        )
+        status = getattr(response, "status", None)
+        if status is None and callable(getattr(response, "getcode", None)):
+            status = response.getcode()
+        if status is not None:
+            record["http_status"] = status
+
+    def _observe_chunk(self, chunk: bytes | bytearray | memoryview | str) -> None:
+        if not chunk:
+            return
+        if isinstance(chunk, str):
+            raw = chunk.encode("utf-8", errors="replace")
+            text = chunk
+        else:
+            raw = bytes(chunk)
+            text = raw.decode("utf-8", errors="replace")
+        self._record["response_bytes"] += len(raw)
+        content_bytes, reasoning_bytes, tool_argument_bytes = self._sse_output_sizes(text)
+        self._record["sse_content_bytes"] += content_bytes
+        self._record["sse_reasoning_bytes"] += reasoning_bytes
+        self._record["tool_argument_bytes"] += tool_argument_bytes
+
+        is_first_body = self._record["first_body_byte_seconds"] is None
+        is_first_event = (
+            self._streaming
+            and self._record["first_event_seconds"] is None
+            and any(
+                line.strip().startswith("data:") and line.strip() != "data: [DONE]"
+                for line in text.splitlines()
+            )
+        )
+        is_first_content = (
+            self._streaming
+            and self._record["first_content_seconds"] is None
+            and self._contains_model_output(text)
+        )
+        if is_first_body or is_first_event or is_first_content:
+            elapsed = round(self._clock() - self._started_at, 3)
+            if is_first_body:
+                self._record["first_body_byte_seconds"] = elapsed
+            if is_first_event:
+                self._record["first_event_seconds"] = elapsed
+            if is_first_content:
+                self._record["first_content_seconds"] = elapsed
+
+    @staticmethod
+    def _contains_model_output(text: str) -> bool:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload_text = line[5:].strip()
+            if not payload_text or payload_text == "[DONE]":
+                continue
+            try:
+                payload = json.loads(payload_text)
+            except json.JSONDecodeError:
+                continue
+            choices = payload.get("choices", []) if isinstance(payload, dict) else []
+            for choice in choices if isinstance(choices, list) else []:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    delta = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+                if delta.get("content") or delta.get("tool_calls") or delta.get("function_call"):
+                    return True
+        return False
+
+    @staticmethod
+    def _sse_output_sizes(text: str) -> tuple[int, int, int]:
+        content_bytes = 0
+        reasoning_bytes = 0
+        tool_argument_bytes = 0
+        for line in text.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload_text = line[5:].strip()
+            if not payload_text or payload_text == "[DONE]":
+                continue
+            try:
+                payload = json.loads(payload_text)
+            except json.JSONDecodeError:
+                continue
+            choices = payload.get("choices", []) if isinstance(payload, dict) else []
+            for choice in choices if isinstance(choices, list) else []:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    delta = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+                for key in ("content",):
+                    value = delta.get(key)
+                    if isinstance(value, str):
+                        content_bytes += len(value.encode("utf-8"))
+                    elif isinstance(value, list):
+                        content_bytes += sum(
+                            len(str(part.get("text", "")).encode("utf-8"))
+                            for part in value
+                            if isinstance(part, dict)
+                        )
+                for key in ("reasoning", "reasoning_content"):
+                    value = delta.get(key)
+                    if isinstance(value, str):
+                        reasoning_bytes += len(value.encode("utf-8"))
+                calls = delta.get("tool_calls")
+                if isinstance(calls, list):
+                    for call in calls:
+                        function = call.get("function") if isinstance(call, dict) else None
+                        if isinstance(function, dict):
+                            tool_argument_bytes += sum(
+                                len(str(function.get(key, "")).encode("utf-8"))
+                                for key in ("name", "arguments")
+                            )
+                legacy_call = delta.get("function_call")
+                if isinstance(legacy_call, dict):
+                    tool_argument_bytes += sum(
+                        len(str(legacy_call.get(key, "")).encode("utf-8"))
+                        for key in ("name", "arguments")
+                    )
+        return content_bytes, reasoning_bytes, tool_argument_bytes
+
+    def _finish(self) -> None:
+        if self._finished:
+            return
+        finished_at = self._clock()
+        self._record["body_seconds"] = round(max(0.0, finished_at - self._headers_at), 3)
+        self._record["elapsed_seconds"] = round(max(0.0, finished_at - self._started_at), 3)
+        self._finished = True
+
+    def __enter__(self) -> _TimedResponse:
+        enter = getattr(self._response, "__enter__", None)
+        if callable(enter):
+            entered = enter()
+            if entered is not None:
+                self._response = entered
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool | None:
+        try:
+            exit_response = getattr(self._response, "__exit__", None)
+            if callable(exit_response):
+                return exit_response(exc_type, exc_value, traceback)
+            close = getattr(self._response, "close", None)
+            if callable(close):
+                close()
+            return None
+        finally:
+            self._finish()
+
+    def __iter__(self) -> _TimedResponse:
+        return self
+
+    def __next__(self) -> bytes | str:
+        chunk = next(self._response)
+        self._observe_chunk(chunk)
+        return chunk
+
+    def read(self, *args: Any, **kwargs: Any) -> bytes:
+        chunk = self._response.read(*args, **kwargs)
+        self._observe_chunk(chunk)
+        return chunk
+
+    def readline(self, *args: Any, **kwargs: Any) -> bytes | str:
+        chunk = self._response.readline(*args, **kwargs)
+        self._observe_chunk(chunk)
+        return chunk
+
+    def readinto(self, buffer: Any) -> int:
+        count = self._response.readinto(buffer)
+        if count:
+            self._observe_chunk(memoryview(buffer)[:count])
+        return count
+
+    def close(self) -> None:
+        try:
+            self._response.close()
+        finally:
+            self._finish()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._response, name)
 
 
 def run_smoke(
@@ -554,14 +904,40 @@ def run_smoke(
     wire_requests: list[dict[str, Any]] = []
     events: list[tuple[str, dict[str, Any]]] = []
     real_urlopen = scidev_core.urlopen
+    request_phase = {"value": "initial"}
 
     def observe_request(request: Request, timeout: float = 90.0):
         _record_local_request(request, model=model, requests=wire_requests)
         started = time.perf_counter()
+        record = wire_requests[-1]
+        record["request_bytes"] = len(request.data or b"")
+        record["phase"] = request_phase["value"]
+        streaming = json.loads(request.data.decode("utf-8")).get("stream") is True
         try:
-            return real_urlopen(request, timeout=timeout)
-        finally:
-            wire_requests[-1]["elapsed_seconds"] = round(time.perf_counter() - started, 3)
+            response = real_urlopen(request, timeout=timeout)
+        except Exception:
+            record.update(
+                streaming=streaming,
+                headers_seconds=None,
+                first_body_byte_seconds=None,
+                first_event_seconds=None,
+                first_content_seconds=None,
+                body_seconds=None,
+                elapsed_seconds=round(time.perf_counter() - started, 3),
+                response_bytes=0,
+                sse_content_bytes=0,
+                sse_reasoning_bytes=0,
+                tool_argument_bytes=0,
+            )
+            raise
+        headers_at = time.perf_counter()
+        return _TimedResponse(
+            response,
+            record,
+            started_at=started,
+            headers_at=headers_at,
+            streaming=streaming,
+        )
 
     with tempfile.TemporaryDirectory(prefix="scidev-pelican-workspace-") as temporary:
         root = Path(temporary)
@@ -586,6 +962,11 @@ def run_smoke(
         )
 
         def run_agent(task_prompt: str, session_id: str) -> dict[str, Any]:
+            request_phase["value"] = (
+                "initial"
+                if session_id == SMOKE_SESSION_PREFIX
+                else session_id.removeprefix(f"{SMOKE_SESSION_PREFIX}_")
+            )
             task = {"payload": {"session_id": session_id, "prompt": task_prompt}}
             try:
                 with patch("scidev_core.urlopen", new=observe_request):
@@ -601,6 +982,7 @@ def run_smoke(
                     reason=f"{type(exc).__name__}: {exc}",
                     events=events,
                     request_count=len(wire_requests),
+                    request_metrics=wire_requests,
                 )
                 raise RuntimeError(
                     f"local Harness call failed in {session_id}: {type(exc).__name__}: {exc}; "
@@ -608,13 +990,7 @@ def run_smoke(
                 ) from exc
 
         def collect_file_calls() -> list[dict[str, Any]]:
-            return [
-                data
-                for event_name, data in events
-                if event_name == "tool_started"
-                and data.get("source") != "harness_precommit"
-                and data.get("name") == "write_file"
-            ]
+            return collect_svg_mutations(events)
 
         def current_svg_path() -> tuple[str, Path]:
             relative = latest_svg_write_path(collect_file_calls())
@@ -624,6 +1000,29 @@ def run_smoke(
             if not path.is_relative_to(root) or not path.is_file():
                 raise RuntimeError("the generated SVG is missing or outside the disposable workspace")
             return relative, path
+
+        def reject_shell_if_requested(attempt: int, session_id: str) -> None:
+            if not collect_shell_requests(events):
+                return
+            relative = latest_svg_write_path(collect_file_calls())
+            if relative:
+                candidate = (root / relative).resolve()
+                if candidate.is_relative_to(root) and candidate.is_file():
+                    shutil.copyfile(candidate, artifacts / "pelican_unverified.svg")
+            diagnostic_path = persist_failure_diagnostic(
+                artifacts,
+                model=model,
+                attempt=attempt,
+                session_id=session_id,
+                reason="The model requested run_command; the approval gate denied execution.",
+                events=events,
+                request_count=len(wire_requests),
+                request_metrics=wire_requests,
+            )
+            raise RuntimeError(
+                "Qwen requested shell execution; no command was executed because no user approval was configured. "
+                f"Diagnostic saved to {diagnostic_path}"
+            )
 
         started = time.perf_counter()
         result = run_agent(PELICAN_PROMPT, smoke_session_id(0))
@@ -647,17 +1046,13 @@ def run_smoke(
                 reason="Qwen/Harness did not create a file for the exact pelican prompt",
                 events=events,
                 request_count=len(wire_requests),
+                request_metrics=wire_requests,
             )
             raise RuntimeError(
                 "Qwen/Harness did not create a file for the exact pelican prompt: "
                 f"tools={tool_names}, requests={len(wire_requests)}, diagnostic saved to {diagnostic_path}"
             )
-        if any(
-            data.get("name") == "run_command"
-            for event_name, data in events
-            if event_name == "tool_started" and data.get("source") != "harness_precommit"
-        ):
-            raise RuntimeError("Qwen unexpectedly requested shell execution")
+        reject_shell_if_requested(0, smoke_session_id(0))
 
         preview_png = artifacts / "pelican_bicycle_preview.png"
         saved_svg = artifacts / "pelican_bicycle.svg"
@@ -680,6 +1075,7 @@ def run_smoke(
                         reason=str(exc),
                         events=events,
                         request_count=len(wire_requests),
+                        request_metrics=wire_requests,
                     )
                     raise RuntimeError(
                         f"pelican SVG still failed after two repairs: {exc}; "
@@ -701,17 +1097,13 @@ def run_smoke(
                         reason=str(exc),
                         events=events,
                         request_count=len(wire_requests),
+                        request_metrics=wire_requests,
                     )
                     raise RuntimeError(
                         "Qwen did not revise the SVG after structural visual feedback; "
                         f"diagnostic saved to {diagnostic_path}"
                     ) from exc
-                if any(
-                    data.get("name") == "run_command"
-                    for event_name, data in events
-                    if event_name == "tool_started" and data.get("source") != "harness_precommit"
-                ):
-                    raise RuntimeError("Qwen unexpectedly requested shell execution during SVG repair")
+                reject_shell_if_requested(repair_attempt + 1, smoke_session_id(repair_attempt + 1))
         if validation is None:
             raise RuntimeError("pelican SVG visual validation did not complete")
         total_elapsed = round(time.perf_counter() - started, 3)

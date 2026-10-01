@@ -283,6 +283,98 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(diff_results), 1)
             self.assertLess(diff_results[0], event_types.index("git_commit_created"))
 
+    def test_simple_svg_tasks_hide_and_reject_shell_tools(self) -> None:
+        class SvgPolicyProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.exposed_tools: list[set[str]] = []
+
+            def chat(self, _messages, tools=None, max_tokens=12000, request_id=""):
+                self.calls += 1
+                self.exposed_tools.append({item["function"]["name"] for item in tools or []})
+                if self.calls == 1:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_hidden_shell",
+                                "type": "function",
+                                "function": {
+                                    "name": "run_command",
+                                    "arguments": json.dumps({"command": "python --version"}),
+                                },
+                            }
+                        ],
+                    }
+                if self.calls == 2:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_svg_write",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": json.dumps(
+                                        {
+                                            "path": "pelican.svg",
+                                            "content": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><circle cx="20" cy="20" r="5"/></svg>',
+                                        }
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                return {"role": "assistant", "content": "Saved the SVG.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            events: list[tuple[str, dict]] = []
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                event_callback=lambda name, payload: events.append((name, payload)),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            provider = SvgPolicyProvider()
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run(
+                    {
+                        "payload": {
+                            "session_id": "svg_tool_policy",
+                            "prompt": "Generate an SVG of a pelican riding a bicycle",
+                        }
+                    }
+                )
+
+            self.assertTrue((root / "pelican.svg").is_file())
+            self.assertTrue(result["git_result_sha"])
+            self.assertEqual(provider.calls, 4)
+            self.assertTrue(all("run_command" not in names for names in provider.exposed_tools))
+            self.assertTrue(any(name == "tool_result" and payload.get("name") == "run_command" for name, payload in events))
+            ledger_events = [
+                json.loads(line)
+                for line in (root / ".research" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertNotIn("command_approval_requested", [event["event_type"] for event in ledger_events])
+
+            simple_names = {
+                item["function"]["name"]
+                for item in agent._tool_definitions_for_prompt("Generate an SVG of a pelican riding a bicycle")
+            }
+            explicit_names = {
+                item["function"]["name"]
+                for item in agent._tool_definitions_for_prompt("Generate an SVG and run the tests")
+            }
+            self.assertNotIn("run_command", simple_names)
+            self.assertIn("run_command", explicit_names)
+
     def test_svg_creation_without_a_file_gets_one_bounded_recovery_turn(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -595,9 +687,11 @@ class CoreTests(unittest.TestCase):
         self.assertIn("立即选用清楚的文件名并在工作区根目录调用 write_file", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("只有任务依赖现有文件时才调用 list_files", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("Do not use shell commands or downloads for a simple SVG/artwork", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("two well-separated wheels joined by a clear frame", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("a pelican has a long, broad bill projecting at least one head-width forward", CodingAgent.SYSTEM_PROMPT)
-        self.assertIn("distinct body, head, small circular eye, wing, and beak", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("When objects interact, make contact, alignment, scale, and pose visually legible", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("Preserve defining anatomy and posture for any named biological subject", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("give major visible parts unique semantic IDs", CodingAgent.SYSTEM_PROMPT)
+        self.assertNotIn("pelican", CodingAgent.SYSTEM_PROMPT.casefold())
+        self.assertNotIn("bicycle", CodingAgent.SYSTEM_PROMPT.casefold())
         self.assertIn("Never claim an SVG was rendered or visually verified", CodingAgent.SYSTEM_PROMPT)
 
     def test_summary_checkpoint_runs_every_configured_turns(self) -> None:

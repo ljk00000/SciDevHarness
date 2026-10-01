@@ -1770,15 +1770,22 @@ class CodingAgent:
 
     MAX_TURNS = 32
     MAX_SVG_CREATION_RETRIES = 1
+    SVG_ARTIFACT_TOOLS = frozenset({"read_file", "write_file", "replace_in_file", "git_diff"})
+    EXPLICIT_COMMAND_INTENT = re.compile(
+        r"\b(?:run|execute)\s+(?:(?:the|a)\s+)?(?:commands?|scripts?|tests?|test suite|checks?)\b"
+        r"|\b(?:pytest|npm\s+test|python(?:\.exe)?\s+-m\s+pytest)\b"
+        r"|(?:运行|执行)(?:命令|脚本|测试)",
+        re.IGNORECASE,
+    )
     SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent，工作方式类似 Codex。
 
 最高优先级：用户明确要求“生成、绘制或制作”可保存文件时，这本身就是创建文件的授权。立即选用清楚的文件名并在工作区根目录调用 write_file；不要先列目录再询问路径、文件名、默认尺寸或风格。只有目标存在会实质改变结果的歧义，或操作超出工作区/授权范围时才询问。只有任务依赖现有文件时才调用 list_files。
 
 Creation-task directive: A request to generate, draw, or create a file is sufficient authorization. Immediately create the requested artifact in the workspace root with a sensible filename using write_file. Do not ask for a filename, directory, style, or dimensions when reasonable defaults work. Do not use shell commands or downloads for a simple SVG/artwork. Make the file visibly depict the requested subject rather than a generic placeholder.
 
-SVG illustration quality: identify the recognizable visual features of every named subject and their relationships; draw them as distinct, coherent shapes rather than arbitrary circles, blobs, or rectangles. When a bicycle is requested, include two well-separated wheels joined by a clear frame, plus a saddle and handlebar. The rider must visibly sit on the saddle and interact with the bicycle; do not merely place two unrelated objects together. When a bird is requested, include a distinct body, head, small circular eye, wing, and beak; preserve named species features (a pelican has a long, broad bill projecting at least one head-width forward and a visible curved throat pouch hanging below it). Keep all meaningful geometry inside the viewBox; avoid clipped/oversized ground rectangles and shapes that cover the bicycle. Use strong contrast and coherent overlaps so every part remains visible. A concise title/description and semantic IDs can help inspection, but labels must never replace visible features. Never claim an SVG was rendered or visually verified unless an actual rendering/validation tool result confirms it.
+SVG illustration quality: identify the features that make each requested subject recognizable and show how its parts relate; use distinct, coherent shapes rather than arbitrary blobs or boxes. When objects interact, make contact, alignment, scale, and pose visually legible instead of merely juxtaposing unrelated silhouettes. Preserve defining anatomy and posture for any named biological subject without inventing unrequested features. Keep meaningful geometry inside the viewBox; avoid clipping and overlaps that hide important parts. Use balanced whitespace, clear contrast, and a restrained palette. For complex SVGs, give major visible parts unique semantic IDs; labels never substitute for visible features. Never claim an SVG was rendered or visually verified unless an actual rendering/validation tool result confirms it.
 
-Before writing an illustration, choose a landscape canvas and plan relative positions: keep paired wheels on one baseline with generous separation; connect both hubs through a readable frame triangle; put the saddle above that frame; place the rider directly over the saddle, with limbs reaching the controls/pedals. For a pelican, orient its head and long tapered bill forward, make the eye a small dark circle, and draw the throat pouch as one visibly curved filled shape hanging from the bill. Draw one clean silhouette per feature, give IDs unique values, preserve margins, and layer bicycle before rider. Do not tile shapes, repeat eyes, duplicate identical paths, or use chart/table-like rectangles as anatomy. Keep a simple illustration concise (under 60 elements) and close every SVG tag exactly once.
+Before writing an illustration, choose a canvas orientation and composition suited to the requested scene; place subjects at readable relative scales, preserve margins, and layer background before foreground. Draw one clean silhouette per meaningful feature; avoid tiling, repeated details, duplicate paths, or diagram-like boxes used as anatomy. Keep simple artwork concise (under 60 elements) and close every SVG tag exactly once.
 
 If you include a complete SVG in your reply, still call write_file to save it; a code block or asking whether to save does not complete a file-creation task.
 
@@ -1830,6 +1837,16 @@ If you include a complete SVG in your reply, still call write_file to save it; a
             f"Git 状态：\n{self.git.status(protect_sensitive=True)}\n\n"
             f"项目指令 AGENTS.md：\n{instruction or '未找到'}"
         )
+
+    def _tool_definitions_for_prompt(self, prompt: str) -> list[dict[str, Any]]:
+        definitions = self.toolbox.definitions()
+        if not SvgArtifactAdapter.is_creation_request(prompt) or self.EXPLICIT_COMMAND_INTENT.search(prompt):
+            return definitions
+        return [
+            definition
+            for definition in definitions
+            if definition.get("function", {}).get("name") in self.SVG_ARTIFACT_TOOLS
+        ]
 
     def _save_session(self, session: dict[str, Any]) -> None:
         path = self._session_path(session["session_id"])
@@ -2097,6 +2114,14 @@ If you include a complete SVG in your reply, still call write_file to save it; a
         self._save_session(session)
         provider = OpenAICompatibleProvider.from_env()
         messages = session["messages"]
+        tool_definitions = self._tool_definitions_for_prompt(prompt)
+        allowed_tool_names = {
+            definition["function"]["name"]
+            for definition in tool_definitions
+            if isinstance(definition, dict)
+            and isinstance(definition.get("function"), dict)
+            and isinstance(definition["function"].get("name"), str)
+        }
         workspace_revision = 0
         diff_verified_revision = -1
 
@@ -2111,7 +2136,7 @@ If you include a complete SVG in your reply, still call write_file to save it; a
                 )
             message = provider.chat(
                 messages,
-                tools=self.toolbox.definitions(),
+                tools=tool_definitions,
                 max_tokens=12000,
                 request_id=f"{session_id}-turn-{turn}",
                 **stream_options,
@@ -2352,6 +2377,8 @@ If you include a complete SVG in your reply, still call write_file to save it; a
                     arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
                     if not isinstance(arguments, dict):
                         raise ValueError("工具参数必须是 JSON 对象")
+                    if name not in allowed_tool_names:
+                        raise PermanentError(f"Tool {name!r} is not available for this task.")
                     tool_event = {"session_id": session_id, "name": name, "arguments": arguments}
                     if call_id in recovered_tool_ids:
                         tool_event["source"] = "harness_svg_artifact_recovery"

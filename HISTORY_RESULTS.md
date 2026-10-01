@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-02 00:56（Asia/Shanghai）· 本地模型 SVG 烟测与请求计量
+
+- 流式计时现覆盖完整响应体，并分开统计首个可见输出、正文/推理/工具参数字节及请求/响应体积；失败诊断不保存请求正文或 shell 命令。SVG 写入/替换识别与修复路径有回归测试。
+- Qwen2.5-Coder-7B 最新真实运行 15 次本地请求，请求累计耗时约 72.9 秒；请求体合计约 164 KiB，响应体约 1.28 MiB（SSE 正文约 14 KiB）。生成图因重复语义 ID 被拒绝，预览也未达可用质量；不等同于 Harness 冒报成功，也不代表远端网络流量。
+- 全套 `python -m pytest -q`：115 项、86 子测试通过；`git diff --check` 通过。未提交、未推送。
+- 原生窗口验收未完成：计算机使用工具返回 `apps=[]`，没有可截图的桌面应用；不以离屏图替代。
+
 ## 2026-10-01 23:51（Asia/Shanghai）· 新建公开仓库并上传
 
 - 新建公开仓库 [ljk00000/SciDevHarness-IDE](https://github.com/ljk00000/SciDevHarness-IDE)，推送完整 Git 历史到 `master`；本地与远端 SHA 均为 `3c4cfe09fc2be9d17023ac9c0bb9d66066e6c70a`。新增 `ide-public` 远程，旧 `origin` 与 `desktop-public` 未改动。
