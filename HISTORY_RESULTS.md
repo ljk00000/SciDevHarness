@@ -1,9 +1,9 @@
 # 历史与结果
 
-## 2026-10-01 19:34（Asia/Shanghai）· GitHub CI 路径兼容修复
+## 2026-10-01 19:37（Asia/Shanghai）· GitHub CI 路径兼容修复通过
 
 - `ab23f79` 的远端 CI 在 Python 3.12/3.13/3.14 均通过单测、编译和运行时预检，但 `smoke_dependency.py` 把 `EventLedger` 解析后的路径与 Windows 临时目录未解析路径直接比较，因路径别名失败。
-- 修正为两侧都解析后比较；本地 dependency smoke、78 项单测、`py_compile` 与 `git diff --check` 通过。修复提交已准备推送，远端 Actions 结果待核验。
+- 修正为两侧都解析后比较；本地 dependency smoke、78 项单测、`py_compile` 与 `git diff --check` 通过。提交 `6461244` 已推送，GitHub Actions 的 3.12/3.13/3.14 矩阵全绿：[Windows CI #36856282996](https://github.com/ljk00000/SciDevHarness/actions/runs/36856282996)。
 
 ## 2026-10-01 19:28（Asia/Shanghai）· 发布 CI 修复与 SVG 实测
 
