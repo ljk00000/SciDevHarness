@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -985,7 +986,7 @@ class OpenAICompatibleProvider:
         patterns = (
             re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.IGNORECASE | re.DOTALL),
             re.compile(r"<tool_request>\s*(.*?)\s*</tool_request>", re.IGNORECASE | re.DOTALL),
-            re.compile(r"```json\s*(.*?)```", re.IGNORECASE | re.DOTALL),
+            re.compile(r"```(?:json|xml)\s*(.*?)```", re.IGNORECASE | re.DOTALL),
             # Some local models omit the requested wrapper. Only accept a JSON
             # object that occupies the entire response; prose/code examples
             # must never be promoted to executable workspace actions.
@@ -998,10 +999,20 @@ class OpenAICompatibleProvider:
         tool_calls: list[dict[str, Any]] = []
         consumed_spans: list[tuple[int, int]] = []
         for match in matches:
+            candidate = match.group(1).strip()
             try:
-                payload = json.loads(match.group(1).strip())
+                payload = json.loads(candidate)
             except (json.JSONDecodeError, TypeError):
-                continue
+                # Local models occasionally append one redundant closing brace
+                # to an otherwise valid tool envelope. Recover only a valid
+                # JSON prefix followed by exactly that one character; tool and
+                # argument allowlists below still decide whether it can run.
+                try:
+                    payload, end = json.JSONDecoder().raw_decode(candidate)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if candidate[end:].strip() != "}":
+                    continue
             if (
                 not isinstance(payload, dict)
                 or set(payload) != {"name", "arguments"}
@@ -1443,11 +1454,90 @@ class CodingToolbox:
         return str(handler(**arguments))
 
 
+class SvgArtifactAdapter:
+    """Recover an explicitly requested SVG when a model returns it as fenced XML."""
+
+    _REQUEST_VERBS = re.compile(r"\b(generate|create|draw|make|produce)\b|生成|绘制|制作|画", re.IGNORECASE)
+    _SVG_BLOCK = re.compile(r"```(?:svg|xml)\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+    _SAFE_FILENAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_.-]{0,79}\.svg\Z", re.IGNORECASE)
+    _ACTIVE_ELEMENTS = {"script", "foreignobject", "iframe", "object", "embed"}
+
+    @classmethod
+    def create_tool_call(cls, prompt: str, response: str, project_root: Path) -> dict[str, Any] | None:
+        """Return a normal write_file call only for one clear, safe SVG artifact."""
+        if not cls._REQUEST_VERBS.search(prompt) or "svg" not in prompt.casefold():
+            return None
+        matches = list(cls._SVG_BLOCK.finditer(response))
+        if len(matches) != 1:
+            return None
+        source = matches[0].group(1).strip()
+        if not source or len(source.encode("utf-8")) > CodingToolbox.MAX_WRITE_BYTES:
+            return None
+        lowered = source.casefold()
+        if "<!doctype" in lowered or "<!entity" in lowered:
+            return None
+        try:
+            root = ET.fromstring(source)
+        except ET.ParseError:
+            return None
+        if not isinstance(root.tag, str) or root.tag.rsplit("}", 1)[-1].casefold() != "svg":
+            return None
+        for element in root.iter():
+            if not isinstance(element.tag, str):
+                continue
+            if element.tag.rsplit("}", 1)[-1].casefold() in cls._ACTIVE_ELEMENTS:
+                return None
+            if element.tag.rsplit("}", 1)[-1].casefold() == "style" and (
+                "@import" in (element.text or "").casefold()
+                or re.search(r"url\s*\(\s*(?!['\"]?#)", element.text or "", re.I)
+            ):
+                return None
+            for raw_name, value in element.attrib.items():
+                name = raw_name.rsplit("}", 1)[-1].casefold()
+                if name.startswith("on"):
+                    return None
+                if name in {"href", "src"} and value.strip() and not value.strip().startswith("#"):
+                    return None
+                if re.search(r"url\s*\(\s*(?!['\"]?#)", value, re.I) or (
+                    name == "style" and "@import" in value.casefold()
+                ):
+                    return None
+
+        names = re.findall(
+            r"(?<![A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9_.-]{0,79}\.svg)(?![A-Za-z0-9_.-])",
+            response,
+            re.I,
+        )
+        filename = next((name for name in reversed(names) if cls._SAFE_FILENAME.fullmatch(name)), "generated.svg")
+        workspace = Path(project_root).resolve()
+        candidate = filename
+        suffix = 1
+        while (workspace / candidate).exists() or CodingToolbox.is_protected_path(candidate):
+            candidate = f"{Path(filename).stem}-{suffix}.svg"
+            suffix += 1
+        return {
+            "id": new_id("call"),
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": json.dumps({"path": candidate, "content": source}, ensure_ascii=False),
+            },
+        }
+
+
 class CodingAgent:
     """Codex-style coding loop: inspect, edit, run checks, inspect diff, commit."""
 
     MAX_TURNS = 32
     SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent，工作方式类似 Codex。
+
+最高优先级：用户明确要求“生成、绘制或制作”可保存文件时，这本身就是创建文件的授权。立即选用清楚的文件名并在工作区根目录调用 write_file；不要先列目录再询问路径、文件名、默认尺寸或风格。只有目标存在会实质改变结果的歧义，或操作超出工作区/授权范围时才询问。只有任务依赖现有文件时才调用 list_files。
+
+Creation-task directive: A request to generate, draw, or create a file is sufficient authorization. Immediately create the requested artifact in the workspace root with a sensible filename using write_file. Do not ask for a filename, directory, style, or dimensions when reasonable defaults work. Do not use shell commands or downloads for a simple SVG/artwork. Make the file visibly depict the requested subject rather than a generic placeholder.
+
+SVG illustration quality: identify the recognizable visual features of every named subject and their relationships; draw them as distinct, coherent shapes rather than arbitrary circles, blobs, or rectangles. When a bicycle is requested, include two well-separated wheels joined by a clear frame, plus a saddle and handlebar. When a bird is requested, include a distinct body, head, wing, and beak; preserve named species features (a pelican has a long bill and throat pouch). Choose a viewBox that contains the full scene with margin. A concise title/description and semantic IDs can help inspection, but labels must never replace visible features.
+
+If you include a complete SVG in your reply, still call write_file to save it; a code block or asking whether to save does not complete a file-creation task.
 
 你的任务是直接帮助用户修改当前项目代码，而不是泛泛解释代码。你可以使用工具查看文件、精确编辑文件、请求运行必要的测试/检查命令和查看 Git diff。
 
@@ -1459,6 +1549,8 @@ class CodingAgent:
 5. 每条 shell 命令都会等待用户单独批准；用户拒绝或审批超时后，不得重试、变形或拆分同一命令来规避拒绝。
 6. 用户明确要求的工具调用或检查（如 git_diff、测试、lint）是任务完成条件；必须实际执行并依据工具结果汇报。没有执行或执行失败时，要明确说未完成/未验证，不能把请求、计划或工具 JSON 文本当作已发生的结果。
 7. 最后简要说明改了什么、验证了什么、仍有什么限制。所有文件修改和工具调用都会被本地记录。
+
+对可预览的图像/SVG，创建后尽可能实际渲染检查，再依据检查结果汇报。
 """
 
     def __init__(
@@ -1775,6 +1867,20 @@ class CodingAgent:
             )
             content = self._text_content(message.get("content"))
             tool_calls = message.get("tool_calls") or []
+            recovered_tool_ids: set[str] = set()
+            if not tool_calls and content:
+                recovered = SvgArtifactAdapter.create_tool_call(prompt, content, self.project_root)
+                if recovered:
+                    tool_calls = [recovered]
+                    recovered_tool_ids.add(str(recovered["id"]))
+                    self.ledger.append(
+                        "artifact_response_recovered",
+                        {
+                            "session_id": session_id,
+                            "format": "svg",
+                            "path": json.loads(recovered["function"]["arguments"])["path"],
+                        },
+                    )
             # Ollama templates commonly serialize assistant content *instead of*
             # tool calls when both fields are present. Keep narration in the UI
             # event below, but give the next model turn an unambiguous call record.
@@ -1940,7 +2046,10 @@ class CodingAgent:
                     arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
                     if not isinstance(arguments, dict):
                         raise ValueError("工具参数必须是 JSON 对象")
-                    self._emit("tool_started", {"session_id": session_id, "name": name, "arguments": arguments})
+                    tool_event = {"session_id": session_id, "name": name, "arguments": arguments}
+                    if call_id in recovered_tool_ids:
+                        tool_event["source"] = "harness_svg_artifact_recovery"
+                    self._emit("tool_started", tool_event)
                     result = self.toolbox.execute(name, arguments)
                     tool_succeeded = True
                 except Exception as exc:  # Tool errors go back to the model for correction.

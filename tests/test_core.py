@@ -426,6 +426,11 @@ class CoreTests(unittest.TestCase):
         self.assertIn("工具 JSON 文本当作已发生的结果", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("文件读取和编辑可直接执行", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("不要只提出方案或在执行前二次询问", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("立即选用清楚的文件名并在工作区根目录调用 write_file", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("只有任务依赖现有文件时才调用 list_files", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("Do not use shell commands or downloads for a simple SVG/artwork", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("two well-separated wheels joined by a clear frame", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("a pelican has a long bill and throat pouch", CodingAgent.SYSTEM_PROMPT)
 
     def test_summary_checkpoint_runs_every_configured_turns(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -805,6 +810,25 @@ class CoreTests(unittest.TestCase):
         }
         normalized_tagged = provider._coerce_text_tool_calls(tagged_call, tools)
         self.assertEqual(normalized_tagged["tool_calls"][0]["function"]["name"], "write_file")
+
+        redundant_brace_call = {
+            "role": "assistant",
+            "content": (
+                '```xml\n{"name":"write_file","arguments":{"path":"hello.py",'
+                '"content":"print(2)"}}}\n```'
+            ),
+        }
+        normalized_redundant_brace = provider._coerce_text_tool_calls(redundant_brace_call, tools)
+        self.assertEqual(normalized_redundant_brace["tool_calls"][0]["function"]["name"], "write_file")
+
+        multiple_extra_braces = {
+            "role": "assistant",
+            "content": (
+                '```json\n{"name":"write_file","arguments":{"path":"hello.py",'
+                '"content":"print(2)"}}}}\n```'
+            ),
+        }
+        self.assertNotIn("tool_calls", provider._coerce_text_tool_calls(multiple_extra_braces, tools))
 
         tagged_request = {
             "role": "assistant",

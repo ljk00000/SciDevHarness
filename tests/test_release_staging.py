@@ -155,6 +155,10 @@ class ReleaseStagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="scidev-deploy-test-") as temporary:
             stage = Path(temporary) / "stage"
             self._stage_project(project_root, stage)
+            environment = os.environ.copy()
+            environment["PATH"] = os.pathsep.join(
+                part for part in (str(deployer.parent), environment.get("PATH", "")) if part
+            )
             result = subprocess.run(
                 [
                     str(deployer),
@@ -164,6 +168,7 @@ class ReleaseStagingTests(unittest.TestCase):
                     "--nuitka-version=4.1.1",
                 ],
                 cwd=stage,
+                env=environment,
                 capture_output=True,
                 text=True,
                 check=False,

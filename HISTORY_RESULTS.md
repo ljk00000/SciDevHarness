@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-01 19:28（Asia/Shanghai）· 发布 CI 修复与 SVG 实测
+
+- 修复 Windows CI/打包环境未把虚拟环境脚本目录加入 `PATH` 的问题，并补上回归测试及手动打包说明。
+- 对明确的 SVG 创建请求，新增安全恢复：模型若只返回单个 fenced SVG/XML 代码块，且 XML 无脚本、事件处理器、外部资源等风险，Harness 将其转为受路径保护的 `write_file` 工具调用；同名文件不覆盖，事件仍进入现有 Git/账本链路。
+- 新增 SVG 安全、渲染及结构检查。78 项单测、Python 编译、`pip check`、依赖 smoke、启动器预检、QML lint 和 1500×920/940×620 UI 截图通过。原始 `Generate an SVG of a pelican riding a bicycle` 本机 Qwen 实测在一次修复后仍未通过图形结构检查，故结果记为失败，不能据此声称生成质量合格。
+
 ## 2026-10-01 18:25（Asia/Shanghai）· GitHub 公开上传完成
 
 - 创建公开仓库 [ljk00000/SciDevHarness](https://github.com/ljk00000/SciDevHarness)，推送 `master`；GitHub API 确认公开，`git ls-remote` 验证远端 SHA 与本地一致。仓库包含 Apache-2.0 LICENSE。

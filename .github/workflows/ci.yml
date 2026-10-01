@@ -45,7 +45,7 @@ jobs:
         run: .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 
       - name: Compile Python modules
-        run: .\.venv\Scripts\python.exe -m py_compile scidev_client.py scidev_core.py scripts\audit_standalone.py scripts\bootstrap.py scripts\smoke_local_ollama.py scripts\verify_minimal_qt.py tests\test_client.py tests\test_core.py tests\test_bootstrap.py tests\test_local_ollama_smoke.py tests\test_package_audit.py tests\test_release_staging.py smoke_dependency.py
+        run: .\.venv\Scripts\python.exe -m py_compile scidev_client.py scidev_core.py scripts\audit_standalone.py scripts\bootstrap.py scripts\smoke_local_ollama.py scripts\smoke_pelican_svg.py scripts\verify_minimal_qt.py tests\test_client.py tests\test_core.py tests\test_artifact_adapter.py tests\test_bootstrap.py tests\test_local_ollama_smoke.py tests\test_package_audit.py tests\test_release_staging.py tests\test_pelican_svg.py smoke_dependency.py
 
       - name: Check installed dependencies
         run: .\.venv\Scripts\python.exe -m pip check

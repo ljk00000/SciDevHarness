@@ -41,6 +41,7 @@ jobs:
           if not defined VSINSTALL exit /b 1
           call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat"
           if errorlevel 1 exit /b 1
+          set "PATH=%GITHUB_WORKSPACE%\.venv\Scripts;%PATH%"
           "%GITHUB_WORKSPACE%\.venv\Scripts\pyside6-deploy.exe" --config-file pysidedeploy.spec --nuitka-version=4.1.1
           if errorlevel 1 exit /b 1
 

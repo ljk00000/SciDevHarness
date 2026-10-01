@@ -95,11 +95,14 @@ py -3.14 -m venv .venv
 $repo = (Get-Location).Path
 $stage = Join-Path $env:TEMP ("scidev-release-" + [guid]::NewGuid().ToString("N"))
 .\scripts\stage_release.ps1 -Destination $stage
+$previousPath = $env:PATH
+$env:PATH = (Join-Path $repo ".venv\Scripts") + [IO.Path]::PathSeparator + $env:PATH
 Push-Location $stage
 try {
     & (Join-Path $repo ".venv\Scripts\pyside6-deploy.exe") --config-file pysidedeploy.spec --nuitka-version=4.1.1
 } finally {
     Pop-Location
+    $env:PATH = $previousPath
 }
 ```
 
