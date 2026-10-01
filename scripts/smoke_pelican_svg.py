@@ -88,19 +88,36 @@ def pelican_repair_prompt(filename: str, failure_reason: str) -> str:
     duplicate_match = re.search(r"duplicate_ids=\[([^\]]*)\]", failure_reason)
     duplicate_ids = re.findall(r"'([^']+)'", duplicate_match.group(1)) if duplicate_match else []
     target = Path(filename).name
-    color_or_wheel_fill_only = (
+    local_paint_or_layout_only = (
         not missing_parts
         and not duplicate_ids
         and bool(malformed_parts)
         and all(
-            item.startswith("invalid paint ") or "must be an unfilled, visibly outlined tire" in item
+            item.startswith("invalid paint ")
+            or "must be an unfilled, visibly outlined tire" in item
+            or item.endswith(" is clipped by the viewBox")
             for item in malformed_parts
         )
     )
-    if color_or_wheel_fill_only:
-        return f"""Original task: {PELICAN_PROMPT}
-Repair only SVG paint/fill errors in {target}. Validator: {failure_reason}
-Replace unsupported color names with valid hex colors: teal `#168b83`, ochre `#e4b35b`, coral `#e9785b`, navy `#18324b`. Set both wheel circles to `fill="none"` and a visible navy stroke. Preserve every path, position, and other style. Use the smallest exact `replace_in_file` edit(s), then inspect `git_diff`; do not use shell."""
+    if local_paint_or_layout_only:
+        repair_items = []
+        if any(item.startswith("invalid paint ") for item in malformed_parts):
+            repair_items.append(
+                "Replace each unsupported paint value with a valid hex color; use teal `#168b83`, "
+                "ochre `#e4b35b`, coral `#e9785b`, or navy `#18324b` as appropriate."
+            )
+        if any("must be an unfilled, visibly outlined tire" in item for item in malformed_parts):
+            repair_items.append("Set both wheel shapes to `fill=\"none\"` with a visible navy stroke.")
+        clipped = [item.removesuffix(" is clipped by the viewBox") for item in malformed_parts if item.endswith(" is clipped by the viewBox")]
+        if clipped:
+            repair_items.append(
+                "Move or uniformly scale only these clipped shapes inside the viewBox with a clear margin, "
+                "preserving their connections and proportions: " + ", ".join(clipped) + "."
+            )
+        guidance = "\n".join(f"- {item}" for item in repair_items)
+        return f"""Repair only these localized SVG issues in {target}; preserve the existing drawing and all passing geometry. Validator: {failure_reason}
+{guidance}
+Use the smallest exact `replace_in_file` edit(s), then inspect `git_diff`; do not redraw the whole SVG or use shell."""
     missing_guidance = {
         "left-wheel": "Give the rear wheel its own unfilled `<circle id=\"left-wheel\">` at the rear frame hub.",
         "right-wheel": "Give the front wheel its own unfilled `<circle id=\"right-wheel\">` at the front frame hub.",
@@ -126,32 +143,68 @@ Replace unsupported color names with valid hex colors: teal `#168b83`, ochre `#e
             detail = missing_guidance.get(part, f"Add one visible shape with exact ID `{part}`.")
             guidance_lines.append(f"- {detail}")
         guidance = "\n".join(guidance_lines)
-        return f"""Original task: {PELICAN_PROMPT}
-Repair only the missing SVG parts in {target}; preserve the existing drawing. Validator: {failure_reason}
+        return f"""Repair only the missing SVG parts in {target}; preserve the existing drawing. Validator: {failure_reason}
 Missing-part instructions:
 {guidance}
 Read the file. If a correct visible shape exists, add its missing ID; otherwise insert only the missing shape(s) before `</svg>`. Keep IDs unique, use existing geometry/color style, and preserve every passing element. Make minimal `replace_in_file` edit(s), then inspect `git_diff`; do not rewrite the full SVG or use shell."""
-    if len(missing_parts) >= 7 or len(malformed_parts) >= 3:
-        return f"""Original task: {PELICAN_PROMPT}
-The existing {target} has several structural errors. Replace it once with a complete, polished pelican riding a bicycle; do not preserve broken geometry. Validator: {failure_reason}
+    geometry_guidance = {
+        "left-wheel": "Keep the rear wheel circular, unfilled, and centered on the rear hub.",
+        "right-wheel": "Keep the front wheel circular, unfilled, and centered on the front hub.",
+        "bicycle-frame": "Reshape the connected frame so its rear endpoint meets the rear hub and one vertex meets the pedal/crank center.",
+        "bicycle-fork": "Move the fork so one endpoint touches the front wheel hub and the other joins the front frame/head tube.",
+        "bicycle-spokes": "Add at least four radial spoke segments inside each wheel; keep them centered on the hubs.",
+        "bicycle-saddle": "Use a compact, clearly visible saddle directly above the frame's seat joint.",
+        "bicycle-handlebar": "Keep the handlebar ahead of the saddle and connect its grip to the reaching wing tip.",
+        "bicycle-pedals": "Place a compact crank/pedal at a frame vertex, within reach of the far leg.",
+        "pelican-head": "Keep a distinct filled head touching the front of the torso, with enough room for the eye and bill.",
+        "pelican-eye": "Keep one small dark eye inside the head.",
+        "pelican-beak": "Lengthen the tapered bill from the head so it projects forward at least three head radii; retain a recognizable pelican bill rather than a tiny triangle.",
+        "pelican-body": "Use a compact organic torso behind and overlapping the head; keep its width below roughly half the wheel spacing and leave the wing as a separate feature.",
+        "pelican-wing": "Place the filled curved wing mostly inside the torso, not as a second body-sized silhouette.",
+        "pelican-pouch": "Make a small closed, filled curved throat pouch beneath the long bill; keep it narrower than three head radii.",
+        "pelican-wing-reaching": "Draw a closed filled curve from the shoulder to the handlebar, ending at the actual grip while overlapping the torso at its base.",
+        "pelican-leg-near": "Connect the near leg continuously from the lower torso to the saddle.",
+        "pelican-leg-far": "Connect the far leg continuously from the lower torso to the pedal/crank.",
+    }
+    targeted_geometry: dict[str, str] = {}
+    unmatched_geometry = []
+    for issue in malformed_parts:
+        normalized_issue = issue.replace("bicycle frame", "bicycle-frame")
+        part = next(
+            (identifier for identifier in sorted(geometry_guidance, key=len, reverse=True) if identifier in normalized_issue),
+            None,
+        )
+        if part is None:
+            unmatched_geometry.append(issue)
+        else:
+            targeted_geometry[part] = geometry_guidance[part]
+    if (malformed_parts or missing_parts) and len(missing_parts) <= 6 and not duplicate_ids and not unmatched_geometry:
+        edits = []
+        for identifier in missing_parts:
+            instruction = missing_guidance.get(identifier, f"add a visible shape with this exact ID: {identifier}")
+            edits.append(f"- Add missing `{identifier}`: {instruction}")
+        edits.extend(f"- {identifier}: {instruction}" for identifier, instruction in targeted_geometry.items())
+        edit_instructions = "\n".join(edits)
+        return f"""Repair only the listed missing parts and geometry in {target}. Preserve all passing artwork, IDs, classes, and layer order. Validator: {failure_reason}
+Targeted shape edits:
+{edit_instructions}
+Read the existing SVG first. When an ID is on a `<g>`, edit only its child shape and keep the wrapper. Use small exact `replace_in_file` edits, then inspect `git_diff`; do not rewrite the file or use shell."""
+    if len(missing_parts) >= 7 or (len(malformed_parts) >= 3 and (duplicate_ids or unmatched_geometry)):
+        return f"""Repair the existing SVG in {target}; it has several structural errors. Replace it once with a complete, polished pelican riding a bicycle, but preserve the valid artwork and layer order. Validator: {failure_reason}
 Use viewBox="0 0 640 420", balanced whitespace, navy outlines `#18324b`, teal `#168b83`, ochre `#e4b35b`, coral `#e9785b`, and background `#f4f7fb`; use only valid CSS/SVG color values, preferably these hex codes. Fixed layout: wheel centers (130,325) and (500,325), radius 60; frame polyline passes through both hubs and crank (390,265), with seat joint (275,230); saddle near (275,225), handlebar near (452,205); bird body around x=275..390/y=122..213, head centered (370,140) with radius 20, bill projecting right to x=468, and pouch hanging below. Connect both legs to the saddle/pedal and the reaching wing tip to the handlebar. Draw radial spokes, a fork and coherent anatomy; keep every shape inside the canvas.
 Use each exact ID once: left-wheel, right-wheel, bicycle-frame, bicycle-fork, bicycle-spokes, bicycle-saddle, bicycle-handlebar, bicycle-pedals, pelican-body, pelican-head, pelican-eye, pelican-wing, pelican-wing-reaching, pelican-beak, pelican-pouch, pelican-leg-near, pelican-leg-far. Wheels are `<circle>`; frame is `<polyline>`; spokes are one `<g>` containing radial lines; beak is `<polygon>`; body is a curved `<path>` or `<ellipse>`; head/eye are circles; pouch is a closed curved path. Call `write_file` once and inspect `git_diff`. Do not use shell."""
     if duplicate_ids:
-        return f"""Original task: {PELICAN_PROMPT}
-Repair duplicate SVG IDs in {target} only. Validator: {failure_reason}
+        return f"""Repair duplicate SVG IDs in {target} only. Validator: {failure_reason}
 For each listed duplicate, preserve the ID on the correct primary shape and rename redundant copies to unique descriptive IDs; for `bicycle-spokes`, prefer one `<g id="bicycle-spokes">` around its spoke lines. Read the file, make the smallest exact `replace_in_file` edit(s), then inspect `git_diff`. Preserve all other artwork; do not use shell."""
     if "left-wheel" in missing_parts or "right-wheel" in missing_parts or "must be a circle" in failure_reason:
-        return f"""Original task: {PELICAN_PROMPT}
-Repair only the wheel error in {target}. Validator: {failure_reason}
+        return f"""Repair only the wheel error in {target}. Validator: {failure_reason}
 Read the file, preserve all correct artwork, and use exact `replace_in_file` edits only. Replace both defective/prefixed wheel elements with these exact circles, then inspect `git_diff`; do not rewrite the whole SVG or use shell:
 `<circle id="left-wheel" cx="125" cy="326" r="72" fill="none" stroke="#18324B" stroke-width="8"/>`
 `<circle id="right-wheel" cx="515" cy="326" r="72" fill="none" stroke="#18324B" stroke-width="8"/>`"""
     if "viewBox is too small" in failure_reason:
-        return f"""Original task: {PELICAN_PROMPT}
-Repair only the root `viewBox` of {target}. Validator: {failure_reason}
+        return f"""Repair only the root `viewBox` in {target}. Validator: {failure_reason}
 Read the current SVG. Preserve the drawing; adjust the root viewBox to fully contain it with dimensions at least 300x180, scaling the artwork uniformly if required. Use one precise `replace_in_file`, inspect `git_diff`, and do not use shell."""
-    return f"""Original task: {PELICAN_PROMPT}
-Repair only the reported issue in {target}. Validator: {failure_reason}
+    return f"""Repair only the reported issue in {target}. Validator: {failure_reason}
 Read the current SVG, preserve every passing element, and use the smallest exact `replace_in_file` edit(s). Inspect `git_diff`; do not rewrite the full file or use shell."""
 
 
@@ -224,6 +277,288 @@ def collect_shell_requests(events: list[tuple[str, dict[str, Any]]]) -> list[dic
     ]
 
 
+def _svg_tag_name(element: ET.Element) -> str:
+    return element.tag.rsplit("}", 1)[-1].casefold() if isinstance(element.tag, str) else ""
+
+
+def _svg_presentation_value(
+    element: ET.Element,
+    property_name: str,
+    parents: dict[ET.Element, ET.Element],
+    css_rules: list[tuple[str, dict[str, str]]],
+) -> str:
+    """Resolve an inline SVG presentation property through simple group inheritance."""
+    current: ET.Element | None = element
+    while current is not None:
+        style_values: dict[str, str] = {}
+        for declaration in current.attrib.get("style", "").split(";"):
+            name, separator, value = declaration.partition(":")
+            if separator:
+                style_values[name.strip().casefold()] = value.strip().removesuffix("!important").strip()
+        value = style_values.get(property_name.casefold(), "").strip()
+        if not value:
+            class_names = set(current.attrib.get("class", "").split())
+            element_id = current.attrib.get("id", "")
+            tag_name = _svg_tag_name(current)
+            for selector, declarations in css_rules:
+                selector = selector.strip()
+                if selector.startswith(".") and selector[1:] in class_names:
+                    value = declarations.get(property_name.casefold(), value)
+                elif selector.startswith("#") and selector[1:] == element_id:
+                    value = declarations.get(property_name.casefold(), value)
+                elif selector.casefold() == tag_name:
+                    value = declarations.get(property_name.casefold(), value)
+        if not value:
+            value = current.attrib.get(property_name, "").strip()
+        if value and value.casefold() != "inherit":
+            return value
+        current = parents.get(current)
+    return ""
+
+
+def _resolve_svg_semantic_shape(element: ET.Element, allowed_tags: set[str]) -> ET.Element | None:
+    """Accept a semantic ID on its actual shape or on a legal SVG group wrapper."""
+    if _svg_tag_name(element) in allowed_tags:
+        return element
+    if _svg_tag_name(element) not in {"g", "a", "svg"}:
+        return None
+    return next(
+        (child for child in element.iter() if child is not element and _svg_tag_name(child) in allowed_tags),
+        None,
+    )
+
+
+def _svg_css_rules(root: ET.Element) -> list[tuple[str, dict[str, str]]]:
+    """Read only simple local class/id/tag rules; external or active CSS is rejected elsewhere."""
+    rules: list[tuple[str, dict[str, str]]] = []
+    for element in root.iter():
+        if _svg_tag_name(element) != "style":
+            continue
+        css = re.sub(r"/\*.*?\*/", "", element.text or "", flags=re.S)
+        for selector_list, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+            declarations: dict[str, str] = {}
+            for declaration in body.split(";"):
+                name, separator, value = declaration.partition(":")
+                if separator:
+                    declarations[name.strip().casefold()] = value.strip().removesuffix("!important").strip()
+            for selector in selector_list.split(","):
+                normalized = selector.strip()
+                if re.fullmatch(r"(?:\.[A-Za-z_][\w-]*|#[A-Za-z_][\w-]*|[A-Za-z_][\w-]*)", normalized):
+                    rules.append((normalized, declarations))
+    return rules
+
+
+def _is_valid_svg_paint(value: str) -> bool:
+    paint = value.strip()
+    if paint.casefold() in {"none", "currentcolor", "inherit", "context-fill", "context-stroke"}:
+        return True
+    if re.fullmatch(r"url\(\s*['\"]?#[-A-Za-z0-9_.]+['\"]?\s*\)", paint):
+        return True
+    return QColor(paint).isValid()
+
+
+def _collect_illustration_geometry_issues(
+    semantic_elements: dict[str, ET.Element],
+    identified_elements: dict[str, ET.Element],
+    renderer: QSvgRenderer,
+    parents: dict[ET.Element, ET.Element],
+    css_rules: list[tuple[str, dict[str, str]]],
+) -> list[str]:
+    """Collect independent geometry defects together so one repair can address them."""
+    issues: list[str] = []
+    bounds = {identifier: renderer.boundsOnElement(identifier) for identifier in identified_elements}
+    wheels: list[tuple[float, float, float]] = []
+    for wheel_id in ("left-wheel", "right-wheel"):
+        rect = bounds[wheel_id]
+        if rect.width() <= 0 or rect.height() <= 0 or abs(rect.width() - rect.height()) > max(
+            2.0, max(rect.width(), rect.height()) * 0.08
+        ):
+            issues.append(f"SVG {wheel_id} must render as a circle")
+        wheels.append((rect.center().x(), rect.center().y(), min(rect.width(), rect.height()) / 2))
+    (left_x, left_y, left_radius), (right_x, right_y, right_radius) = wheels
+    if left_radius <= 0 or right_radius <= 0:
+        issues.append("SVG bicycle wheels must have positive radii")
+    wheel_distance = math.hypot(right_x - left_x, right_y - left_y)
+    if left_radius > 0 and right_radius > 0:
+        if wheel_distance < 0.9 * (left_radius + right_radius):
+            issues.append("SVG bicycle wheels overlap instead of forming a readable bicycle")
+        if abs(right_y - left_y) > 0.35 * (left_radius + right_radius):
+            issues.append("SVG bicycle wheels are not aligned at a readable height")
+
+    head = semantic_elements["pelican-head"]
+    head_bounds = bounds["pelican-head"]
+    head_size = min(head_bounds.width(), head_bounds.height()) / 2
+    if head_size < 8:
+        issues.append("pelican-head is too small to read as a distinct bird head")
+    head_fill = _svg_presentation_value(head, "fill", parents, css_rules).casefold()
+    if head_fill in {"none", "transparent"}:
+        issues.append("pelican-head needs a filled silhouette, not an empty outlined ring")
+
+    eye = semantic_elements["pelican-eye"]
+    eye_bounds = bounds["pelican-eye"]
+    if min(eye_bounds.width(), eye_bounds.height()) < 4:
+        issues.append("pelican-eye must be a visible small circle, not omitted decoration")
+    eye_fill = _svg_presentation_value(eye, "fill", parents, css_rules).casefold() or "#000000"
+    if eye_fill in {"none", "transparent", "white", "#fff", "#ffffff"}:
+        issues.append("pelican-eye must use a visible dark fill")
+
+    beak = semantic_elements["pelican-beak"]
+    beak_numbers = [
+        float(value)
+        for value in re.findall(r"[-+]?(?:\d*\.\d+|\d+\.?\d*)", beak.attrib.get("points", ""))
+    ]
+    if len(beak_numbers) < 6 or len(beak_numbers) % 2:
+        issues.append("pelican-beak polygon has too few valid points")
+    elif max(beak_numbers[::2]) - min(beak_numbers[::2]) < max(60, head_size * 2.5):
+        issues.append("pelican-beak is too short relative to the head to read as a long pelican bill")
+
+    body = semantic_elements["pelican-body"]
+    body_tag = _svg_tag_name(body)
+    if body_tag == "path" and not re.search(r"[cqst]", body.attrib.get("d", ""), re.I):
+        issues.append("pelican-body path must use curved geometry rather than a rectangle-like polygon")
+    body_fill = _svg_presentation_value(body, "fill", parents, css_rules).casefold()
+    body_stroke = _svg_presentation_value(body, "stroke", parents, css_rules)
+    if body_fill in {"", "none", "white", "#fff", "#ffffff"} and not body_stroke:
+        issues.append("pelican-body has too little contrast against the blank canvas")
+    body_bounds = bounds["pelican-body"]
+    if min(body_bounds.width(), body_bounds.height(), head_bounds.width(), head_bounds.height()) <= 0:
+        issues.append("pelican body/head must have non-empty rendered silhouettes")
+    elif wheel_distance > 0:
+        if body_bounds.height() < wheel_distance * 0.19:
+            issues.append("pelican-body is too flat to read as a bird torso")
+        if body_bounds.width() > wheel_distance * 0.58:
+            issues.append("pelican-body is too wide and overwhelms the bicycle")
+        if body_bounds.center().x() >= head_bounds.center().x() + head_size * 0.25:
+            issues.append("pelican-body must sit behind and connect visually to the forward-facing head")
+    vertical_gap = max(
+        0.0,
+        max(body_bounds.top(), head_bounds.top()) - min(body_bounds.bottom(), head_bounds.bottom()),
+    )
+    if vertical_gap > head_size * 0.25:
+        issues.append("pelican-head is detached from the body instead of forming one rider silhouette")
+
+    wing = semantic_elements["pelican-wing"]
+    wing_fill = _svg_presentation_value(wing, "fill", parents, css_rules).casefold()
+    if wing_fill in {"", "none", "transparent"}:
+        issues.append("pelican-wing must have a visible fill")
+    wing_bounds = bounds["pelican-wing"]
+    wing_area = max(1.0, wing_bounds.width() * wing_bounds.height())
+    wing_overlap = body_bounds.intersected(wing_bounds)
+    if wing_overlap.width() * wing_overlap.height() < wing_area * 0.5:
+        issues.append("pelican-wing must sit mostly inside the body silhouette")
+
+    pouch = semantic_elements["pelican-pouch"]
+    pouch_path = pouch.attrib.get("d", "")
+    if not re.search(r"[cqst]", pouch_path, re.I) or not re.search(r"z\s*$", pouch_path, re.I):
+        issues.append("pelican-pouch must be a closed curved shape")
+    if _svg_presentation_value(pouch, "fill", parents, css_rules).casefold() in {"", "none", "transparent"}:
+        issues.append("pelican-pouch must have a visible fill")
+    pouch_bounds = bounds["pelican-pouch"]
+    if pouch_bounds.width() > head_size * 3.0 or pouch_bounds.top() <= head_bounds.center().y():
+        issues.append("pelican-pouch must be a compact throat shape hanging below the head/bill")
+
+    saddle_bounds = bounds["bicycle-saddle"]
+    handlebar_bounds = bounds["bicycle-handlebar"]
+    pedal_bounds = bounds["bicycle-pedals"]
+    near_leg_bounds = bounds["pelican-leg-near"]
+    far_leg_bounds = bounds["pelican-leg-far"]
+    rider_parts = {
+        "bicycle-saddle": saddle_bounds,
+        "bicycle-handlebar": handlebar_bounds,
+        "bicycle-pedals": pedal_bounds,
+        "pelican-leg-near": near_leg_bounds,
+        "pelican-leg-far": far_leg_bounds,
+    }
+    for part_id, rect in rider_parts.items():
+        if rect.width() <= 0 or rect.height() <= 0:
+            issues.append(f"{part_id} must be a visible non-empty shape")
+    if handlebar_bounds.center().x() <= saddle_bounds.center().x():
+        issues.append("bicycle-handlebar must be ahead of the saddle")
+    if near_leg_bounds.intersected(body_bounds).isEmpty() or near_leg_bounds.intersected(saddle_bounds).isEmpty():
+        issues.append("pelican-leg-near must visibly connect the body to the saddle")
+    if far_leg_bounds.intersected(body_bounds).isEmpty() or far_leg_bounds.intersected(pedal_bounds).isEmpty():
+        issues.append("pelican-leg-far must visibly connect the body to the pedals")
+
+    reaching_wing = semantic_elements["pelican-wing-reaching"]
+    reaching_wing_path = reaching_wing.attrib.get("d", "")
+    reaching_wing_fill = _svg_presentation_value(reaching_wing, "fill", parents, css_rules).casefold()
+    svg_number = r"([-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?)"
+    wing_tip_match = re.match(
+        rf"\s*M\s*{svg_number}[\s,]+{svg_number}\s+C\s*"
+        rf"{svg_number}[\s,]+{svg_number}[\s,]+{svg_number}[\s,]+{svg_number}[\s,]+{svg_number}[\s,]+{svg_number}",
+        reaching_wing_path,
+        re.I,
+    )
+    wing_tip = (float(wing_tip_match.group(7)), float(wing_tip_match.group(8))) if wing_tip_match else None
+    reaching_wing_bounds = bounds["pelican-wing-reaching"]
+    handlebar_contact_area = handlebar_bounds.adjusted(-2, -2, 2, 2)
+    if (
+        _svg_tag_name(reaching_wing) != "path"
+        or not re.search(r"[cq]", reaching_wing_path, re.I)
+        or not re.search(r"z\s*$", reaching_wing_path, re.I)
+        or reaching_wing_fill in {"", "none", "transparent"}
+        or wing_tip is None
+        or not handlebar_contact_area.contains(*wing_tip)
+        or reaching_wing_bounds.intersected(body_bounds).isEmpty()
+    ):
+        issues.append(
+            "pelican-wing-reaching must be a closed filled curve that starts at the shoulder "
+            "and visibly reaches the handlebar"
+        )
+
+    frame = semantic_elements["bicycle-frame"]
+    frame_stroke = _svg_presentation_value(frame, "stroke", parents, css_rules)
+    if not frame_stroke or frame_stroke.casefold() in {"none", "transparent"}:
+        issues.append("SVG bicycle frame needs a visible stroke")
+    frame_numbers = [
+        float(value)
+        for value in re.findall(r"[-+]?(?:\d*\.\d+|\d+\.?\d*)", frame.attrib.get("points", ""))
+    ]
+    frame_points = list(zip(frame_numbers[::2], frame_numbers[1::2]))
+    if len(frame_numbers) < 6 or len(frame_numbers) % 2:
+        issues.append("SVG bicycle frame polyline has too few valid points")
+    elif left_radius > 0 and right_radius > 0:
+        hub_tolerance = max(1.0, min(left_radius, right_radius) * 0.25)
+        if not any(math.hypot(x - left_x, y - left_y) <= hub_tolerance for x, y in frame_points):
+            issues.append("SVG bicycle frame must meet the rear wheel hub")
+        if not any(
+            min(left_x, right_x) < x < max(left_x, right_x)
+            and abs(y - (left_y + right_y) / 2) > min(left_radius, right_radius) * 0.5
+            for x, y in frame_points
+        ):
+            issues.append("SVG bicycle frame has no readable triangular center vertex")
+        crank_bounds = pedal_bounds
+        crank_x, crank_y = crank_bounds.center().x(), crank_bounds.center().y()
+        if not any(math.hypot(x - crank_x, y - crank_y) <= hub_tolerance for x, y in frame_points):
+            issues.append("SVG bicycle frame must meet the visible crank/pedals")
+
+        fork_bounds = bounds["bicycle-fork"]
+        point_to_rect_x = max(fork_bounds.left() - right_x, 0.0, right_x - fork_bounds.right())
+        point_to_rect_y = max(fork_bounds.top() - right_y, 0.0, right_y - fork_bounds.bottom())
+        if math.hypot(point_to_rect_x, point_to_rect_y) > hub_tolerance:
+            issues.append("bicycle-fork must visibly connect the front frame to the front wheel hub")
+        if fork_bounds.intersected(bounds["bicycle-frame"].adjusted(-hub_tolerance, -hub_tolerance, hub_tolerance, hub_tolerance)).isEmpty():
+            issues.append("bicycle-fork must join the front frame near the head tube")
+
+    spokes = semantic_elements["bicycle-spokes"]
+    spoke_segments = 0
+    for element in spokes.iter():
+        spoke_tag = _svg_tag_name(element)
+        if spoke_tag == "path":
+            spoke_segments += len(re.findall(r"[Mm]", element.attrib.get("d", "")))
+        elif spoke_tag == "line":
+            spoke_segments += 1
+        elif spoke_tag == "polyline":
+            coordinates = re.findall(
+                r"[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?",
+                element.attrib.get("points", ""),
+            )
+            spoke_segments += max(0, len(coordinates) // 2 - 1)
+    if _svg_tag_name(spokes) != "g" or spoke_segments < 8:
+        issues.append("bicycle-spokes must contain visible radial spoke lines for both wheels")
+    return issues
+
+
 def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]:
     """Validate static SVG safety and render it into a non-empty PNG preview."""
     if not source or len(source) > MAX_SVG_BYTES:
@@ -257,6 +592,8 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
 
     counts: Counter[str] = Counter()
     invalid_paints: list[str] = []
+    parents = {child: parent for parent in root.iter() for child in parent}
+    css_rules = _svg_css_rules(root)
     for element in root.iter():
         if not isinstance(element.tag, str):
             continue
@@ -269,15 +606,29 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
             or re.search(r"url\s*\(\s*(?!['\"]?#)", element.text or "", re.I)
         ):
             raise RuntimeError("external SVG stylesheets and resources are not allowed")
+        if tag == "style":
+            for _, body in re.findall(r"([^{}]+)\{([^{}]*)\}", element.text or ""):
+                for declaration in body.split(";"):
+                    property_name, separator, paint = declaration.partition(":")
+                    if separator and property_name.strip().casefold() in {"fill", "stroke", "color"}:
+                        paint = paint.strip().removesuffix("!important").strip()
+                        if not _is_valid_svg_paint(paint):
+                            invalid_paints.append(f"{property_name.strip().casefold()}={paint}")
         for raw_name, value in element.attrib.items():
             name = raw_name.rsplit("}", 1)[-1].casefold()
             if name.startswith("on"):
                 raise RuntimeError(f"SVG event handler is not allowed: {name}")
             if name in {"fill", "stroke", "color"}:
                 paint = value.strip()
-                if paint.casefold() not in {"none", "currentcolor", "inherit", "context-fill", "context-stroke"}:
-                    if not re.fullmatch(r"url\(\s*['\"]?#[-A-Za-z0-9_.]+['\"]?\s*\)", paint) and not QColor(paint).isValid():
-                        invalid_paints.append(f"{name}={paint}")
+                if not _is_valid_svg_paint(paint):
+                    invalid_paints.append(f"{name}={paint}")
+            if name == "style":
+                for declaration in value.split(";"):
+                    property_name, separator, paint = declaration.partition(":")
+                    if separator and property_name.strip().casefold() in {"fill", "stroke", "color"}:
+                        paint = paint.strip().removesuffix("!important").strip()
+                        if not _is_valid_svg_paint(paint):
+                            invalid_paints.append(f"{property_name.strip().casefold()}={paint}")
             if name in {"href", "src"} and value.strip() and not value.strip().startswith("#"):
                 raise RuntimeError("external SVG resources are not allowed")
             if re.search(r"url\s*\(\s*(?!['\"]?#)", value, re.I) or (
@@ -357,6 +708,7 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         "left-wheel": ({"circle"}, "a circle"),
         "right-wheel": ({"circle"}, "a circle"),
         "bicycle-frame": ({"polyline"}, "a connected polyline"),
+        "bicycle-fork": ({"path", "polyline", "line"}, "a visible path or line"),
         "bicycle-spokes": ({"g"}, "a group containing spoke shapes"),
         "pelican-head": ({"circle", "ellipse"}, "a circle or ellipse"),
         "pelican-eye": ({"circle"}, "a circle"),
@@ -367,22 +719,38 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         "pelican-wing-reaching": ({"path"}, "a curved path"),
     }
     malformed_parts = []
+    semantic_elements: dict[str, ET.Element] = {}
     for identifier, (allowed_tags, description) in expected_tags.items():
         element = identified_elements.get(identifier)
         if element is None:
             continue
-        actual_tag = element.tag.rsplit("}", 1)[-1].casefold()
-        if actual_tag not in allowed_tags:
-            malformed_parts.append(f"{identifier} must be {description} (got {actual_tag})")
+        shape = _resolve_svg_semantic_shape(element, allowed_tags)
+        if shape is None:
+            malformed_parts.append(f"{identifier} must be {description} (got {_svg_tag_name(element)})")
+        else:
+            semantic_elements[identifier] = shape
     malformed_parts.extend(f"invalid paint {paint}" for paint in invalid_paints[:6])
     for wheel_id in ("left-wheel", "right-wheel"):
-        wheel = identified_elements.get(wheel_id)
-        if wheel is None or wheel.tag.rsplit("}", 1)[-1].casefold() != "circle":
+        wheel = semantic_elements.get(wheel_id)
+        if wheel is None:
             continue
-        fill = wheel.attrib.get("fill", "").strip().casefold()
-        stroke = wheel.attrib.get("stroke", "").strip()
+        fill = _svg_presentation_value(wheel, "fill", parents, css_rules).casefold()
+        stroke = _svg_presentation_value(wheel, "stroke", parents, css_rules)
         if fill not in {"none", "white", "#fff", "#ffffff"} or not stroke or stroke.casefold() in {"none", "transparent"}:
             malformed_parts.append(f"{wheel_id} must be an unfilled, visibly outlined tire")
+    clipped_parts = []
+    for identifier in sorted(required_parts & identified_elements.keys()):
+        bounds = renderer.boundsOnElement(identifier)
+        if bounds.width() <= 0 or bounds.height() <= 0:
+            continue
+        if (
+            bounds.left() < view_x - 0.5
+            or bounds.top() < view_y - 0.5
+            or bounds.right() > view_x + view_width + 0.5
+            or bounds.bottom() > view_y + view_height + 0.5
+        ):
+            clipped_parts.append(f"{identifier} is clipped by the viewBox")
+    malformed_parts.extend(clipped_parts)
     if viewbox_problem or missing_parts or malformed_parts or duplicate_ids:
         raise RuntimeError(
             f"SVG preflight failed; {viewbox_problem or 'viewBox dimensions are adequate'}; "
@@ -391,212 +759,18 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
             f"malformed={malformed_parts}; duplicate_ids={duplicate_ids}; "
             f"near_matches={near_matches}"
         )
-    wheel_data = []
-    for wheel_id in ("left-wheel", "right-wheel"):
-        wheel = identified_elements[wheel_id]
-        if wheel.tag.rsplit("}", 1)[-1].casefold() != "circle":
-            raise RuntimeError(f"SVG {wheel_id} must be drawn as a circle")
-        try:
-            wheel_data.append(tuple(float(wheel.attrib[key]) for key in ("cx", "cy", "r")))
-        except (KeyError, ValueError) as exc:
-            raise RuntimeError(f"SVG {wheel_id} has invalid circle geometry") from exc
-    (left_x, left_y, left_radius), (right_x, right_y, right_radius) = wheel_data
-    if left_radius <= 0 or right_radius <= 0:
-        raise RuntimeError("SVG bicycle wheels must have positive radii")
-    for wheel_id in ("left-wheel", "right-wheel"):
-        wheel = identified_elements[wheel_id]
-        fill = wheel.attrib.get("fill", "").strip().casefold()
-        stroke = wheel.attrib.get("stroke", "").strip()
-        if fill not in {"none", "white", "#fff", "#ffffff"} or not stroke or stroke.casefold() in {"none", "transparent"}:
-            raise RuntimeError(f"SVG {wheel_id} must be a visibly outlined, unfilled tire")
-    wheel_distance = math.hypot(right_x - left_x, right_y - left_y)
-    if wheel_distance < 0.9 * (left_radius + right_radius):
-        raise RuntimeError("SVG bicycle wheels overlap instead of forming a readable bicycle")
-    if abs(right_y - left_y) > 0.35 * (left_radius + right_radius):
-        raise RuntimeError("SVG bicycle wheels are not aligned at a readable height")
-    head = identified_elements["pelican-head"]
-    head_tag = head.tag.rsplit("}", 1)[-1].casefold()
-    if head_tag == "circle":
-        head_size = float(head.attrib.get("r", "0"))
-    elif head_tag == "ellipse":
-        head_size = min(float(head.attrib.get("rx", "0")), float(head.attrib.get("ry", "0")))
-    else:
-        raise RuntimeError("pelican-head must be a distinct circle or ellipse, not an abstract path")
-    if head_size < 8:
-        raise RuntimeError("pelican-head is too small to read as a head")
-    eye = identified_elements["pelican-eye"]
-    if eye.tag.rsplit("}", 1)[-1].casefold() != "circle" or float(eye.attrib.get("r", "0")) < 2:
-        raise RuntimeError("pelican-eye must be a visible small circle, not omitted decoration")
-    eye_fill = eye.attrib.get("fill", "#000000").strip().casefold()
-    if eye_fill in {"none", "transparent", "white", "#fff", "#ffffff"}:
-        raise RuntimeError("pelican-eye must use a visible dark fill")
-    beak = identified_elements["pelican-beak"]
-    if beak.tag.rsplit("}", 1)[-1].casefold() != "polygon":
-        raise RuntimeError("pelican-beak must be a distinct pointed polygon")
-    beak_numbers = [float(value) for value in re.findall(r"[-+]?(?:\d*\.\d+|\d+\.?\d*)", beak.attrib.get("points", ""))]
-    if len(beak_numbers) < 6 or len(beak_numbers) % 2:
-        raise RuntimeError("pelican-beak polygon has too few valid points")
-    if max(beak_numbers[::2]) - min(beak_numbers[::2]) < max(60, head_size * 2.5):
-        raise RuntimeError("pelican-beak is too short relative to the head to read as a long pelican bill")
-    head_fill = head.attrib.get("fill", "black").strip().casefold()
-    if head_fill in {"none", "transparent"}:
-        raise RuntimeError("pelican-head needs a filled silhouette, not an empty outlined ring")
-    body = identified_elements["pelican-body"]
-    body_tag = body.tag.rsplit("}", 1)[-1].casefold()
-    if body_tag not in {"path", "ellipse"}:
-        raise RuntimeError("pelican-body must be an organic path or ellipse, not a group or box")
-    if body_tag == "path" and not re.search(r"[cqst]", body.attrib.get("d", ""), re.I):
-        raise RuntimeError("pelican-body path must use curved geometry rather than a rectangle-like polygon")
-    body_fill = body.attrib.get("fill", "").strip().casefold()
-    if body_fill in {"", "none", "white", "#fff", "#ffffff"} and not body.attrib.get("stroke"):
-        raise RuntimeError("pelican-body has too little contrast against the blank canvas")
-    wing = identified_elements["pelican-wing"]
-    if wing.tag.rsplit("}", 1)[-1].casefold() not in {"path", "ellipse", "polygon"}:
-        raise RuntimeError("pelican-wing must be a filled, recognizable shape")
-    if wing.attrib.get("fill", "").strip().casefold() in {"", "none", "transparent"}:
-        raise RuntimeError("pelican-wing must have a visible fill")
-    pouch = identified_elements["pelican-pouch"]
-    if pouch.tag.rsplit("}", 1)[-1].casefold() != "path":
-        raise RuntimeError("pelican-pouch must be a curved filled path, not a box")
-    if not re.search(r"[cqst]", pouch.attrib.get("d", ""), re.I) or not re.search(r"z\s*$", pouch.attrib.get("d", ""), re.I):
-        raise RuntimeError("pelican-pouch must be a closed curved shape")
-    if pouch.attrib.get("fill", "").strip().casefold() in {"", "none", "transparent"}:
-        raise RuntimeError("pelican-pouch must have a visible fill")
-    body_bounds = renderer.boundsOnElement("pelican-body")
-    head_bounds = renderer.boundsOnElement("pelican-head")
-    wing_bounds = renderer.boundsOnElement("pelican-wing")
-    pouch_bounds = renderer.boundsOnElement("pelican-pouch")
-    if min(body_bounds.width(), body_bounds.height(), head_bounds.width(), head_bounds.height()) <= 0:
-        raise RuntimeError("pelican body/head must have non-empty rendered silhouettes")
-    if body_bounds.height() < wheel_distance * 0.19:
-        raise RuntimeError("pelican-body is too flat to read as a bird torso")
-    if body_bounds.width() > wheel_distance * 0.58:
-        raise RuntimeError("pelican-body is too wide and overwhelms the bicycle")
-    if body_bounds.center().x() >= head_bounds.center().x() + head_size * 0.25:
-        raise RuntimeError("pelican-body must sit behind and connect visually to the forward-facing head")
-    vertical_gap = max(
-        0.0,
-        max(body_bounds.top(), head_bounds.top()) - min(body_bounds.bottom(), head_bounds.bottom()),
+    geometry_issues = _collect_illustration_geometry_issues(
+        semantic_elements,
+        identified_elements,
+        renderer,
+        parents,
+        css_rules,
     )
-    if vertical_gap > head_size * 0.25:
-        raise RuntimeError("pelican-head is detached from the body instead of forming one rider silhouette")
-    wing_area = max(1.0, wing_bounds.width() * wing_bounds.height())
-    wing_overlap = body_bounds.intersected(wing_bounds)
-    if wing_overlap.width() * wing_overlap.height() < wing_area * 0.5:
-        raise RuntimeError("pelican-wing must sit mostly inside the body silhouette")
-    if pouch_bounds.width() > head_size * 3.0 or pouch_bounds.top() <= head_bounds.center().y():
-        raise RuntimeError("pelican-pouch must be a compact throat shape hanging below the head/bill")
-    saddle_bounds = renderer.boundsOnElement("bicycle-saddle")
-    handlebar_bounds = renderer.boundsOnElement("bicycle-handlebar")
-    pedal_bounds = renderer.boundsOnElement("bicycle-pedals")
-    near_leg_bounds = renderer.boundsOnElement("pelican-leg-near")
-    far_leg_bounds = renderer.boundsOnElement("pelican-leg-far")
-    rider_parts = {
-        "bicycle-saddle": saddle_bounds,
-        "bicycle-handlebar": handlebar_bounds,
-        "bicycle-pedals": pedal_bounds,
-        "pelican-leg-near": near_leg_bounds,
-        "pelican-leg-far": far_leg_bounds,
-    }
-    for part_id, bounds in rider_parts.items():
-        if bounds.width() <= 0 or bounds.height() <= 0:
-            raise RuntimeError(f"{part_id} must be a visible non-empty shape")
-    if handlebar_bounds.center().x() <= saddle_bounds.center().x():
-        raise RuntimeError("bicycle-handlebar must be ahead of the saddle")
-    if (
-        near_leg_bounds.intersected(body_bounds).isEmpty()
-        or near_leg_bounds.intersected(saddle_bounds).isEmpty()
-    ):
-        raise RuntimeError("pelican-leg-near must visibly connect the body to the saddle")
-    if (
-        far_leg_bounds.intersected(body_bounds).isEmpty()
-        or far_leg_bounds.intersected(pedal_bounds).isEmpty()
-    ):
-        raise RuntimeError("pelican-leg-far must visibly connect the body to the pedals")
-    reaching_wing_bounds = renderer.boundsOnElement("pelican-wing-reaching")
-    reaching_wing = identified_elements["pelican-wing-reaching"]
-    reaching_wing_path = reaching_wing.attrib.get("d", "")
-    reaching_wing_fill = reaching_wing.attrib.get("fill", "").strip().casefold()
-    svg_number = r"([-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?)"
-    wing_tip_match = re.match(
-        rf"\s*M\s*{svg_number}[\s,]+{svg_number}\s+C\s*"
-        rf"{svg_number}[\s,]+{svg_number}[\s,]+{svg_number}[\s,]+{svg_number}[\s,]+{svg_number}[\s,]+{svg_number}",
-        reaching_wing_path,
-        re.I,
-    )
-    wing_tip = (float(wing_tip_match.group(7)), float(wing_tip_match.group(8))) if wing_tip_match else None
-    handlebar_contact_area = handlebar_bounds.adjusted(-2, -2, 2, 2)
-    if (
-        reaching_wing.tag.rsplit("}", 1)[-1].casefold() != "path"
-        or not re.search(r"[cq]", reaching_wing_path, re.I)
-        or not re.search(r"z\s*$", reaching_wing_path, re.I)
-        or reaching_wing_fill in {"", "none", "transparent"}
-        or wing_tip is None
-        or not handlebar_contact_area.contains(*wing_tip)
-        or reaching_wing_bounds.intersected(body_bounds).isEmpty()
-    ):
+    if geometry_issues:
         raise RuntimeError(
-            "pelican-wing-reaching must be a closed filled curve that starts at the shoulder "
-            "and visibly reaches the handlebar"
+            "SVG visual checks failed; invalid paint colors=[]; missing=[]; "
+            f"malformed={geometry_issues}; duplicate_ids=[]; near_matches={{}}"
         )
-    for wheel_id, (wheel_x, wheel_y, wheel_radius) in zip(("left-wheel", "right-wheel"), wheel_data):
-        if (
-            wheel_x - wheel_radius < view_x
-            or wheel_x + wheel_radius > view_x + view_width
-            or wheel_y - wheel_radius < view_y
-            or wheel_y + wheel_radius > view_y + view_height
-        ):
-            raise RuntimeError(f"SVG {wheel_id} is clipped by the viewBox")
-
-    frame = identified_elements["bicycle-frame"]
-    if frame.tag.rsplit("}", 1)[-1].casefold() != "polyline":
-        raise RuntimeError("SVG bicycle frame must be a connected polyline through both wheel hubs")
-    frame_stroke = frame.attrib.get("stroke", "").strip()
-    if not frame_stroke or frame_stroke.casefold() in {"none", "transparent"}:
-        raise RuntimeError("SVG bicycle frame needs a visible stroke")
-    frame_numbers = [float(value) for value in re.findall(r"[-+]?(?:\d*\.\d+|\d+\.?\d*)", frame.attrib.get("points", ""))]
-    if len(frame_numbers) < 6 or len(frame_numbers) % 2:
-        raise RuntimeError("SVG bicycle frame polyline has too few valid points")
-    frame_points = list(zip(frame_numbers[::2], frame_numbers[1::2]))
-    hub_tolerance = max(1.0, min(left_radius, right_radius) * 0.25)
-    if not any(math.hypot(x - left_x, y - left_y) <= hub_tolerance for x, y in frame_points):
-        raise RuntimeError("SVG bicycle frame must meet the rear wheel hub")
-    crank_bounds = renderer.boundsOnElement("bicycle-pedals")
-    if not any(
-        min(left_x, right_x) < x < max(left_x, right_x)
-        and abs(y - (left_y + right_y) / 2) > min(left_radius, right_radius) * 0.5
-        for x, y in frame_points
-    ):
-        raise RuntimeError("SVG bicycle frame has no readable triangular center vertex")
-    crank_x = crank_bounds.center().x()
-    crank_y = crank_bounds.center().y()
-    if not any(math.hypot(x - crank_x, y - crank_y) <= hub_tolerance for x, y in frame_points):
-        raise RuntimeError("SVG bicycle frame must meet the visible crank/pedals")
-    fork = identified_elements["bicycle-fork"]
-    fork_bounds = renderer.boundsOnElement("bicycle-fork")
-    if fork.tag.rsplit("}", 1)[-1].casefold() not in {"path", "polyline", "line"}:
-        raise RuntimeError("bicycle-fork must be a visible path/line from head tube to front hub")
-    if (
-        fork_bounds.right() < right_x - hub_tolerance
-        or fork_bounds.bottom() < right_y - hub_tolerance
-        or fork_bounds.left() > right_x - right_radius * 0.35
-    ):
-        raise RuntimeError("bicycle-fork must visibly connect the front frame to the front wheel hub")
-    spokes = identified_elements["bicycle-spokes"]
-    spoke_segments = 0
-    for element in spokes.iter():
-        if not isinstance(element.tag, str):
-            continue
-        spoke_tag = element.tag.rsplit("}", 1)[-1].casefold()
-        if spoke_tag == "path":
-            spoke_segments += len(re.findall(r"[Mm]", element.attrib.get("d", "")))
-        elif spoke_tag == "line":
-            spoke_segments += 1
-        elif spoke_tag == "polyline":
-            coordinates = re.findall(r"[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?", element.attrib.get("points", ""))
-            spoke_segments += max(0, len(coordinates) // 2 - 1)
-    if spokes.tag.rsplit("}", 1)[-1].casefold() != "g" or spoke_segments < 8:
-        raise RuntimeError("bicycle-spokes must contain visible radial spoke lines for both wheels")
     return {
         "svg_bytes": len(source),
         "intrinsic_width": default_size.width(),

@@ -1576,6 +1576,11 @@ class SvgArtifactAdapter:
     """Recover an explicitly requested SVG when a model returns it as fenced XML."""
 
     _REQUEST_VERBS = re.compile(r"\b(generate|create|draw|make|produce)\b|生成|绘制|制作|画", re.IGNORECASE)
+    _REPAIR_DIRECTIVE = re.compile(
+        r"\b(?:repair|fix|edit|revise|adjust)\s+(?:only|the|this|existing|current|listed|reported|duplicate)\b"
+        r"|(?:修复|修改|编辑)(?:现有|当前|指定|列出|此|该)?",
+        re.IGNORECASE,
+    )
     _SVG_BLOCK = re.compile(r"```(?:svg|xml)\s*(.*?)```", re.IGNORECASE | re.DOTALL)
     _TOOL_RESPONSE = re.compile(r"\s*<tool_response>\s*(.*?)\s*</tool_response>\s*", re.IGNORECASE | re.DOTALL)
     _RAW_SVG = re.compile(r"\A(?:<\?xml\s+[^?]*\?>\s*)?<svg\b.*</svg\s*>\Z", re.IGNORECASE | re.DOTALL)
@@ -1583,8 +1588,20 @@ class SvgArtifactAdapter:
     _ACTIVE_ELEMENTS = {"script", "foreignobject", "iframe", "object", "embed"}
 
     @classmethod
+    def is_repair_request(cls, prompt: str) -> bool:
+        return bool("svg" in prompt.casefold() and cls._REPAIR_DIRECTIVE.search(prompt))
+
+    @classmethod
     def is_creation_request(cls, prompt: str) -> bool:
-        return bool(cls._REQUEST_VERBS.search(prompt) and "svg" in prompt.casefold())
+        return bool(
+            not cls.is_repair_request(prompt)
+            and cls._REQUEST_VERBS.search(prompt)
+            and "svg" in prompt.casefold()
+        )
+
+    @classmethod
+    def is_svg_artifact_request(cls, prompt: str) -> bool:
+        return cls.is_creation_request(prompt) or cls.is_repair_request(prompt)
 
     @classmethod
     def _recover_complete_svg_from_tool_text(cls, candidate: str) -> tuple[str, str] | None:
@@ -1687,8 +1704,9 @@ class SvgArtifactAdapter:
 
     @classmethod
     def create_tool_call(cls, prompt: str, response: str, project_root: Path) -> dict[str, Any] | None:
-        """Return a normal write_file call only for one clear, safe SVG artifact."""
-        if not cls.is_creation_request(prompt):
+        """Recover one safe SVG creation or an explicitly scoped edit of an existing SVG."""
+        repair_request = cls.is_repair_request(prompt)
+        if not cls.is_creation_request(prompt) and not repair_request:
             return None
         payload = cls._extract_svg_payload(response)
         if payload is None:
@@ -1733,20 +1751,39 @@ class SvgArtifactAdapter:
             re.I,
         )
         existing_targets = re.findall(filename_pattern, prompt, re.I)
-        overwrite_target = next(
-            (
-                name
-                for name in existing_targets
-                if cls._SAFE_FILENAME.fullmatch(name)
-                and re.search(rf"\bexisting\s+`?{re.escape(name)}\b`?", prompt, re.I)
-            ),
-            "",
-        )
+        workspace = Path(project_root).resolve()
+        overwrite_target = ""
+        if repair_request:
+            target_match = re.search(
+                r"\bin\s+`?([A-Za-z0-9][A-Za-z0-9_.-]{0,79}\.svg)`?\b",
+                prompt,
+                re.IGNORECASE,
+            )
+            if not target_match:
+                return None
+            overwrite_target = target_match.group(1)
+            target_path = (workspace / overwrite_target).resolve()
+            if (
+                not cls._SAFE_FILENAME.fullmatch(overwrite_target)
+                or workspace not in target_path.parents
+                or not target_path.is_file()
+                or (payload_filename and payload_filename.casefold() != overwrite_target.casefold())
+            ):
+                return None
+        else:
+            overwrite_target = next(
+                (
+                    name
+                    for name in existing_targets
+                    if cls._SAFE_FILENAME.fullmatch(name)
+                    and re.search(rf"\bexisting\s+`?{re.escape(name)}\b`?", prompt, re.I)
+                ),
+                "",
+            )
         filename = overwrite_target or payload_filename or next(
             (name for name in reversed(names) if cls._SAFE_FILENAME.fullmatch(name)),
             "generated.svg",
         )
-        workspace = Path(project_root).resolve()
         candidate = filename
         suffix = 1
         while (
@@ -1782,6 +1819,8 @@ class CodingAgent:
 最高优先级：用户明确要求“生成、绘制或制作”可保存文件时，这本身就是创建文件的授权。立即选用清楚的文件名并在工作区根目录调用 write_file；不要先列目录再询问路径、文件名、默认尺寸或风格。只有目标存在会实质改变结果的歧义，或操作超出工作区/授权范围时才询问。只有任务依赖现有文件时才调用 list_files。
 
 Creation-task directive: A request to generate, draw, or create a file is sufficient authorization. Immediately create the requested artifact in the workspace root with a sensible filename using write_file. Do not ask for a filename, directory, style, or dimensions when reasonable defaults work. Do not use shell commands or downloads for a simple SVG/artwork. Make the file visibly depict the requested subject rather than a generic placeholder.
+
+Edit-task directive: When the current request asks to repair or edit an existing file, treat quoted/original creation requests as context, not as a new-file instruction. Preserve unaffected content and make only the requested changes; replace the whole file only when the requested repair genuinely requires it.
 
 SVG illustration quality: identify the features that make each requested subject recognizable and show how its parts relate; use distinct, coherent shapes rather than arbitrary blobs or boxes. When objects interact, make contact, alignment, scale, and pose visually legible instead of merely juxtaposing unrelated silhouettes. Preserve defining anatomy and posture for any named biological subject without inventing unrequested features. Keep meaningful geometry inside the viewBox; avoid clipping and overlaps that hide important parts. Use balanced whitespace, clear contrast, and a restrained palette. For complex SVGs, give major visible parts unique semantic IDs; labels never substitute for visible features. Never claim an SVG was rendered or visually verified unless an actual rendering/validation tool result confirms it.
 
@@ -1840,7 +1879,7 @@ If you include a complete SVG in your reply, still call write_file to save it; a
 
     def _tool_definitions_for_prompt(self, prompt: str) -> list[dict[str, Any]]:
         definitions = self.toolbox.definitions()
-        if not SvgArtifactAdapter.is_creation_request(prompt) or self.EXPLICIT_COMMAND_INTENT.search(prompt):
+        if not SvgArtifactAdapter.is_svg_artifact_request(prompt) or self.EXPLICIT_COMMAND_INTENT.search(prompt):
             return definitions
         return [
             definition

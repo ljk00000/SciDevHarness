@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from scidev_core import SvgArtifactAdapter
 from scripts.smoke_pelican_svg import (
     PELICAN_PROMPT,
     _TimedResponse,
@@ -226,7 +228,9 @@ class PelicanSvgTests(unittest.TestCase):
 
     def test_repair_prompt_requests_a_minimal_focused_edit(self) -> None:
         prompt = pelican_repair_prompt("pelican_bicycle.svg", "missing a visible pelican eye")
-        self.assertIn(PELICAN_PROMPT, prompt)
+        self.assertNotIn("Original task:", prompt)
+        self.assertTrue(SvgArtifactAdapter.is_repair_request(prompt))
+        self.assertFalse(SvgArtifactAdapter.is_creation_request(prompt))
         self.assertIn("Read the current SVG", prompt)
         self.assertIn("smallest exact `replace_in_file`", prompt)
         self.assertNotIn('id="left-wheel"', prompt)
@@ -283,6 +287,25 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertIn("body is a curved `<path>` or `<ellipse>`", prompt)
         self.assertIn("ochre `#e4b35b`", prompt)
 
+    def test_many_geometry_errors_use_one_targeted_multi_shape_repair(self) -> None:
+        reason = (
+            "SVG visual checks failed; invalid paint colors=[]; missing=['pelican-head']; malformed=["
+            "'pelican-beak is too short relative to the head', 'pelican-body is too wide', "
+            "'pelican-pouch must be a closed curved shape', 'pelican-leg-near must connect to the saddle', "
+            "'pelican-leg-far must connect to the pedals', 'pelican-wing-reaching must reach the handlebar', "
+            "'SVG bicycle frame must meet the visible crank/pedals', "
+            "'bicycle-fork must visibly connect the front frame to the front wheel hub', "
+            "'bicycle-spokes must contain visible radial spoke lines']; duplicate_ids=[]"
+        )
+        prompt = pelican_repair_prompt("pelican_bicycle.svg", reason)
+        self.assertIn("Repair only the listed missing parts and geometry", prompt)
+        self.assertIn("Add missing `pelican-head`", prompt)
+        self.assertIn("Lengthen the tapered bill", prompt)
+        self.assertIn("Connect the far leg", prompt)
+        self.assertIn("at least four radial spoke segments", prompt)
+        self.assertIn("edit only its child shape", prompt)
+        self.assertNotIn("complete, polished", prompt)
+
     def test_duplicate_id_only_uses_a_targeted_repair_prompt(self) -> None:
         prompt = pelican_repair_prompt(
             "pelican_bicycle.svg",
@@ -300,10 +323,24 @@ class PelicanSvgTests(unittest.TestCase):
             "malformed=['invalid paint fill=ochre', 'left-wheel must be an unfilled, visibly outlined tire', "
             "'right-wheel must be an unfilled, visibly outlined tire']; duplicate_ids=[]",
         )
-        self.assertIn("Repair only SVG paint/fill errors", prompt)
+        self.assertIn("Repair only these localized SVG issues", prompt)
         self.assertIn('fill="none"', prompt)
         self.assertIn("ochre `#e4b35b`", prompt)
-        self.assertIn("Preserve every path, position", prompt)
+        self.assertIn("preserve the existing drawing", prompt)
+        self.assertNotIn("complete, polished", prompt)
+
+    def test_local_repair_combines_paint_and_viewbox_fixes_without_redrawing(self) -> None:
+        prompt = pelican_repair_prompt(
+            "pelican_bicycle.svg",
+            "invalid paint colors=['fill=ochre']; missing=[]; malformed=["
+            "'invalid paint fill=ochre', 'left-wheel must be an unfilled, visibly outlined tire', "
+            "'bicycle-frame is clipped by the viewBox']; duplicate_ids=[]",
+        )
+        self.assertIn("Repair only these localized SVG issues", prompt)
+        self.assertIn("valid hex color", prompt)
+        self.assertIn('fill=\"none\"', prompt)
+        self.assertIn("bicycle-frame", prompt)
+        self.assertIn("preserving their connections and proportions", prompt)
         self.assertNotIn("complete, polished", prompt)
 
     def test_missing_wheel_feedback_shows_prefixed_id_near_matches(self) -> None:
@@ -537,6 +574,67 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertIn("invalid paint colors", message)
         self.assertIn("left-wheel must be an unfilled, visibly outlined tire", message)
         self.assertIn("right-wheel must be an unfilled, visibly outlined tire", message)
+
+    def test_invalid_paint_in_inline_style_is_rejected(self) -> None:
+        invalid = VALID_PELICAN_SVG.replace(
+            b'fill="#f4a261"/>',
+            b'fill="#f4a261" style="fill:bad-color"/>',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "invalid paint fill=bad-color"):
+                validate_and_render_svg(invalid, Path(temporary) / "preview.png")
+
+    def test_semantic_shape_ids_on_group_wrappers_and_inherited_wheel_styles_are_valid(self) -> None:
+        namespace = "http://www.w3.org/2000/svg"
+        ET.register_namespace("", namespace)
+        root = ET.fromstring(VALID_PELICAN_SVG)
+        wrapped_ids = (
+            "left-wheel",
+            "right-wheel",
+            "bicycle-frame",
+            "bicycle-fork",
+            "pelican-head",
+            "pelican-eye",
+            "pelican-beak",
+            "pelican-body",
+            "pelican-wing",
+            "pelican-pouch",
+            "pelican-wing-reaching",
+        )
+        for identifier in wrapped_ids:
+            parents = {child: parent for parent in root.iter() for child in parent}
+            shape = next(element for element in root.iter() if element.attrib.get("id") == identifier)
+            parent = parents[shape]
+            index = list(parent).index(shape)
+            shape.attrib.pop("id")
+            wrapper_attributes = {"id": identifier}
+            if identifier in {"left-wheel", "right-wheel"}:
+                shape.attrib.pop("fill", None)
+                shape.attrib.pop("stroke", None)
+                wrapper_attributes["class"] = "wheel"
+            wrapper = ET.Element(f"{{{namespace}}}g", wrapper_attributes)
+            parent.remove(shape)
+            parent.insert(index, wrapper)
+            wrapper.append(shape)
+
+        definitions = ET.Element(f"{{{namespace}}}defs")
+        stylesheet = ET.SubElement(definitions, f"{{{namespace}}}style")
+        stylesheet.text = ".wheel { fill:none; stroke:#27374a; }"
+        root.insert(0, definitions)
+        wrapped = ET.tostring(root, encoding="utf-8")
+        with tempfile.TemporaryDirectory() as temporary:
+            result = validate_and_render_svg(wrapped, Path(temporary) / "preview.png")
+        self.assertGreater(result["non_background_samples"], 25)
+
+    def test_core_shape_clipped_outside_viewbox_is_reported_before_acceptance(self) -> None:
+        clipped = VALID_PELICAN_SVG.replace(
+            b'points="90,150 135,95 195,100 180,150 90,150 135,95"',
+            b'points="90,150 135,95 350,100 180,150 90,150 135,95"',
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "bicycle-frame is clipped by the viewBox"):
+                validate_and_render_svg(clipped, Path(temporary) / "preview.png")
 
     def test_empty_head_ring_is_not_accepted_as_a_filled_bird_head(self) -> None:
         empty_head = VALID_PELICAN_SVG.replace(

@@ -21,6 +21,7 @@ from scidev_core import (
     RetryQueue,
     RetryableError,
     SummarySettings,
+    SvgArtifactAdapter,
 )
 
 
@@ -372,8 +373,41 @@ class CoreTests(unittest.TestCase):
                 item["function"]["name"]
                 for item in agent._tool_definitions_for_prompt("Generate an SVG and run the tests")
             }
+            repair_names = {
+                item["function"]["name"]
+                for item in agent._tool_definitions_for_prompt(
+                    "Original request: Generate an SVG. Repair only the existing drawing in pelican.svg."
+                )
+            }
             self.assertNotIn("run_command", simple_names)
             self.assertIn("run_command", explicit_names)
+            self.assertNotIn("run_command", repair_names)
+            self.assertIn("replace_in_file", repair_names)
+
+    def test_svg_repair_is_not_reclassified_as_creation_and_updates_its_named_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "pelican_bicycle.svg"
+            target.write_text('<svg xmlns="http://www.w3.org/2000/svg"/>', encoding="utf-8")
+            prompt = (
+                "Original user request (context only): Generate an SVG of a pelican riding a bicycle.\n"
+                "Repair only the listed geometry in pelican_bicycle.svg; preserve the existing drawing."
+            )
+            source = '<svg xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="5"/></svg>'
+            response = f"```svg\n{source}\n```"
+
+            self.assertTrue(SvgArtifactAdapter.is_repair_request(prompt))
+            self.assertFalse(SvgArtifactAdapter.is_creation_request(prompt))
+            self.assertTrue(SvgArtifactAdapter.is_svg_artifact_request(prompt))
+            call = SvgArtifactAdapter.create_tool_call(prompt, response, root)
+            self.assertIsNotNone(call)
+            arguments = json.loads(call["function"]["arguments"])
+            self.assertEqual(arguments["path"], target.name)
+            self.assertEqual(arguments["content"], source)
+            self.assertEqual(list(root.glob("*.svg")), [target])
+
+            missing_target_prompt = prompt.replace(target.name, "missing.svg")
+            self.assertIsNone(SvgArtifactAdapter.create_tool_call(missing_target_prompt, response, root))
 
     def test_svg_creation_without_a_file_gets_one_bounded_recovery_turn(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -688,6 +722,7 @@ class CoreTests(unittest.TestCase):
         self.assertIn("只有任务依赖现有文件时才调用 list_files", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("Do not use shell commands or downloads for a simple SVG/artwork", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("When objects interact, make contact, alignment, scale, and pose visually legible", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("treat quoted/original creation requests as context, not as a new-file instruction", CodingAgent.SYSTEM_PROMPT.casefold())
         self.assertIn("Preserve defining anatomy and posture for any named biological subject", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("give major visible parts unique semantic IDs", CodingAgent.SYSTEM_PROMPT)
         self.assertNotIn("pelican", CodingAgent.SYSTEM_PROMPT.casefold())
