@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-02 06:01（Asia/Shanghai）· 创建并发布独立公开仓库
+
+- 新建公开仓库 [ljk00000/SciDevHarness-Research-IDE](https://github.com/ljk00000/SciDevHarness-Research-IDE)，默认分支 `main`。提交 `9c91d52e46620691f51f26cd2f17ee24b20ca52b` 已上传，`git ls-remote` 与本地 SHA 一致；原有六个公开仓库未覆盖。
+- 全量 `unittest` 134/134 通过，`git diff --check` 通过。常见凭据格式历史扫描无命中；`gitleaks` 未安装，未声称完成完整凭据审计。
+- SSH 22 端口连接被 GitHub 重置；仅将新仓库 remote 改为 HTTPS，通过直连 443 与现有 `gh` 登录凭据推送，未启用代理、未更改全局 Git 配置。新仓库 Windows CI 已排队。
+
 ## 2026-10-02 05:40（Asia/Shanghai）· 批量文件编辑与固定 SVG 回归
 
 - `replace_in_file` 支持最多 50 项精确批量替换，先校验整批再单次写入；测试覆盖 CRLF 保留、失败不落盘和旧参数兼容。模型实测一次调用成功应用 11 项标签，减少拆分请求。
