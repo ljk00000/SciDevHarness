@@ -124,13 +124,15 @@ def pelican_repair_prompt(filename: str, failure_reason: str) -> str:
         clipped = [item.removesuffix(" is clipped by the viewBox") for item in malformed_parts if item.endswith(" is clipped by the viewBox")]
         if clipped:
             repair_items.append(
-                "Move or uniformly scale only these clipped shapes inside the viewBox with a clear margin, "
-                "preserving their connections and proportions: " + ", ".join(clipped) + "."
+                "Expand the viewBox just enough to contain these clipped shapes with a clear margin; "
+                "preserve their coordinates and connections, and do not translate unrelated shapes: "
+                + ", ".join(clipped)
+                + "."
             )
         guidance = "\n".join(f"- {item}" for item in repair_items)
         return f"""Repair only these localized SVG issues in {target}; preserve the existing drawing and all passing geometry. Validator: {failure_reason}
 {guidance}
-Use the smallest exact `replace_in_file` edit(s), then inspect `git_diff`; do not redraw the whole SVG or use shell."""
+Call the `replace_in_file` tool now with exact `old_string` and `new_string` arguments, then call `git_diff`. Do not print a Markdown diff or ask for confirmation instead of invoking the tools. Do not redraw the whole SVG or use shell."""
     missing_guidance = {
         "left-wheel": "Give the rear wheel its own unfilled `<circle id=\"left-wheel\">` at the rear frame hub.",
         "right-wheel": "Give the front wheel its own unfilled `<circle id=\"right-wheel\">` at the front frame hub.",
@@ -150,6 +152,15 @@ Use the smallest exact `replace_in_file` edit(s), then inspect `git_diff`; do no
         "pelican-leg-near": "Identify a leg visibly joining the body to the saddle.",
         "pelican-leg-far": "Identify a leg visibly joining the body to the pedal.",
     }
+    if (
+        len(missing_parts) >= 7
+        and not malformed_parts
+        and not duplicate_ids
+        and "viewBox dimensions are adequate" in failure_reason
+    ):
+        ids = ", ".join(f"`{part}`" for part in missing_parts)
+        return f"""The first SVG preflight found missing semantic IDs only; detailed geometry checks run after IDs are present. Repair only {target} using a targeted label-only edit for these already-visible matching shapes: {ids}.
+Preserve the existing drawing, coordinates, viewBox, colors, and layer order. Add IDs to existing shapes or wrap those shapes; do not add, move, resize, or redraw artwork in this pass. Make one `replace_in_file` call with an `edits` array containing all exact replacements; do not split the batch across turns. Do not output a full SVG or Markdown diff, and do not claim geometry is verified."""
     if missing_parts and len(missing_parts) <= 6 and not malformed_parts and not duplicate_ids:
         guidance_lines = []
         for part in missing_parts:

@@ -247,6 +247,9 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertIn("rear wheel its own unfilled `<circle id=\"left-wheel\">`", prompt)
         self.assertIn("front wheel its own unfilled `<circle id=\"right-wheel\">`", prompt)
         self.assertIn("preserve the existing drawing", prompt)
+        self.assertNotIn("Expand the viewBox", prompt)
+        self.assertIn("Make minimal `replace_in_file` edit(s)", prompt)
+        self.assertIn("do not rewrite the full SVG", prompt)
         self.assertNotIn("pelican-body", prompt)
         self.assertLess(len(prompt), 900)
 
@@ -275,6 +278,19 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertIn("Call `write_file` once", prompt)
         self.assertNotIn("preserve every passing element", prompt)
         self.assertLess(len(prompt), 1800)
+
+    def test_many_missing_ids_use_a_label_only_repair_when_viewbox_is_valid(self) -> None:
+        prompt = pelican_repair_prompt(
+            "pelican_bicycle.svg",
+            "SVG preflight failed; viewBox dimensions are adequate; missing=['left-wheel', 'right-wheel', "
+            "'bicycle-frame', 'bicycle-fork', 'bicycle-spokes', 'bicycle-saddle', 'bicycle-handlebar']; "
+            "malformed=[]; duplicate_ids=[]",
+        )
+        self.assertIn("missing semantic IDs only", prompt)
+        self.assertIn("Preserve the existing drawing, coordinates, viewBox", prompt)
+        self.assertIn("do not add, move, resize, or redraw artwork", prompt)
+        self.assertIn("one `replace_in_file` call with an `edits` array", prompt)
+        self.assertNotIn("complete, polished", prompt)
 
     def test_repair_prompt_uses_one_rebuild_for_multiple_shape_errors(self) -> None:
         prompt = pelican_repair_prompt(
@@ -343,7 +359,8 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertIn("valid hex color", prompt)
         self.assertIn('fill=\"none\"', prompt)
         self.assertIn("bicycle-frame", prompt)
-        self.assertIn("preserving their connections and proportions", prompt)
+        self.assertIn("preserve their coordinates and connections", prompt)
+        self.assertIn("do not translate unrelated shapes", prompt)
         self.assertNotIn("complete, polished", prompt)
 
     def test_missing_wheel_feedback_shows_prefixed_id_near_matches(self) -> None:

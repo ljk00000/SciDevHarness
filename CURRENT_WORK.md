@@ -1,8 +1,8 @@
 # 当前工作
 
-## 2026-10-02 03:59（Asia/Shanghai）· 新客户端仓库公开发布
+## 2026-10-02 05:57（Asia/Shanghai）· 新公开仓库发布
 
-- 已创建并公开 [ljk00000/SciDevHarness-Client](https://github.com/ljk00000/SciDevHarness-Client)，默认分支 `main`；代码提交 `0c7b56c73e47d497b1e3a1bfbd33b090b65255f2` 的远端 SHA 已核验一致，其他仓库未覆盖。
-- 完整 `unittest` 129 项通过；仓库使用 Apache-2.0。凭据特征扫描无命中，未发现超过 50 MB 的 Git 对象；虚拟环境、模型权重和研究数据由忽略规则排除。
-- 新仓库 Windows CI 首次运行已成功：[run 36918193600](https://github.com/ljk00000/SciDevHarness-Client/actions/runs/36918193600)。
-- 同一提示词模型复测仍未完成；已缩短的通用提示尚未复测，不宣称图像质量改善。下一步继续本地模型同提示词验证；原生 UI 截图工具仍受 Qt/Windows 捕获错误限制，离屏响应式截图已通过。
+- 已创建公开仓库 [ljk00000/SciDevHarness-Research-IDE](https://github.com/ljk00000/SciDevHarness-Research-IDE)；既有仓库和远端未覆盖。
+- 发布候选改动包含 7 个已跟踪文件；全量 `unittest` 134/134 通过，`git diff --check` 通过，常见凭据格式历史扫描未命中。`gitleaks` 未安装，未把模式扫描表述为完整凭据审计。
+- 当前正在提交并推送候选版本；完成后核验远端分支和提交 SHA。
+- 发布后继续固定原句 `Generate an SVG of a pelican riding a bicycle` 的本机模型 smoke；不下载模型，保持系统提示通用。此前模型输出仍未通过 SVG 结构/视觉验证。

@@ -925,6 +925,7 @@ class OpenAICompatibleProvider:
         timeout: float = 90.0,
         text_tool_call_fallback: bool = False,
         streaming: bool = True,
+        presence_penalty: float | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -932,6 +933,9 @@ class OpenAICompatibleProvider:
         self.timeout = timeout
         self.text_tool_call_fallback = text_tool_call_fallback
         self.streaming = streaming
+        if presence_penalty is not None and not -2.0 <= float(presence_penalty) <= 2.0:
+            raise ValueError("presence_penalty must be between -2 and 2")
+        self.presence_penalty = float(presence_penalty) if presence_penalty is not None else None
 
     def with_model(self, model: str) -> "OpenAICompatibleProvider":
         return type(self)(
@@ -941,6 +945,7 @@ class OpenAICompatibleProvider:
             self.timeout,
             self.text_tool_call_fallback,
             self.streaming,
+            self.presence_penalty,
         )
 
     @classmethod
@@ -971,6 +976,15 @@ class OpenAICompatibleProvider:
             "yes",
             "on",
         }
+        raw_presence_penalty = os.getenv("SCIDEV_PRESENCE_PENALTY", "").strip()
+        presence_penalty = None
+        if raw_presence_penalty:
+            try:
+                presence_penalty = float(raw_presence_penalty)
+            except ValueError as exc:
+                raise PermanentError("SCIDEV_PRESENCE_PENALTY 必须是 -2 到 2 之间的数字") from exc
+            if not -2.0 <= presence_penalty <= 2.0:
+                raise PermanentError("SCIDEV_PRESENCE_PENALTY 必须是 -2 到 2 之间的数字")
         return cls(
             base_url,
             api_key,
@@ -978,6 +992,7 @@ class OpenAICompatibleProvider:
             timeout=request_timeout,
             text_tool_call_fallback=text_tool_call_fallback,
             streaming=streaming,
+            presence_penalty=presence_penalty,
         )
 
     @staticmethod
@@ -1185,6 +1200,8 @@ class OpenAICompatibleProvider:
             "temperature": 0.2,
             "stream": self.streaming,
         }
+        if self.presence_penalty is not None:
+            body_data["presence_penalty"] = self.presence_penalty
         if tools:
             body_data["tools"] = tools
             body_data["tool_choice"] = "auto"
@@ -1304,7 +1321,7 @@ class CodingToolbox:
                 },
             }
 
-        return [
+        definitions = [
             function(
                 "list_files",
                 "列出项目中的文件和目录。先用它了解结构；默认忽略 .git、.research、缓存和虚拟环境。",
@@ -1358,6 +1375,32 @@ class CodingToolbox:
                 {},
             ),
         ]
+        replace_tool = next(
+            item for item in definitions if item["function"]["name"] == "replace_in_file"
+        )
+        replace_tool["function"]["description"] += (
+            " For several independent edits in this same file, provide an edits array; "
+            "the entire batch is validated before one write."
+        )
+        parameters = replace_tool["function"]["parameters"]
+        parameters["properties"]["edits"] = {
+            "type": "array",
+            "description": "1-50 exact replacements, validated in order before a single file write",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "old_text": {"type": "string"},
+                    "new_text": {"type": "string"},
+                    "replace_all": {"type": "boolean"},
+                },
+                "required": ["old_text", "new_text"],
+                "additionalProperties": False,
+            },
+        }
+        parameters["required"] = ["path"]
+        return definitions
 
     def _resolve(self, raw_path: str, allow_root: bool = True) -> Path:
         raw_path = str(raw_path or ".").strip()
@@ -1457,7 +1500,18 @@ class CodingToolbox:
         self.ledger.append("file_changed", {"operation": "write", "path": relative, "bytes": len(encoded)})
         return f"已写入 {relative}（{len(encoded)} bytes）"
 
-    def replace_in_file(self, path: str, old_text: str, new_text: str, replace_all: bool = False) -> str:
+    def replace_in_file(
+        self,
+        path: str,
+        old_text: str = "",
+        new_text: str = "",
+        replace_all: bool = False,
+        edits: list[dict[str, Any]] | None = None,
+    ) -> str:
+        if edits is not None:
+            if old_text or new_text or replace_all:
+                raise PermanentError("Do not mix batch edits with single-replacement arguments")
+            return self.replace_many_in_file(path, edits)
         target = self._resolve(path, allow_root=False)
         if not target.exists() or not target.is_file():
             raise PermanentError(f"文件不存在：{path}")
@@ -1496,6 +1550,71 @@ class CodingToolbox:
         relative = target.relative_to(self.project_root).as_posix()
         self.ledger.append("file_changed", {"operation": "replace", "path": relative, "matches": count})
         return f"已修改 {relative}（匹配 {count} 次）"
+
+    def replace_many_in_file(self, path: str, edits: list[dict[str, Any]]) -> str:
+        if not isinstance(edits, list) or not 1 <= len(edits) <= 50:
+            raise PermanentError("Batch edits must contain between 1 and 50 replacements")
+        normalized: list[tuple[str, str, bool]] = []
+        input_characters = 0
+        for edit in edits:
+            if not isinstance(edit, dict):
+                raise PermanentError("Each batch edit must be an object")
+            if set(edit) - {"old_text", "new_text", "replace_all"}:
+                raise PermanentError("Batch edits contain unsupported fields")
+            before = edit.get("old_text")
+            after = edit.get("new_text")
+            replace_all = edit.get("replace_all", False)
+            if not isinstance(before, str) or not before or not isinstance(after, str):
+                raise PermanentError("Each batch edit requires non-empty old_text and string new_text")
+            if not isinstance(replace_all, bool):
+                raise PermanentError("replace_all must be a boolean")
+            input_characters += len(before) + len(after)
+            if input_characters > self.MAX_WRITE_BYTES:
+                raise PermanentError("Combined batch edit text exceeds the file edit size limit")
+            normalized.append((before, after, replace_all))
+
+        target = self._resolve(path, allow_root=False)
+        if not target.exists() or not target.is_file():
+            raise PermanentError(f"File not found: {path}")
+        raw = target.read_bytes()
+        if len(raw) > self.MAX_WRITE_BYTES:
+            raise PermanentError(f"File is too large to edit: {path}")
+        original = self._decode_utf8_text(raw, target)
+        updated = original
+        total_matches = 0
+
+        for before, after, replace_all in normalized:
+            matched_before = before
+            matched_after = after
+            count = updated.count(matched_before)
+            if count == 0 and "\n" in before and "\r" not in before:
+                for newline in ("\r\n", "\r"):
+                    candidate = before.replace("\n", newline)
+                    candidate_count = updated.count(candidate)
+                    if candidate_count:
+                        matched_before = candidate
+                        count = candidate_count
+                        if "\n" in after and "\r" not in after:
+                            matched_after = after.replace("\n", newline)
+                        break
+            if count == 0:
+                raise PermanentError(f"Exact old_text not found in {path}; reread the file before retrying")
+            if count > 1 and not replace_all:
+                raise PermanentError(
+                    f"old_text matched {count} times in {path}; provide more context or set replace_all=true"
+                )
+            updated = updated.replace(matched_before, matched_after, -1 if replace_all else 1)
+            if "\x00" in updated or len(updated.encode("utf-8")) > self.MAX_WRITE_BYTES:
+                raise PermanentError("Batch edit would create a binary or oversized text file")
+            total_matches += count
+
+        target.write_bytes(updated.encode("utf-8"))
+        relative = target.relative_to(self.project_root).as_posix()
+        self.ledger.append(
+            "file_changed",
+            {"operation": "replace", "path": relative, "matches": total_matches, "edits": len(normalized)},
+        )
+        return f"Applied {len(normalized)} exact replacements to {relative} ({total_matches} match(es))"
 
     def run_command(self, command: str, timeout_seconds: int = 120) -> str:
         command = str(command or "").strip()
@@ -1581,6 +1700,7 @@ class SvgArtifactAdapter:
         r"|(?:修复|修改|编辑)(?:现有|当前|指定|列出|此|该)?",
         re.IGNORECASE,
     )
+    _LOCAL_REPAIR_SCOPE = re.compile(r"\b(?:localized|targeted|minimal|smallest exact)\b", re.IGNORECASE)
     _SVG_BLOCK = re.compile(r"```(?:svg|xml)\s*(.*?)```", re.IGNORECASE | re.DOTALL)
     _TOOL_RESPONSE = re.compile(r"\s*<tool_response>\s*(.*?)\s*</tool_response>\s*", re.IGNORECASE | re.DOTALL)
     _RAW_SVG = re.compile(r"\A(?:<\?xml\s+[^?]*\?>\s*)?<svg\b.*</svg\s*>\Z", re.IGNORECASE | re.DOTALL)
@@ -1590,6 +1710,14 @@ class SvgArtifactAdapter:
     @classmethod
     def is_repair_request(cls, prompt: str) -> bool:
         return bool("svg" in prompt.casefold() and cls._REPAIR_DIRECTIVE.search(prompt))
+
+    @classmethod
+    def is_local_repair_request(cls, prompt: str) -> bool:
+        return bool(
+            cls.is_repair_request(prompt)
+            and cls._LOCAL_REPAIR_SCOPE.search(prompt)
+            and "replace_in_file" in prompt.casefold()
+        )
 
     @classmethod
     def is_creation_request(cls, prompt: str) -> bool:
@@ -1706,6 +1834,8 @@ class SvgArtifactAdapter:
     def create_tool_call(cls, prompt: str, response: str, project_root: Path) -> dict[str, Any] | None:
         """Recover one safe SVG creation or an explicitly scoped edit of an existing SVG."""
         repair_request = cls.is_repair_request(prompt)
+        if cls.is_local_repair_request(prompt):
+            return None
         if not cls.is_creation_request(prompt) and not repair_request:
             return None
         payload = cls._extract_svg_payload(response)
@@ -1808,6 +1938,7 @@ class CodingAgent:
     MAX_TURNS = 32
     MAX_SVG_CREATION_RETRIES = 1
     SVG_CREATION_TOOLS = frozenset({"write_file"})
+    SVG_LOCAL_REPAIR_TOOLS = frozenset({"read_file", "replace_in_file", "git_diff"})
     SVG_ARTIFACT_TOOLS = frozenset({"read_file", "write_file", "replace_in_file", "git_diff"})
     EXPLICIT_COMMAND_INTENT = re.compile(
         r"\b(?:run|execute)\s+(?:(?:the|a)\s+)?(?:commands?|scripts?|tests?|test suite|checks?)\b"
@@ -1821,13 +1952,13 @@ class CodingAgent:
 
 Creation-task directive: A request to generate, draw, or create a file is sufficient authorization. Immediately create the requested artifact in the workspace root with a sensible filename using write_file. Do not ask for a filename, directory, style, or dimensions when reasonable defaults work. Do not use shell commands or downloads for a simple SVG/artwork. Make the file visibly depict the requested subject rather than a generic placeholder.
 
-Edit-task directive: When the current request asks to repair or edit an existing file, treat quoted/original creation requests as context, not as a new-file instruction. Preserve unaffected content and make only the requested changes; replace the whole file only when the requested repair genuinely requires it.
+Edit-task directive: When the current request asks to repair or edit an existing file, treat quoted/original creation requests as context, not as a new-file instruction. Preserve unaffected content and make only the requested changes; replace the whole file only when the requested repair genuinely requires it. Use the narrowest available file tool (`replace_in_file` for localized edits, `write_file` only when a complete replacement is necessary). For several independent exact edits in one file, batch them in one replace_in_file call. Do not substitute code blocks or claims for an edit, and verify the tool result before saying it was changed.
 
 SVG illustration quality: identify the features that make each requested subject recognizable and show how its parts relate; use distinct, coherent shapes rather than arbitrary blobs or boxes. Preserve defining anatomy and posture for any named biological subject without inventing unrequested features. Keep meaningful geometry inside the viewBox; avoid clipping and overlaps that hide important parts. Use balanced whitespace, clear contrast, and a restrained palette. For complex SVGs, give major visible parts unique semantic IDs; labels never substitute for visible features. Never claim an SVG was rendered or visually verified unless an actual rendering/validation tool result confirms it.
 
-Compose before styling: choose a canvas, orientation, and readable relative scale. If the request describes an interaction, decide its contact or attachment points and draw those connected structures first; nearby but disconnected shapes do not show the action. Add defining anatomy and secondary details afterward. Keep margins and important geometry inside the viewBox, avoid clipping and overlaps that hide key features, use a restrained palette, and keep simple SVGs concise (under 60 elements) with every tag closed.
+Compose before styling: choose a canvas, orientation, and readable relative scale. If the request describes an interaction, decide its contact or attachment points and draw those connected structures first; nearby but disconnected shapes do not show the action. When an actor rides or operates a vehicle or tool, keep its support structure and moving/control parts recognizable and connected, and show the actor touching the seat, grip, pedal, or working surface; never replace these relationships with a solid block or detached blobs. Add defining anatomy and secondary details afterward. Keep margins and important geometry inside the viewBox, avoid clipping and overlaps that hide key features, use a restrained palette, and keep simple SVGs concise (under 60 elements) with every tag closed.
 
-If you include a complete SVG in your reply, still call write_file to save it; a code block or asking whether to save does not complete a file-creation task.
+For file-creation tasks, call write_file exactly once to save the artifact and do not include a duplicate full artifact in the assistant message. After the successful tool result, give a concise confirmation; a code block alone does not complete the task.
 
 你的任务是直接帮助用户修改当前项目代码，而不是泛泛解释代码。你可以使用工具查看文件、精确编辑文件、请求运行必要的测试/检查命令和查看 Git diff。
 
@@ -1885,7 +2016,11 @@ If you include a complete SVG in your reply, still call write_file to save it; a
         if SvgArtifactAdapter.is_creation_request(prompt):
             allowed_tools = self.SVG_CREATION_TOOLS
         elif SvgArtifactAdapter.is_repair_request(prompt):
-            allowed_tools = self.SVG_ARTIFACT_TOOLS
+            allowed_tools = (
+                self.SVG_LOCAL_REPAIR_TOOLS
+                if SvgArtifactAdapter.is_local_repair_request(prompt)
+                else self.SVG_ARTIFACT_TOOLS
+            )
         else:
             return definitions
         return [
@@ -2170,23 +2305,31 @@ If you include a complete SVG in your reply, still call write_file to save it; a
         }
         workspace_revision = 0
         diff_verified_revision = -1
+        recovered_artifact_path = ""
 
         for turn in range(1, self.MAX_TURNS + 1):
-            self.ledger.append("model_call_started", {"session_id": session_id, "turn": turn})
-            self._emit("model_call_started", {"session_id": session_id, "turn": turn})
-            stream_options: dict[str, Any] = {}
-            if isinstance(provider, OpenAICompatibleProvider):
-                stream_options["on_delta"] = lambda text: self._emit(
-                    "assistant_delta",
-                    {"session_id": session_id, "turn": turn, "text": text},
+            if recovered_artifact_path:
+                message = {
+                    "role": "assistant",
+                    "content": f"Saved SVG artifact to {recovered_artifact_path}.",
+                    "tool_calls": [],
+                }
+            else:
+                self.ledger.append("model_call_started", {"session_id": session_id, "turn": turn})
+                self._emit("model_call_started", {"session_id": session_id, "turn": turn})
+                stream_options: dict[str, Any] = {}
+                if isinstance(provider, OpenAICompatibleProvider):
+                    stream_options["on_delta"] = lambda text: self._emit(
+                        "assistant_delta",
+                        {"session_id": session_id, "turn": turn, "text": text},
+                    )
+                message = provider.chat(
+                    messages,
+                    tools=tool_definitions,
+                    max_tokens=12000,
+                    request_id=f"{session_id}-turn-{turn}",
+                    **stream_options,
                 )
-            message = provider.chat(
-                messages,
-                tools=tool_definitions,
-                max_tokens=12000,
-                request_id=f"{session_id}-turn-{turn}",
-                **stream_options,
-            )
             content = self._text_content(message.get("content"))
             tool_calls = message.get("tool_calls") or []
             recovered_tool_ids: set[str] = set()
@@ -2434,6 +2577,8 @@ If you include a complete SVG in your reply, still call write_file to save it; a
                 except Exception as exc:  # Tool errors go back to the model for correction.
                     result = f"工具执行失败：{type(exc).__name__}: {exc}"
                 if tool_succeeded:
+                    if call_id in recovered_tool_ids and name == "write_file":
+                        recovered_artifact_path = str(arguments.get("path", ""))
                     if name in {"write_file", "replace_in_file"}:
                         changed = set(session.get("agent_changed_paths") or [])
                         changed.add(str(arguments.get("path", "")))
@@ -2453,7 +2598,12 @@ If you include a complete SVG in your reply, still call write_file to save it; a
                 self._save_session(session)
 
             interval = self.summary_settings.interval_turns
-            if self.summary_settings.enabled and interval > 0 and turn % interval == 0:
+            if (
+                not recovered_artifact_path
+                and self.summary_settings.enabled
+                and interval > 0
+                and turn % interval == 0
+            ):
                 session["updated_at"] = now_iso()
                 self._summarize_session(provider, session, phase="checkpoint", turn=turn)
                 self._save_session(session)

@@ -135,6 +135,18 @@ class SvgArtifactAdapterTests(unittest.TestCase):
         assert call is not None
         self.assertEqual(json.loads(call["function"]["arguments"])["path"], "pelican_bicycle.svg")
 
+    def test_localized_svg_repair_cannot_be_promoted_to_a_full_file_write(self) -> None:
+        prompt = (
+            "Repair only these localized SVG issues in pelican_bicycle.svg. "
+            "Call replace_in_file with exact old_string and new_string arguments."
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pelican_bicycle.svg").write_text("known-good source", encoding="utf-8")
+            call = SvgArtifactAdapter.create_tool_call(prompt, SAFE_SVG_RESPONSE, root)
+
+        self.assertIsNone(call)
+
     def test_numbered_tool_response_svg_is_recovered_for_explicit_repair(self) -> None:
         source = (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">\n'

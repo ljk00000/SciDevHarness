@@ -379,11 +379,28 @@ class CoreTests(unittest.TestCase):
                     "Original request: Generate an SVG. Repair only the existing drawing in pelican.svg."
                 )
             }
+            localized_repair_names = {
+                item["function"]["name"]
+                for item in agent._tool_definitions_for_prompt(
+                    "Repair only these localized SVG issues in pelican.svg. "
+                    "Use the smallest exact replace_in_file edit, then inspect git_diff."
+                )
+            }
+            label_only_repair_names = {
+                item["function"]["name"]
+                for item in agent._tool_definitions_for_prompt(
+                    "The first SVG preflight found missing semantic IDs only. "
+                    "Repair only pelican.svg using a targeted label-only edit. "
+                    "Use one replace_in_file call with an edits array."
+                )
+            }
             self.assertEqual(simple_names, {"write_file"})
             self.assertNotIn("run_command", simple_names)
             self.assertIn("run_command", explicit_names)
             self.assertEqual(repair_names, {"read_file", "write_file", "replace_in_file", "git_diff"})
             self.assertNotIn("run_command", repair_names)
+            self.assertEqual(localized_repair_names, {"read_file", "replace_in_file", "git_diff"})
+            self.assertEqual(label_only_repair_names, {"read_file", "replace_in_file", "git_diff"})
             self.assertIn("replace_in_file", repair_names)
 
     def test_svg_repair_is_not_reclassified_as_creation_and_updates_its_named_file(self) -> None:
@@ -483,6 +500,9 @@ class CoreTests(unittest.TestCase):
 
             self.assertTrue((root / "pelican.svg").is_file())
             self.assertTrue(result["git_result_sha"])
+            self.assertEqual(provider.calls, 1)
+            self.assertEqual(len(list(root.glob("*.svg"))), 1)
+            self.assertIn("pelican.svg", result["text"])
             recovered_writes = [
                 data for event, data in events
                 if event == "tool_started" and data.get("source") == "harness_svg_artifact_recovery"
@@ -722,12 +742,19 @@ class CoreTests(unittest.TestCase):
         self.assertIn("不要只提出方案或在执行前二次询问", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("立即选用清楚的文件名并在工作区根目录调用 write_file", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("只有任务依赖现有文件时才调用 list_files", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("Use the narrowest available file tool", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("batch them in one replace_in_file call", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("Do not substitute code blocks or claims for an edit", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("Do not use shell commands or downloads for a simple SVG/artwork", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("Compose before styling: choose a canvas, orientation, and readable relative scale", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("nearby but disconnected shapes do not show the action", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("When an actor rides or operates a vehicle or tool", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("never replace these relationships with a solid block or detached blobs", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("treat quoted/original creation requests as context, not as a new-file instruction", CodingAgent.SYSTEM_PROMPT.casefold())
         self.assertIn("Preserve defining anatomy and posture for any named biological subject", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("give major visible parts unique semantic IDs", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("call write_file exactly once", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("do not include a duplicate full artifact", CodingAgent.SYSTEM_PROMPT)
         self.assertNotIn("pelican", CodingAgent.SYSTEM_PROMPT.casefold())
         self.assertNotIn("bicycle", CodingAgent.SYSTEM_PROMPT.casefold())
         self.assertIn("Never claim an SVG was rendered or visually verified", CodingAgent.SYSTEM_PROMPT)
@@ -1036,6 +1063,71 @@ class CoreTests(unittest.TestCase):
 
             self.assertEqual(target.read_bytes(), b"def answer():\r\n    return None\r\n")
 
+    def test_replace_in_file_prevalidates_batches_and_preserves_crlf(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "drawing.svg"
+            source.write_bytes(
+                b'<circle cx="10" cy="10" r="5" fill="red"/>\r\n'
+                b'<ellipse cx="30" cy="10" rx="8" ry="5" fill="blue"/>\r\n'
+            )
+            ledger = EventLedger(root)
+            toolbox = CodingToolbox(root, ledger)
+
+            result = toolbox.replace_in_file(
+                "drawing.svg",
+                edits=[
+                    {
+                        "old_text": '<circle cx="10" cy="10" r="5" fill="red"/>',
+                        "new_text": '<circle cx="10" cy="10" r="5" fill="red" id="pelican-eye"/>',
+                    },
+                    {
+                        "old_text": '<ellipse cx="30" cy="10" rx="8" ry="5" fill="blue"/>',
+                        "new_text": '<ellipse cx="30" cy="10" rx="8" ry="5" fill="blue" id="pelican-body"/>',
+                    },
+                ],
+            )
+
+            updated = source.read_bytes()
+            self.assertIn(b'id="pelican-eye"/>\r\n', updated)
+            self.assertIn(b'id="pelican-body"/>\r\n', updated)
+            self.assertEqual(updated.count(b"\r\n"), 2)
+            self.assertIn("2 exact replacements", result)
+            events = [
+                json.loads(line)
+                for line in ledger.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            change = next(event for event in events if event["event_type"] == "file_changed")
+            self.assertEqual(change["payload"]["edits"], 2)
+            self.assertEqual(change["payload"]["matches"], 2)
+
+            before_failed_batch = source.read_bytes()
+            with self.assertRaisesRegex(PermanentError, "Exact old_text not found"):
+                toolbox.replace_in_file(
+                    "drawing.svg",
+                    edits=[
+                        {"old_text": "pelican-eye", "new_text": "would-be-changed"},
+                        {"old_text": "missing-shape", "new_text": "not-applied"},
+                    ],
+                )
+            self.assertEqual(source.read_bytes(), before_failed_batch)
+            with self.assertRaisesRegex(PermanentError, "unsupported fields"):
+                toolbox.replace_in_file(
+                    "drawing.svg",
+                    edits=[{"old_text": "pelican-eye", "new_text": "x", "unexpected": "value"}],
+                )
+            self.assertEqual(source.read_bytes(), before_failed_batch)
+
+    def test_replace_in_file_tool_schema_supports_batched_edits(self) -> None:
+        definitions = CodingToolbox.definitions()
+        replace_tool = next(
+            item for item in definitions if item["function"]["name"] == "replace_in_file"
+        )
+        parameters = replace_tool["function"]["parameters"]
+        self.assertIn("edits", parameters["properties"])
+        self.assertEqual(parameters["properties"]["edits"]["maxItems"], 50)
+        self.assertEqual(parameters["required"], ["path"])
+
     def test_run_command_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1219,6 +1311,30 @@ class CoreTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(PermanentError, "5 到 600 秒"):
                     OpenAICompatibleProvider.from_env()
+
+    def test_provider_applies_optional_presence_penalty_from_process_environment(self) -> None:
+        provider_environment = {
+            "SCIDEV_API_BASE": "http://127.0.0.1:11434/v1",
+            "SCIDEV_API_KEY": "local-test-key",
+            "SCIDEV_MODEL": "local-test-model",
+            "SCIDEV_STREAMING": "false",
+            "SCIDEV_PRESENCE_PENALTY": "0",
+        }
+        with patch.dict(os.environ, provider_environment, clear=True):
+            provider = OpenAICompatibleProvider.from_env()
+        self.assertEqual(provider.presence_penalty, 0.0)
+        self.assertEqual(provider.with_model("summary-model").presence_penalty, 0.0)
+
+        response = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).encode()
+        with patch("scidev_core.urlopen", return_value=BytesIO(response)) as opener:
+            provider.chat([{"role": "user", "content": "test"}], max_tokens=12000)
+        request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(request_body["max_tokens"], 12000)
+        self.assertEqual(request_body["presence_penalty"], 0.0)
+
+        with patch.dict(os.environ, {**provider_environment, "SCIDEV_PRESENCE_PENALTY": "2.1"}, clear=True):
+            with self.assertRaisesRegex(PermanentError, "SCIDEV_PRESENCE_PENALTY"):
+                OpenAICompatibleProvider.from_env()
 
     def test_bare_json_tool_call_is_parsed_only_when_opted_in(self) -> None:
         tools = [
