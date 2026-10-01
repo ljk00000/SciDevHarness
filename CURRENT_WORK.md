@@ -1,7 +1,7 @@
 # 当前工作
 
-## 2026-10-02 02:52（Asia/Shanghai）· 创建新公开仓库并上传源码
+## 2026-10-02 03:02（Asia/Shanghai）· 新公开仓库发布完成
 
-- 已新建公开仓库 [SciDevHarness-Public](https://github.com/ljk00000/SciDevHarness-Public)，与已有仓库分离。
-- 发布前 `.venv`、`.research`、模型权重等均由 `.gitignore` 排除；工作树和已提交历史未发现凭据形态密钥。
-- `.venv` 内运行 `unittest`：128 项通过；接下来提交当前改动并推送到新仓库，保留其余远程配置。
+- [SciDevHarness-Public](https://github.com/ljk00000/SciDevHarness-Public) 已公开，`main` 与本地 `527410f` SHA 一致；旧远程未改动。
+- 128 项 `unittest` 通过；凭据形态扫描无命中；`.venv`、`.research` 与模型权重未上传。
+- 下一步：如继续开发，检查该仓库首轮 GitHub Actions；仅在失败时按日志修复。

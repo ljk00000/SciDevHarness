@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-02 03:02（Asia/Shanghai）· 创建并公开发布新仓库
+
+- 新建 [ljk00000/SciDevHarness-Public](https://github.com/ljk00000/SciDevHarness-Public)，公开可见，默认分支 `main`；推送提交 `527410fc8a050802703d15e3839efa064ccfc168`，远端 SHA 核验一致。
+- 128 项 `unittest` 通过；当前工作树与提交历史的凭据形态扫描无命中。`.venv`、`.research`、模型权重未上传，其他 Git 远程保持不变。
+- GitHub 直连超时后通过受限本地代理隧道复用现有 SSH 身份；未扩大 OAuth 授权范围。
+
 ## 2026-10-02 02:46（Asia/Shanghai）· 修复轮分类、SVG 质量复测与响应式 UI
 
 - Harness 现在区分“创建 SVG”和“修复已有 SVG”：修复提示不再带重复的创建指令；如模型返回完整 SVG，只能回写明确指定且已存在的文件。通用系统提示要求编辑时保留未涉及内容。
