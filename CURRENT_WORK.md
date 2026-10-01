@@ -1,7 +1,8 @@
 # 当前工作
 
-## 2026-10-02 03:43（Asia/Shanghai）· 对照工具范围与交互式提示
+## 2026-10-02 03:59（Asia/Shanghai）· 新客户端仓库公开发布
 
-- 已修复 headless SVG smoke 在 Qt6Core 崩溃：渲染前惰性创建 offscreen `QGuiApplication`；真实失败产物现返回正常结构错误，独立子进程回归测试通过。
-- SVG 新建任务仅暴露 `write_file` 后，主力 Qwen2.5 由 17 次请求/284.9 秒降到 14 次/72.8 秒、响应体约 5.32 MB 降到 1.18 MB；但仍未画清骑行关系，模型原生工具参数为 0，靠 Harness 文本回收保存。
-- 已将通用图像指令改为“先规划接触点和连接结构，再加细节”；下一步用同一固定提示词复测，比较渲染、原生工具调用和流量，再跑全套测试。原生 UI 截图工具仍受 Qt/Windows 捕获错误限制；离屏响应式截图已通过。
+- 已创建并公开 [ljk00000/SciDevHarness-Client](https://github.com/ljk00000/SciDevHarness-Client)，默认分支 `main`；代码提交 `0c7b56c73e47d497b1e3a1bfbd33b090b65255f2` 的远端 SHA 已核验一致，其他仓库未覆盖。
+- 完整 `unittest` 129 项通过；仓库使用 Apache-2.0。凭据特征扫描无命中，未发现超过 50 MB 的 Git 对象；虚拟环境、模型权重和研究数据由忽略规则排除。
+- 新仓库 Windows CI 首次运行已成功：[run 36918193600](https://github.com/ljk00000/SciDevHarness-Client/actions/runs/36918193600)。
+- 同一提示词模型复测仍未完成；已缩短的通用提示尚未复测，不宣称图像质量改善。下一步继续本地模型同提示词验证；原生 UI 截图工具仍受 Qt/Windows 捕获错误限制，离屏响应式截图已通过。

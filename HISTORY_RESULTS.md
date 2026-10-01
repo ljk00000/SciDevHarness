@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-02 03:59（Asia/Shanghai）· 新建公开客户端仓库并推送
+
+- 新建 [ljk00000/SciDevHarness-Client](https://github.com/ljk00000/SciDevHarness-Client)，确认为公开仓库、默认分支 `main`。代码提交 `0c7b56c73e47d497b1e3a1bfbd33b090b65255f2` 已推送，`git ls-remote` 与本地 SHA 一致；既有远端未改动。
+- 完整 `unittest` 129 项通过；Apache-2.0。凭据特征扫描无命中，未发现超过 50 MB 的 Git 对象，`.venv`、模型权重及研究数据未上传。
+- GitHub [Windows CI 首次运行成功](https://github.com/ljk00000/SciDevHarness-Client/actions/runs/36918193600)。GitHub API 直连短超时失败后才通过已配置代理创建仓库；代码推送使用 SSH 直连成功。
+
 ## 2026-10-02 03:43（Asia/Shanghai）· 工具范围缩减与提示结构对照
 
 - 固定提示词原文未变。Qwen2.5-Coder-7B 首次生成只开放 `write_file` 后，本次请求 14 次、累计 72.8 秒、响应体约 1.18 MB；此前一次为 17 次、284.9 秒、5.32 MB。单次对照显示开销明显下降，但最终预览仍不能识别为鹈鹕骑车，仍缺全部自行车关键 ID。
