@@ -1,5 +1,10 @@
 # 历史与结果
 
+## 2026-10-01 18:25（Asia/Shanghai）· GitHub 公开上传完成
+
+- 创建公开仓库 [ljk00000/SciDevHarness](https://github.com/ljk00000/SciDevHarness)，推送 `master`；GitHub API 确认公开，`git ls-remote` 验证远端 SHA 与本地一致。仓库包含 Apache-2.0 LICENSE。
+- 上传前审查提交树：无 >10 MiB 文件、模型权重/敏感文件名及常见 GitHub/AWS/私钥/API key 格式命中。单测 69 项连续 3 轮、Qwen 编码烟测与客户端依赖 smoke 通过；远端 Actions 是否通过尚未检查。
+
 ## 2026-10-01 14:01（Asia/Shanghai）· 本地提交与 GitHub 目标确认
 
 - 当前工作区已提交：`c7c7ada`，包含 31 个项目文件；提交后 Git 工作区干净。提交前暂存检查通过，未发现大文件、模型权重或常见密钥格式。

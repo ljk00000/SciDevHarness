@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-10-01 18:25（Asia/Shanghai）· GitHub 公开上传完成
+
+- 已在 `ljk00000/SciDevHarness` 创建公开仓库并推送 `master`；GitHub 显示 `isPrivate=false`，远端 SHA 与本地一致。包含 Apache-2.0 许可证；上传前检查未发现 >10 MiB 文件、模型权重、敏感文件名或常见密钥格式。
+- 代码/发布准备提交为 `c7c7ada`，后续 GitHub 状态记录提交为 `aeaa85b`。本地单测 69 项连续 3 轮、Qwen 隔离编码烟测及桌面依赖检查均已通过；GitHub Actions 远端运行结果尚未核对。
+
 ## 2026-10-01 14:01（Asia/Shanghai）· 本地提交与 GitHub 目标确认
 
 - 已将当前 31 个项目文件提交为 `c7c7ada`（`feat: finalize desktop research coding harness`），提交后工作区干净；暂存内容检查未发现模型权重、大文件或常见密钥格式。
