@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-02 10:41（Asia/Shanghai）· 新建并公开 v4 仓库
+
+- 公开仓库 [ljk00000/SciDevHarness-Research-IDE-v4](https://github.com/ljk00000/SciDevHarness-Research-IDE-v4) 已创建。源码提交 `ef4246ad440146f4f8dd9d39e5d5a8a2a297f77a` 的本地与 `main` SHA 一致；可见性为 `PUBLIC`。此前 v3 未覆盖。
+- 修复 SVG 结构预检后的稳定工具调度，并要求读取目标后再局部编辑；全量 `unittest` 156/156 通过。离屏 Qt 截图烟测 1500×920 至 780×480 通过，含版本树拖动/平移/滚动/缩放。
+- 发布只包含已跟踪源码和文档；`.venv`、`.research` 与本地权重未上传。常见凭据格式扫描未命中；未安装 gitleaks，不代表完整历史审计。GitHub Windows CI 对源码提交仍在运行。
+- GitHub HTTPS 直连超时后，按规则逐个、串行使用已配置代理完成建仓/核验；代码推送走 SSH 直连并设置 10 秒连接超时。
+
 ## 2026-10-02 09:32（Asia/Shanghai）· 新建公开仓库并上传当前版本
 
 - 创建公开仓库 [ljk00000/SciDevHarness-Research-IDE-v3](https://github.com/ljk00000/SciDevHarness-Research-IDE-v3)，默认分支 `main`。提交 `78d2c5e8f2f9ddeba2a4f61600f0d68b4bea05bf` 的本地与远端 SHA 一致；没有覆盖已有仓库。

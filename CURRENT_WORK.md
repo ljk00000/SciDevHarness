@@ -1,7 +1,7 @@
 # 当前工作
 
-## 2026-10-02 09:32（Asia/Shanghai）· 公开发布与后续验证
+## 2026-10-02 10:41（Asia/Shanghai）· v4 公开发布与后续验证
 
-- 新建公开仓库 [ljk00000/SciDevHarness-Research-IDE-v3](https://github.com/ljk00000/SciDevHarness-Research-IDE-v3)，`main` 已核对到提交 `78d2c5e8f2f9ddeba2a4f61600f0d68b4bea05bf`；此前已有 8 个同项目公开仓库，本次未覆盖旧仓库。
-- 源码改动及 SVG 回归测试已上传；全量 `unittest` 151/151 通过。常见凭据格式扫描仅命中 README 的 `your-key` 示例占位符；未安装 gitleaks，不代表完整历史凭据审计。
-- 后续重点：继续验证通用 SVG 结构反馈和无进展回合上限，并复核原生窗口截图；固定 pelican/bicycle 任务的图像质量仍未达标。
+- 新建公开仓库 [ljk00000/SciDevHarness-Research-IDE-v4](https://github.com/ljk00000/SciDevHarness-Research-IDE-v4)。源码提交 `ef4246ad440146f4f8dd9d39e5d5a8a2a297f77a` 已推送并核对；该提交后续会追加本记录。
+- 全量 `unittest` 156/156 通过；Qt 离屏截图烟测覆盖 1500×920 至 780×480，含版本树拖动、平移、滚动和缩放。GitHub Windows CI 已启动，尚未确认结果。
+- 后续：核对 Windows CI；在本机 Qwen 上重跑固定 pelican/bicycle 请求并目视评估。图像质量与原生窗口截图仍未在本轮验证。
