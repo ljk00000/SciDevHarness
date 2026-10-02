@@ -1,5 +1,10 @@
 # 历史与结果
 
+## 2026-10-02 15:04（Asia/Shanghai）· 推送及多版本 Windows CI
+
+- 路径推断、可配置温度与测试/文档提交 `bd35043` 已推送至 SciDevHarness 唯一公开主仓库；保留 `release/v5`，未更改其他私有仓库。
+- GitHub Windows CI [三版本全部通过](https://github.com/ljk00000/SciDevHarness/actions/runs/36976220009)：Python 3.12/3.13/3.14 测试、依赖 smoke、响应式截图及 QML lint。
+
 ## 2026-10-02 14:57（Asia/Shanghai）· 有界路径推断与模型采样对比
 
 - 发现本机模型在唯一 SVG 修复阶段反复漏传必填 `path`。现在只有 Harness 记录到“最近唯一读取目标”时才把 path 变为单值 enum 并允许省略；执行前注入该原始路径并记审计事件，多文件仍强制明确选目标。新增集成回归覆盖补全与歧义时保持必填。

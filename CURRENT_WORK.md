@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-10-02 15:04（Asia/Shanghai）· 代码提交与 CI 验收
+
+- `bd35043` 已推送至唯一公开仓库 `SciDevHarness/master`；[Windows CI](https://github.com/ljk00000/SciDevHarness/actions/runs/36976220009) 的 Python 3.12/3.13/3.14 全通过，远端与本地提交一致，工作区干净。
+- 下一步继续改善通用 Harness 的代码任务完成率与 UI 实机验收；当前 Qwen 7B 的固定 SVG 任务仍未通过视觉标准，不能结项。
+
 ## 2026-10-02 14:57（Asia/Shanghai）· 单文件路径补全与温度 A/B
 
 - SVG 定向修复只在刚读取且唯一的目标文件上放宽 `replace_in_file.path`，模型漏传时由 Harness 依据该读取记录补齐；路径多于一个仍为必填。通用 `SCIDEV_TEMPERATURE` 可配置，本机 Qwen 启动默认 0、保留显式覆盖。
