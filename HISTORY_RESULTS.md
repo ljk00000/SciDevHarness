@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-02 16:30（Asia/Shanghai）· 单提示词执行与盲审能力
+
+- 移除 Pelican smoke 在失败后把评测缺陷改写成新提示词/另开会话的路径；每次基准只送固定原句。可选视觉盲审仅收安全栅格图，不收任务、文件名或源码；默认关闭，且不代表任务通过。盲审限长/去重，极端响应仍保持有效 JSON。
+- 全量 `unittest` 175/175、`compileall`、`git diff --check` 与离屏 UI smoke 通过（1500×920 至 780×480，含版本树拖拽/平移/缩放）。
+- 本机 Qwen2.5-Coder-7B 固定单提示词实测失败：9 次本机 HTTP 调用（含 2 次盲审），仅生成圆形/黑条/点，未形成目标图形，并发生不完整工具调用。证据在 `%LOCALAPPDATA%\Temp\SciDevHarness-pelican-blind-review-2-20261002`；未下载模型，未向 Agent 发送评测器缺陷提示。
+- 提交 `b6aefc2` 已推送到唯一公开 `master`，远端 SHA 一致；[Windows CI #22 三任务通过](https://github.com/ljk00000/SciDevHarness/actions/runs/36984109087)。CUA 未列出原生窗口，仅完成离屏 UI 检查，不声称原生截图验收。
+
 ## 2026-10-02 15:04（Asia/Shanghai）· 推送及多版本 Windows CI
 
 - 路径推断、可配置温度与测试/文档提交 `bd35043` 已推送至 SciDevHarness 唯一公开主仓库；保留 `release/v5`，未更改其他私有仓库。
