@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-02 11:34（Asia/Shanghai）· 新建并公开 v5 仓库
+
+- 创建公开仓库 [ljk00000/SciDevHarness-Research-IDE-v5](https://github.com/ljk00000/SciDevHarness-Research-IDE-v5)。核心源码提交 `a7370793d899ecbf4e4fadeeaaa88f751e6979ae` 已推送；`main` 远端 SHA 与本地源码提交一致，仓库可见性为 `PUBLIC`。
+- 修复 Qwen 本地模型复制 `read_file` 行号后输出 `<tool_response>` 的工具调用解析；编辑失败时明确提示去除显示行号。相同 SVG 结构问题与文件连续不变时提前停止，避免空转。全量 `unittest` 158/158 通过。
+- 固定提示 `Generate an SVG of a pelican riding a bicycle` 的最新 7B 实测仍未通过视觉评估：缺两条腿，另有 7 项几何/接触关系问题；没有将其记作成功。
+- 发布使用已跟踪项目文件；`.venv`、`.research` 数据库/会话及本地模型权重未上传。当前工作区常见凭据格式扫描无命中，gitleaks 未安装，未声称完成完整历史密钥审计。GitHub API 直连超时后才经代理串行完成建仓与查询；源码推送使用 SSH 直连。
+
 ## 2026-10-02 10:41（Asia/Shanghai）· 新建并公开 v4 仓库
 
 - 公开仓库 [ljk00000/SciDevHarness-Research-IDE-v4](https://github.com/ljk00000/SciDevHarness-Research-IDE-v4) 已创建。源码提交 `ef4246ad440146f4f8dd9d39e5d5a8a2a297f77a` 的本地与 `main` SHA 一致；可见性为 `PUBLIC`。此前 v3 未覆盖。
