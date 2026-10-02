@@ -651,6 +651,7 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(first_user_prompt.endswith(prompt))
             self.assertEqual(first_user_prompt.count(prompt), 1)
             system_prompt = provider.message_histories[0][0]["content"].casefold()
+            self.assertIn("图像与 svg", system_prompt)
             self.assertNotIn("pelican", system_prompt)
             self.assertNotIn("bicycle", system_prompt)
             self.assertEqual(agent.toolbox.svg_structure_issues_for_file("generated.svg"), [])
@@ -1209,6 +1210,109 @@ class CoreTests(unittest.TestCase):
             self.assertNotIn("coding_session_completed", event_names)
             self.assertNotIn("git_commit_created", event_names)
 
+    def test_single_user_prompt_mode_blocks_harness_generated_recovery_messages(self) -> None:
+        class TextOnlyProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.user_message_counts: list[int] = []
+
+            def chat(self, messages, tools=None, max_tokens=12000, request_id=""):
+                self.calls += 1
+                self.user_message_counts.append(sum(message.get("role") == "user" for message in messages))
+                return {"role": "assistant", "content": "I will create the SVG now.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                summary_settings=SummarySettings(enabled=False),
+                single_user_prompt_only=True,
+            )
+            provider = TextOnlyProvider()
+            prompt = "Generate an SVG of a pelican riding a bicycle"
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "Single-user-prompt mode stopped"):
+                    agent.run({"payload": {"session_id": "svg_single_prompt", "prompt": prompt}})
+
+            self.assertEqual(provider.calls, 1)
+            self.assertEqual(provider.user_message_counts, [1])
+            session = json.loads(
+                (root / ".research" / "sessions" / "svg_single_prompt.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(sum(message.get("role") == "user" for message in session["messages"]), 1)
+            event_types = [
+                json.loads(line)["event_type"]
+                for line in (root / ".research" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertIn("harness_followup_blocked", event_types)
+            self.assertNotIn("svg_creation_retry_scheduled", event_types)
+
+    def test_single_user_prompt_mode_stops_immediately_on_svg_preflight_failure(self) -> None:
+        class InvalidSvgProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.user_message_counts: list[int] = []
+
+            def chat(self, messages, tools=None, max_tokens=12000, request_id=""):
+                self.calls += 1
+                self.user_message_counts.append(sum(message.get("role") == "user" for message in messages))
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "write_invalid_svg",
+                            "type": "function",
+                            "function": {
+                                "name": "write_file",
+                                "arguments": json.dumps(
+                                    {
+                                        "path": "pelican.svg",
+                                        "content": (
+                                            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+                                            '<circle cx="50" cy="50" r="20"/></svg>'
+                                        ),
+                                    }
+                                ),
+                            },
+                        }
+                    ],
+                }
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                summary_settings=SummarySettings(enabled=False),
+                single_user_prompt_only=True,
+            )
+            provider = InvalidSvgProvider()
+            prompt = "Generate an SVG of a pelican riding a bicycle"
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "SVG structural preflight failed"):
+                    agent.run({"payload": {"session_id": "svg_single_preflight", "prompt": prompt}})
+
+            self.assertEqual(provider.calls, 1)
+            self.assertEqual(provider.user_message_counts, [1])
+            self.assertTrue((root / "pelican.svg").is_file())
+            session = json.loads(
+                (root / ".research" / "sessions" / "svg_single_preflight.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(sum(message.get("role") == "user" for message in session["messages"]), 1)
+            self.assertFalse(git.head_sha())
+
     def test_svg_creation_without_a_file_gets_one_bounded_recovery_turn(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1569,7 +1673,7 @@ class CoreTests(unittest.TestCase):
 
     def test_agent_prompt_requires_explicit_checks_to_be_run_before_completion(self) -> None:
         prompt = CodingAgent.SYSTEM_PROMPT
-        self.assertLessEqual(len(prompt), 900)
+        self.assertLessEqual(len(prompt), 700)
         self.assertIn("每次成功修改后，下一次精确编辑前先重新读取", prompt)
         for required_rule in (
             "直接用工具完成用户在工作区内的请求",
@@ -1577,7 +1681,6 @@ class CoreTests(unittest.TestCase):
             "不要为名称、路径、尺寸或风格追问",
             "严格按用户指定对象与动作，不得换成相似对象",
             "没有成功工具结果不得声称已保存",
-            "简单图像/SVG 不用 shell 或下载",
             "将引用的旧请求只视为背景",
             "同文件多项独立精确修改可一次批量调用",
             "不得访问 `.git`、`.research`、密钥、环境变量、数据集或工作区外路径",
@@ -1586,27 +1689,59 @@ class CoreTests(unittest.TestCase):
             "用户点名的检查必须实跑",
             "不把请求、计划或工具 JSON 当结果",
             "完成后简述改动、验证和限制",
-            "实质歧义会改变结果",
+            "请求明确时直接执行",
             "不擅自运行长实验/训练或下载大文件",
             "`read_file` 行首 `N:` 仅是显示行号",
             "写入 `old_text` 前去掉",
-            "连接/接触关系",
-            "动作、承载、操作须表现真实支撑和接触点",
-            "分离的近邻形状或色块不代表交互",
-            "复杂对象勿用孤立基础形状代替",
-            "`viewBox` 裁切",
-            "少于 60 个元素并闭合标签",
-            "每个关键部件各自对应可见几何",
-            "唯一语义 `id`",
-            "勿仅给共享分组命名",
-            "勿重复",
-            "勿重复",
-            "只有工具确实确认后才能声称已完成渲染/验证",
+            "按用户要求明确可观察的完成条件",
+            "逐项核对",
         ):
             with self.subTest(rule=required_rule):
                 self.assertIn(required_rule, prompt)
+        self.assertNotIn("图像与 SVG", prompt)
         self.assertNotIn("pelican", prompt.casefold())
         self.assertNotIn("bicycle", prompt.casefold())
+
+    def test_visual_guidance_is_added_only_for_svg_tasks_and_stays_task_generic(self) -> None:
+        generic_prompt = CodingAgent._system_prompt_for_task("创建一个 Python 脚本")
+        svg_prompt = CodingAgent._system_prompt_for_task("Generate an SVG of a pelican riding a bicycle")
+
+        self.assertEqual(generic_prompt, CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("图像与 SVG", svg_prompt)
+        for required_rule in (
+            "可见对象、动作和关系",
+            "承载、操作等交互须有真实支撑/接触点",
+            "近邻形状或色块不代表交互",
+            "写入前自行按原句检查对象、动作和关系是否都已画出",
+            "不要把自检变成向用户确认",
+            "复杂对象勿用孤立基础形状代替",
+            "`viewBox` 裁切",
+            "少于 60 个元素并闭合标签",
+            "关键部件用可见几何表达",
+            "语义 `id` 唯一且不代替图形",
+            "对照原请求检查对象与关系",
+            "只有工具确实确认后才能声称已完成渲染/验证",
+        ):
+            with self.subTest(rule=required_rule):
+                self.assertIn(required_rule, svg_prompt)
+        self.assertNotIn("pelican", svg_prompt.casefold())
+        self.assertNotIn("bicycle", svg_prompt.casefold())
+
+    def test_resumed_session_refreshes_task_specific_system_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            agent = CodingAgent(root, ledger, git, summary_settings=SummarySettings(enabled=False))
+            old_prompt = "Generate an SVG of a pelican riding a bicycle"
+            agent._load_session("session_guidance_refresh", old_prompt)
+            provider = FakeCodingProvider()
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                agent.run({"payload": {"session_id": "session_guidance_refresh", "prompt": "创建 hello.py"}})
+
+            self.assertEqual(provider.message_histories[0][0]["content"], CodingAgent.SYSTEM_PROMPT)
 
     def test_summary_checkpoint_runs_every_configured_turns(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

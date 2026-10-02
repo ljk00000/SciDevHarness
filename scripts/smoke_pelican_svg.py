@@ -54,6 +54,7 @@ REQUEST_METRIC_FIELDS = (
     "streaming",
     "max_tokens",
     "tools",
+    "user_message_count",
     "http_status",
     "headers_seconds",
     "first_body_byte_seconds",
@@ -1462,6 +1463,23 @@ def run_smoke(
         started = time.perf_counter()
         record = wire_requests[-1]
         record["request_bytes"] = len(request.data or b"")
+        request_messages = payload.get("messages")
+        user_messages = []
+        if isinstance(request_messages, list):
+            user_messages = [
+                message
+                for message in request_messages
+                if isinstance(message, dict) and message.get("role") == "user"
+            ]
+        record["user_message_count"] = len(user_messages)
+        if len(user_messages) != 1:
+            raise RuntimeError(
+                f"single-prompt smoke blocked an outbound request containing {len(user_messages)} user messages"
+            )
+        if requested_model != vision_model and not str(user_messages[0].get("content", "")).endswith(
+            PELICAN_PROMPT
+        ):
+            raise RuntimeError("single-prompt smoke detected a rewritten or replaced user task")
         record["phase"] = (
             f"{request_phase['value']}_visual_review" if requested_model == vision_model and vision_model else request_phase["value"]
         )
@@ -1509,6 +1527,7 @@ def run_smoke(
             git,
             event_callback=lambda name, data: record_smoke_event(events, name, data),
             summary_settings=summary_settings,
+            single_user_prompt_only=True,
         )
         agent.MAX_SVG_ARTIFACT_TURNS = agent_turn_limit
 
@@ -1521,6 +1540,25 @@ def run_smoke(
                 with patch("scidev_core.urlopen", new=observe_request):
                     return agent.run(task)
             except Exception as exc:
+                artifact_note = ""
+                relative_svg = latest_svg_write_path(collect_svg_mutations(events))
+                if relative_svg:
+                    source = (root / relative_svg).resolve()
+                    if source.is_relative_to(root) and source.is_file():
+                        target = artifacts / "pelican_unverified.svg"
+                        suffix = 1
+                        while target.exists():
+                            target = artifacts / f"pelican_unverified_{suffix}.svg"
+                            suffix += 1
+                        shutil.copyfile(source, target)
+                        preview = target.with_name(f"{target.stem}_preview.png")
+                        try:
+                            validate_and_render_svg(source.read_bytes(), preview)
+                        except RuntimeError:
+                            pass
+                        artifact_note = f"; unverified SVG copied to {target}"
+                        if preview.is_file():
+                            artifact_note += f"; rendered preview saved to {preview}"
                 diagnostic_path = persist_failure_diagnostic(
                     artifacts,
                     model=model,
@@ -1533,7 +1571,7 @@ def run_smoke(
                 )
                 raise RuntimeError(
                     f"local Harness call failed in {session_id}: {type(exc).__name__}: {exc}; "
-                    f"diagnostic saved to {diagnostic_path}"
+                    f"diagnostic saved to {diagnostic_path}{artifact_note}"
                 ) from exc
 
         def collect_file_calls() -> list[dict[str, Any]]:
@@ -1678,6 +1716,7 @@ def run_smoke(
             "conversation_summary_enabled": summary_settings.enabled,
             "agent_turn_limit": agent_turn_limit,
             "task_prompt_count": 1,
+            "user_messages_per_request": [int(request.get("user_message_count", 0)) for request in wire_requests],
             "requests": wire_requests,
             "temporary_workspace_clean": True,
             **validation,

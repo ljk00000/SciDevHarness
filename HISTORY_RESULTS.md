@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-02 17:35（Asia/Shanghai）· 任务级提示与真实单提示评测
+
+- 将纯 SVG 指导从通用系统提示拆分为按任务注入；通用提示从 884 缩至 666 字符，并为 SVG 任务补充“调用前按原句自检对象/关系”的通用要求。续接会话按新任务更新 system 指令，测试覆盖通用/SVG 分流与任务切换。
+- 新增可选 `single_user_prompt_only` 模式，Harness 遇到格式错误、缺文件、结构预检失败等需要追加用户消息的情况时，在下一次模型请求前停止；原有客户端默认恢复行为不变。pelican smoke 启用该模式，并在 HTTP 边界断言每个请求仅含一个 user 消息、主任务内容以原句结束；每次只评测一条任务，不下载模型。
+- Qwen2.5-Coder-7B 真实运行（max tokens 12,000）仍失败：一次请求，user 消息数 1，产物 viewBox 仅 100×100；渲染为抽象蓝椭圆/黄三角，无自行车，严格预检缺 17 个语义部件。失败在结构预检后即时停止，没有人工/模型重写提示、额外补救调用或 Git commit；未验证 SVG 与 PNG 预览保存在 `%LOCALAPPDATA%\Temp\scidev-pelican-svg-bjcaxu7z`。
+- 全量 `unittest` 180/180、`compileall`、`git diff --check` 通过。初次开启严格模式时发现结构反馈会额外触发模型请求，现已改为工具结果后立即停止；本次最新运行流量降为单次请求，完整 user 消息数证据在诊断 JSON。
+
 ## 2026-10-02 16:56（Asia/Shanghai）· 推理模型参数与高 context 对照
 
 - 增加 opt-in `SCIDEV_REASONING_EFFORT` 并透传到支持此字段的 OpenAI-compatible 模型；默认不发送。Qwen3.5-4B 的 `none` 模式返回了有效工具调用和可辨认的 pelican/bicycle 插画，但 5 次本机调用约 255 秒，严格预检仍失败；Qwen2.5-Coder-7B 在 32K context 下也未通过。更大 context 不是内容质量的充分修复。
