@@ -1,11 +1,12 @@
 # 历史与结果
 
-## 2026-10-02 18:31（Asia/Shanghai）· 单原句工具反馈与两档 DPI 回归
+## 2026-10-02 18:38（Asia/Shanghai）· 单原句工具反馈与两档 DPI 回归
 
 - 严格 smoke 在保持唯一原始 user 消息的前提下，可继续使用 SVG 结构预检、工具 schema 拒绝等已有对话/工具反馈；普通模式仍保留原有用户级补救路径。回归验证恢复了 `read_file` 阶段限制、拒绝未授权整图重写，且不会把额外 user 消息发给模型。
 - Qwen2.5-Coder-7B 实测 3 次本机请求，每次 user 消息数为 1；Harness 完成 `write_file`、提交前 `git_diff` 和临时任务提交，但固定任务未通过最终 SVG 语义验收：viewBox 100×100，缺 17 个 pelican/bicycle 关键部件。未提交到项目仓库；预览/诊断在 `%LOCALAPPDATA%\Temp\scidev-pelican-svg-uithfr92`。
 - Qwen3.5-4B 基线图可辨认鸟与自行车但未过结构预检；另一轮首响应 240 秒超时。两轮均未下载权重或更改服务设置。
 - 全量 `unittest` 181/181、`compileall`、`git diff --check` 通过。编辑器和版本树离屏截图 smoke 在 100% 与 125% DPI 下覆盖 1500×920、1180×760、940×620、820×600、780×480，并验证拖动/滚动/缩放/恢复。CUA 两次均无可见 app 列表，因此仅记离屏结果。
+- 核心改动提交 `53378c8dbd4bbf808a407d455204ee0c623e739c` 已推送到唯一公开 `master`；Windows CI [36996307234](https://github.com/ljk00000/SciDevHarness/actions/runs/36996307234) 的 Python 3.12/3.13/3.14 全通过。
 
 ## 2026-10-02 17:35（Asia/Shanghai）· 任务级提示与真实单提示评测
 
