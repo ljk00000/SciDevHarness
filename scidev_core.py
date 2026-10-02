@@ -928,6 +928,7 @@ class OpenAICompatibleProvider:
         text_tool_call_fallback: bool = False,
         streaming: bool = True,
         presence_penalty: float | None = None,
+        temperature: float = 0.2,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -938,6 +939,9 @@ class OpenAICompatibleProvider:
         if presence_penalty is not None and not -2.0 <= float(presence_penalty) <= 2.0:
             raise ValueError("presence_penalty must be between -2 and 2")
         self.presence_penalty = float(presence_penalty) if presence_penalty is not None else None
+        if not 0.0 <= float(temperature) <= 2.0:
+            raise ValueError("temperature must be between 0 and 2")
+        self.temperature = float(temperature)
 
     def with_model(self, model: str) -> "OpenAICompatibleProvider":
         return type(self)(
@@ -948,6 +952,7 @@ class OpenAICompatibleProvider:
             self.text_tool_call_fallback,
             self.streaming,
             self.presence_penalty,
+            self.temperature,
         )
 
     @classmethod
@@ -987,6 +992,13 @@ class OpenAICompatibleProvider:
                 raise PermanentError("SCIDEV_PRESENCE_PENALTY 必须是 -2 到 2 之间的数字") from exc
             if not -2.0 <= presence_penalty <= 2.0:
                 raise PermanentError("SCIDEV_PRESENCE_PENALTY 必须是 -2 到 2 之间的数字")
+        raw_temperature = os.getenv("SCIDEV_TEMPERATURE", "0.2").strip()
+        try:
+            temperature = float(raw_temperature)
+        except ValueError as exc:
+            raise PermanentError("SCIDEV_TEMPERATURE 必须是 0 到 2 之间的数字") from exc
+        if not 0.0 <= temperature <= 2.0:
+            raise PermanentError("SCIDEV_TEMPERATURE 必须是 0 到 2 之间的数字")
         return cls(
             base_url,
             api_key,
@@ -995,6 +1007,7 @@ class OpenAICompatibleProvider:
             text_tool_call_fallback=text_tool_call_fallback,
             streaming=streaming,
             presence_penalty=presence_penalty,
+            temperature=temperature,
         )
 
     @staticmethod
@@ -1384,7 +1397,7 @@ class OpenAICompatibleProvider:
             "model": self.model,
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": 0.2,
+            "temperature": self.temperature,
             "stream": self.streaming,
         }
         if self.presence_penalty is not None:
@@ -2390,14 +2403,34 @@ class CodingAgent:
             edit_properties.pop("replace_all", None)
         return selected
 
-    def _svg_preflight_repair_tool_definitions(self, *, file_was_read: bool) -> list[dict[str, Any]]:
-        """Require a read-then-edit sequence while structural SVG repair is pending."""
+    def _svg_preflight_repair_tool_definitions(
+        self,
+        *,
+        file_was_read: bool,
+        inferred_path: str = "",
+    ) -> list[dict[str, Any]]:
+        """Require read-then-edit; only relax path when one target was just read."""
         required_name = "replace_in_file" if file_was_read else "read_file"
-        return [
+        selected = [
             definition
             for definition in self._svg_artifact_repair_tool_definitions()
             if definition.get("function", {}).get("name") == required_name
         ]
+        if required_name == "replace_in_file" and inferred_path:
+            for definition in selected:
+                parameters = definition.get("function", {}).get("parameters", {})
+                path_schema = parameters.get("properties", {}).get("path")
+                if not isinstance(path_schema, dict):
+                    continue
+                path_schema["enum"] = [inferred_path]
+                path_schema["description"] = (
+                    "Omit only when editing the sole file just read; the Harness will bind this exact path. "
+                    "If supplied, it must match this path."
+                )
+                parameters["required"] = [
+                    name for name in parameters.get("required", []) if name != "path"
+                ]
+        return selected
 
     def _normalized_tool_path(self, raw_path: Any) -> str:
         raw = str(raw_path or "")
@@ -2763,7 +2796,8 @@ class CodingAgent:
         # tool sequence as repairs triggered inside an SVG creation session.
         # Otherwise a model can keep choosing read_file/git_diff and never edit.
         svg_preflight_pending = SvgArtifactAdapter.is_local_repair_request(prompt)
-        svg_repair_read_paths: set[str] = set()
+        # Keep the original spelling for safe inference on case-sensitive filesystems.
+        svg_repair_read_paths: dict[str, str] = {}
         last_svg_preflight_revision: int | None = None
         last_svg_preflight_fingerprint: str | None = None
         identical_svg_preflight_retries = 0
@@ -2775,8 +2809,14 @@ class CodingAgent:
 
         for turn in range(1, turn_limit + 1):
             if svg_preflight_pending and self.EXPLICIT_COMMAND_INTENT.search(prompt) is None:
+                inferred_path = (
+                    next(iter(svg_repair_read_paths.values()))
+                    if len(svg_repair_read_paths) == 1
+                    else ""
+                )
                 tool_definitions = self._svg_preflight_repair_tool_definitions(
-                    file_was_read=bool(svg_repair_read_paths)
+                    file_was_read=bool(svg_repair_read_paths),
+                    inferred_path=inferred_path,
                 )
                 allowed_tool_names = {
                     definition["function"]["name"]
@@ -3289,6 +3329,22 @@ class CodingAgent:
                         raise ValueError("工具参数必须是 JSON 对象")
                     if name not in allowed_tool_names:
                         raise PermanentError(f"Tool {name!r} is not available for this task.")
+                    if (
+                        svg_preflight_pending
+                        and name == "replace_in_file"
+                        and "path" not in arguments
+                        and len(svg_repair_read_paths) == 1
+                    ):
+                        arguments["path"] = next(iter(svg_repair_read_paths.values()))
+                        inference_event = {
+                            "session_id": session_id,
+                            "turn": turn,
+                            "tool_name": name,
+                            "argument": "path",
+                            "reason": "single_recently_read_target",
+                        }
+                        self.ledger.append("tool_argument_inferred", inference_event)
+                        self._emit("tool_argument_inferred", inference_event)
                     normalized_tool_path = self._normalized_tool_path(arguments.get("path", ""))
                     if (
                         svg_preflight_pending
@@ -3327,7 +3383,7 @@ class CodingAgent:
                         if svg_task:
                             svg_mutation_seen = True
                     if svg_preflight_pending and name == "read_file":
-                        svg_repair_read_paths.add(normalized_tool_path)
+                        svg_repair_read_paths[normalized_tool_path] = str(arguments.get("path", ""))
                     if SvgArtifactAdapter.is_creation_request(prompt) and name == "write_file":
                         svg_creation_written = True
                     if svg_task and name in {"write_file", "replace_in_file"}:

@@ -642,6 +642,7 @@ class CoreTests(unittest.TestCase):
                 self.calls = 0
                 self.histories: list[list[dict]] = []
                 self.tools_by_call: list[set[str]] = []
+                self.tool_definitions_by_call: list[list[dict]] = []
 
             @staticmethod
             def call(name: str, arguments: dict, call_id: str) -> dict:
@@ -661,6 +662,7 @@ class CoreTests(unittest.TestCase):
                 self.calls += 1
                 self.histories.append([dict(message) for message in messages])
                 self.tools_by_call.append({item["function"]["name"] for item in tools or []})
+                self.tool_definitions_by_call.append(list(tools or []))
                 if self.calls == 1:
                     return self.call(
                         "write_file",
@@ -679,7 +681,6 @@ class CoreTests(unittest.TestCase):
                     return self.call(
                         "replace_in_file",
                         {
-                            "path": "generated.svg",
                             "old_text": '<circle cx="50" cy="50" r="10"/>',
                             "new_text": '<circle id="subject" cx="50" cy="50" r="10"/>',
                         },
@@ -693,7 +694,19 @@ class CoreTests(unittest.TestCase):
             ledger = EventLedger(root)
             git = GitManager(root)
             git.commit_changes("preflight baseline")
-            agent = CodingAgent(root, ledger, git, summary_settings=SummarySettings(enabled=False))
+            events: list[tuple[str, dict]] = []
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                event_callback=lambda name, data: events.append((name, data)),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            ambiguous_edit_schema = agent._svg_preflight_repair_tool_definitions(
+                file_was_read=True
+            )[0]["function"]["parameters"]
+            self.assertIn("path", ambiguous_edit_schema["required"])
+            self.assertNotIn("enum", ambiguous_edit_schema["properties"]["path"])
             provider = ReadThenNoopThenEditProvider()
             prompt = "Generate an SVG of a pelican riding a bicycle"
             with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
@@ -704,6 +717,12 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(provider.tools_by_call[1], {"read_file"})
             self.assertEqual(provider.tools_by_call[2], {"replace_in_file"})
             self.assertEqual(provider.tools_by_call[3], {"replace_in_file"})
+            edit_schema = provider.tool_definitions_by_call[2][0]["function"]["parameters"]
+            self.assertNotIn("path", edit_schema["required"])
+            self.assertEqual(edit_schema["properties"]["path"]["enum"], ["generated.svg"])
+            inferred = [data for name, data in events if name == "tool_argument_inferred"]
+            self.assertEqual(len(inferred), 1)
+            self.assertEqual(inferred[0]["reason"], "single_recently_read_target")
             self.assertIn('id="subject"', (root / "generated.svg").read_text(encoding="utf-8"))
             followup = "\n".join(
                 message.get("content", "")
@@ -2304,6 +2323,7 @@ class CoreTests(unittest.TestCase):
             configured = OpenAICompatibleProvider.from_env()
             self.assertEqual(configured.timeout, 90)
             self.assertTrue(configured.streaming)
+            self.assertEqual(configured.temperature, 0.2)
         with patch.dict(os.environ, {**provider_environment, "SCIDEV_REQUEST_TIMEOUT_SECONDS": "240"}, clear=True):
             self.assertEqual(OpenAICompatibleProvider.from_env().timeout, 240)
         with patch.dict(os.environ, {**provider_environment, "SCIDEV_STREAMING": "off"}, clear=True):
@@ -2335,11 +2355,40 @@ class CoreTests(unittest.TestCase):
             provider.chat([{"role": "user", "content": "test"}], max_tokens=12000)
         request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(request_body["max_tokens"], 12000)
+        self.assertEqual(request_body["temperature"], 0.2)
         self.assertEqual(request_body["presence_penalty"], 0.0)
 
         with patch.dict(os.environ, {**provider_environment, "SCIDEV_PRESENCE_PENALTY": "2.1"}, clear=True):
             with self.assertRaisesRegex(PermanentError, "SCIDEV_PRESENCE_PENALTY"):
                 OpenAICompatibleProvider.from_env()
+
+    def test_provider_temperature_is_configurable_bounded_and_preserved_for_summary_models(self) -> None:
+        provider_environment = {
+            "SCIDEV_API_BASE": "http://127.0.0.1:11434/v1",
+            "SCIDEV_API_KEY": "local-test-key",
+            "SCIDEV_MODEL": "local-test-model",
+            "SCIDEV_STREAMING": "false",
+            "SCIDEV_TEMPERATURE": "0",
+        }
+        with patch.dict(os.environ, provider_environment, clear=True):
+            provider = OpenAICompatibleProvider.from_env()
+        self.assertEqual(provider.temperature, 0.0)
+        self.assertEqual(provider.with_model("summary-model").temperature, 0.0)
+
+        response = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).encode()
+        with patch("scidev_core.urlopen", return_value=BytesIO(response)) as opener:
+            provider.chat([{"role": "user", "content": "test"}], max_tokens=12000)
+        request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(request_body["temperature"], 0.0)
+
+        for temperature in ("-0.1", "2.1", "not-a-number", "NaN"):
+            with self.subTest(temperature=temperature), patch.dict(
+                os.environ,
+                {**provider_environment, "SCIDEV_TEMPERATURE": temperature},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(PermanentError, "SCIDEV_TEMPERATURE"):
+                    OpenAICompatibleProvider.from_env()
 
     def test_bare_json_tool_call_is_parsed_only_when_opted_in(self) -> None:
         tools = [

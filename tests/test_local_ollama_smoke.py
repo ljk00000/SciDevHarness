@@ -184,6 +184,7 @@ class LocalOllamaSmokeTests(unittest.TestCase):
     def test_qwen_launcher_sets_process_scoped_streaming_and_timeout_defaults(self) -> None:
         launcher = Path(__file__).resolve().parents[1] / "start_qwen_local.bat"
         source = launcher.read_text(encoding="utf-8")
+        self.assertIn('if not defined SCIDEV_TEMPERATURE set "SCIDEV_TEMPERATURE=0"', source)
         self.assertIn('if not defined SCIDEV_REQUEST_TIMEOUT_SECONDS set "SCIDEV_REQUEST_TIMEOUT_SECONDS=240"', source)
         self.assertIn('if not defined SCIDEV_STREAMING set "SCIDEV_STREAMING=1"', source)
         self.assertIn("setlocal", source.casefold())
