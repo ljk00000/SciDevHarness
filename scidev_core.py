@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import difflib
+import math
 import os
 import re
 import sqlite3
@@ -13,6 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import Counter
 import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1280,6 +1282,12 @@ class CodingToolbox:
 
     MAX_READ_BYTES = 240_000
     MAX_WRITE_BYTES = 360_000
+    SVG_GEOMETRY_TAGS = frozenset(
+        {"circle", "ellipse", "image", "line", "path", "polygon", "polyline", "rect", "text", "use"}
+    )
+    SVG_DEFINITION_CONTAINERS = frozenset(
+        {"clippath", "defs", "filter", "marker", "mask", "pattern", "symbol"}
+    )
     EXCLUDED_NAMES = set(DEFAULT_EXCLUDED_PATH_NAMES)
     SENSITIVE_NAMES = set(DEFAULT_SENSITIVE_PATH_NAMES)
     SAFE_ENV_TEMPLATES = DEFAULT_SAFE_ENV_TEMPLATES
@@ -1435,10 +1443,10 @@ class CodingToolbox:
             raise PermanentError(f"文件不是有效 UTF-8 文本，拒绝读取或编辑：{path.name}") from exc
 
     @staticmethod
-    def _validate_svg_document(path: Path, content: str | bytes) -> None:
+    def _validate_svg_document(path: Path, content: str | bytes) -> ET.Element | None:
         """Keep SVG writes and edits well-formed before they reach disk or auto-commit."""
         if path.suffix.casefold() != ".svg":
-            return
+            return None
         raw = content.encode("utf-8") if isinstance(content, str) else bytes(content)
         lowered = raw.lower()
         if b"<!doctype" in lowered or b"<!entity" in lowered:
@@ -1450,6 +1458,87 @@ class CodingToolbox:
         local_name = root.tag.rsplit("}", 1)[-1].casefold() if isinstance(root.tag, str) else ""
         if local_name != "svg":
             raise PermanentError(f"拒绝写入根元素不是 svg 的文件：{path.name}")
+        return root
+
+    @classmethod
+    def _svg_structure_issues(cls, root: ET.Element) -> list[str]:
+        """Check broadly useful SVG structure without claiming visual correctness."""
+        issues: list[str] = []
+        view_box = root.attrib.get("viewBox", "").replace(",", " ").split()
+        try:
+            values = [float(value) for value in view_box]
+        except ValueError:
+            values = []
+        if (
+            len(values) != 4
+            or not all(math.isfinite(value) for value in values)
+            or values[2] <= 0
+            or values[3] <= 0
+        ):
+            issues.append("根元素缺少有效 viewBox；请提供四个有限数值且宽、高均为正数。")
+
+        elements = [element for element in root.iter() if isinstance(element.tag, str)]
+        parents = {child: parent for parent in elements for child in parent}
+        drawable: list[ET.Element] = []
+        for element in elements:
+            tag = element.tag.rsplit("}", 1)[-1].casefold()
+            if tag not in cls.SVG_GEOMETRY_TAGS:
+                continue
+            ancestor = parents.get(element)
+            inside_definition = False
+            while ancestor is not None:
+                ancestor_tag = ancestor.tag.rsplit("}", 1)[-1].casefold()
+                if ancestor_tag in cls.SVG_DEFINITION_CONTAINERS:
+                    inside_definition = True
+                    break
+                ancestor = parents.get(ancestor)
+            if not inside_definition:
+                drawable.append(element)
+
+        if not drawable:
+            issues.append("没有找到可见绘图几何元素；检查 SVG 是否只有标题、描述或 defs。")
+        else:
+            identified = [element for element in drawable if element.get("id", "").strip()]
+            if (len(drawable) == 1 and not identified) or (len(drawable) > 1 and len(identified) < 2):
+                group_ids = [
+                    element
+                    for element in elements
+                    if element.tag.rsplit("}", 1)[-1].casefold() == "g" and element.get("id", "").strip()
+                ]
+                if group_ids and not identified:
+                    issues.append(
+                        "语义 ID 只标在 g 分组上；请将主体和关键部件的唯一 ID 直接放在对应可见几何元素上。"
+                    )
+                else:
+                    issues.append(
+                        "可见绘图几何缺少足够的直接语义 ID；请标记主体及每个关键部件，装饰细节可不标。"
+                    )
+
+        identifiers = [element.get("id", "").strip() for element in elements if element.get("id", "").strip()]
+        duplicates = sorted(identifier for identifier, count in Counter(identifiers).items() if count > 1)
+        if duplicates:
+            sample = ", ".join(repr(identifier[:48]) for identifier in duplicates[:4])
+            issues.append(f"存在重复 SVG id：{sample}。每个 id 必须唯一。")
+        return issues
+
+    @classmethod
+    def _format_svg_structure_feedback(cls, root: ET.Element) -> str:
+        issues = cls._svg_structure_issues(root)
+        if not issues:
+            return "SVG 结构预检通过（只检查 XML/基础结构，未执行视觉渲染）。"
+        return "SVG 结构预检提示（文件已保存；尚未通过基础结构检查）：\n- " + "\n- ".join(issues[:5])
+
+    def svg_structure_issues_for_file(self, raw_path: str) -> list[str]:
+        target = self._resolve(raw_path, allow_root=False)
+        if target.suffix.casefold() != ".svg":
+            return []
+        if not target.exists() or not target.is_file():
+            return [f"文件不存在：{target.name}"]
+        raw = target.read_bytes()
+        if len(raw) > self.MAX_READ_BYTES:
+            return [f"文件过大，无法执行 SVG 结构预检：{target.name}"]
+        root = self._validate_svg_document(target, raw)
+        return self._svg_structure_issues(root) if root is not None else []
 
     def list_files(self, path: str = ".", depth: int = 3) -> str:
         base = self._resolve(path)
@@ -1511,7 +1600,7 @@ class CodingToolbox:
             raise PermanentError(f"拒绝写入过大文件（上限 {self.MAX_WRITE_BYTES} bytes）")
         if b"\x00" in encoded:
             raise PermanentError(f"拒绝写入包含 NUL 字节的文本文件：{path}")
-        self._validate_svg_document(target, encoded)
+        svg_root = self._validate_svg_document(target, encoded)
         if target.exists():
             if not target.is_file():
                 raise PermanentError(f"目标不是普通文件，拒绝覆盖：{path}")
@@ -1522,7 +1611,10 @@ class CodingToolbox:
         target.write_bytes(encoded)
         relative = target.relative_to(self.project_root).as_posix()
         self.ledger.append("file_changed", {"operation": "write", "path": relative, "bytes": len(encoded)})
-        return f"已写入 {relative}（{len(encoded)} bytes）"
+        result = f"已写入 {relative}（{len(encoded)} bytes）"
+        if svg_root is not None:
+            result += "\n" + self._format_svg_structure_feedback(svg_root)
+        return result
 
     def replace_in_file(
         self,
@@ -1565,7 +1657,7 @@ class CodingToolbox:
         if count > 1 and not replace_all:
             raise PermanentError(f"old_text 在 {path} 中匹配 {count} 次，请提供更精确文本或明确 replace_all=true")
         updated = text.replace(matched_old_text, new_text, -1 if replace_all else 1)
-        self._validate_svg_document(target, updated)
+        svg_root = self._validate_svg_document(target, updated)
         encoded = updated.encode("utf-8")
         if len(encoded) > self.MAX_WRITE_BYTES:
             raise PermanentError(f"拒绝写入过大文件（上限 {self.MAX_WRITE_BYTES} bytes）")
@@ -1574,7 +1666,10 @@ class CodingToolbox:
         target.write_bytes(encoded)
         relative = target.relative_to(self.project_root).as_posix()
         self.ledger.append("file_changed", {"operation": "replace", "path": relative, "matches": count})
-        return f"已修改 {relative}（匹配 {count} 次）"
+        result = f"已修改 {relative}（匹配 {count} 次）"
+        if svg_root is not None:
+            result += "\n" + self._format_svg_structure_feedback(svg_root)
+        return result
 
     def replace_many_in_file(self, path: str, edits: list[dict[str, Any]]) -> str:
         if not isinstance(edits, list) or not 1 <= len(edits) <= 50:
@@ -1633,14 +1728,17 @@ class CodingToolbox:
                 raise PermanentError("Batch edit would create a binary or oversized text file")
             total_matches += count
 
-        self._validate_svg_document(target, updated)
+        svg_root = self._validate_svg_document(target, updated)
         target.write_bytes(updated.encode("utf-8"))
         relative = target.relative_to(self.project_root).as_posix()
         self.ledger.append(
             "file_changed",
             {"operation": "replace", "path": relative, "matches": total_matches, "edits": len(normalized)},
         )
-        return f"Applied {len(normalized)} exact replacements to {relative} ({total_matches} match(es))"
+        result = f"Applied {len(normalized)} exact replacements to {relative} ({total_matches} match(es))"
+        if svg_root is not None:
+            result += "\n" + self._format_svg_structure_feedback(svg_root)
+        return result
 
     def run_command(self, command: str, timeout_seconds: int = 120) -> str:
         command = str(command or "").strip()
@@ -1962,7 +2060,7 @@ class CodingAgent:
     """Codex-style coding loop: inspect, edit, run checks, inspect diff, commit."""
 
     MAX_TURNS = 32
-    MAX_SVG_REPAIR_TURNS = 8
+    MAX_SVG_ARTIFACT_TURNS = 8
     MAX_SVG_CREATION_RETRIES = 1
     SVG_CREATION_TOOLS = frozenset({"write_file"})
     SVG_LOCAL_REPAIR_TOOLS = frozenset({"read_file", "replace_in_file", "git_diff"})
@@ -1976,15 +2074,16 @@ class CodingAgent:
     SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent。直接用工具完成用户在工作区内的请求；实际操作，不能用方案、代码块或声称代替工具结果。
 
 文件任务
-- 用户要求创建/生成可保存文件即为授权：选合理文件名，在工作区根目录调用 `write_file` 一次；不要为名称、路径、尺寸或风格追问。严格按用户指定对象与动作，不得换成相似对象。文件内容只放在工具参数里；没有成功工具结果不得声称已保存。简单图像/SVG 不用 shell 或下载。写入成功后简短确认，不重复输出整份文件。
-- 修改现有文件时，将引用的旧请求只视为背景。先读取目标及必要上下文，保留无关内容；局部修改用 `replace_in_file`，同文件多项独立精确修改可一次批量调用；仅在确需整体替换时用 `write_file`。实际调用工具并核验返回结果。
-- 仅在任务依赖时读取项目文件/目录。不得访问 `.git`、`.research`、密钥、环境变量、数据集或工作区外路径。
-- 修改后运行最小相关检查。运行命令须逐条经 UI 批准；被拒绝或超时后不得重试、拆分或变形规避。用户点名的工具/检查必须实际执行；未执行或失败要明说，不能将请求、计划或工具 JSON 当作结果。工具报错先分析修正，不假称完成；完成后简述改动、验证和限制。
-- 仅当实质歧义会改变结果或任务超出范围时询问；否则采用合理默认。不要擅自运行长实验/训练或下载大文件。
+- 创建/生成文件即授权：选合理文件名，在工作区根目录调用 `write_file` 一次；不要为名称、路径、尺寸或风格追问。严格按用户指定对象与动作，不得换成相似对象。内容只放工具参数；没有成功工具结果不得声称已保存。简单图像/SVG 不用 shell 或下载。
+- 修改现有文件时，将引用的旧请求只视为背景；先读目标和必要上下文、保留无关内容。局部用 `replace_in_file`，同文件多项独立精确修改可一次批量调用；仅整体替换用 `write_file`，并核验结果。
+- 仅读任务所需文件；不得访问 `.git`、`.research`、密钥、环境变量、数据集或工作区外路径。
+- 修改后运行最小相关检查。运行命令须逐条经 UI 批准；被拒绝或超时后不得重试、拆分或变形规避。用户点名的工具/检查必须实际执行；未执行或失败要明说，不能将请求、计划或工具 JSON 当作结果。工具报错先分析修正；完成后简述改动、验证和限制。
+- 仅当实质歧义会改变结果或任务超出范围时询问；否则用合理默认。不要擅自运行长实验/训练或下载大文件。
 
 图像与 SVG
-- 先定画布、构图与比例，再画清可识别主体和各部件的连接/接触关系，最后加细节和样式。动作、承载、操作须表现真实支撑和接触点；分离的近邻形状或色块不代表交互。
-- 保持主体姿态和关键部件清晰；避免不合理遮挡、重叠和 viewBox 裁切，留白与对比适度。简单 SVG 少于 60 个元素并闭合标签；主体和每个关键部件分别对应各自可见 SVG 几何元素及唯一语义 `id`；勿重复、勿仅给共享分组命名或用注释代替；ID 辅助检查但不能代替几何。
+- 先定画布、构图比例，再画清主体及连接/接触关系。动作、承载、操作须表现真实支撑和接触点；分离的近邻形状或色块不代表交互。
+- 保持主体和关键部件清晰，避免遮挡、重叠、viewBox 裁切。简单 SVG 少于 60 个元素并闭合标签；主体和每个关键部件分别对应各自可见 SVG 几何元素及唯一语义 `id`；勿重复、勿仅给共享分组命名或用注释代替，ID 不代替几何。
+- 工具若返回“SVG 结构预检提示”，先读文件并用精确局部编辑修复；结构通过不证明视觉渲染或语义正确，未实际渲染不得声称已渲染。
 - 创建后尽可能实际渲染/验证；只有工具确实确认后才能声称已完成渲染/验证。
 """
 
@@ -2052,6 +2151,30 @@ class CodingAgent:
                 edit_properties = edits.get("items", {}).get("properties", {})
                 edit_properties.pop("replace_all", None)
         return selected
+
+    def _svg_artifact_repair_tool_definitions(self) -> list[dict[str, Any]]:
+        """Return a stable, narrowly scoped tool schema for post-write SVG repair."""
+        selected = [
+            definition
+            for definition in self.toolbox.definitions()
+            if definition.get("function", {}).get("name") in self.SVG_ARTIFACT_TOOLS
+        ]
+        for definition in selected:
+            if definition.get("function", {}).get("name") != "replace_in_file":
+                continue
+            properties = definition.get("function", {}).get("parameters", {}).get("properties", {})
+            properties.pop("replace_all", None)
+            edit_properties = properties.get("edits", {}).get("items", {}).get("properties", {})
+            edit_properties.pop("replace_all", None)
+        return selected
+
+    def _normalized_tool_path(self, raw_path: Any) -> str:
+        raw = str(raw_path or "")
+        try:
+            target = self.toolbox._resolve(raw, allow_root=False)
+            return target.relative_to(self.project_root).as_posix().casefold()
+        except Exception:
+            return raw.replace("\\", "/").casefold()
 
     @classmethod
     def _tool_choice_for_tools(cls, tool_names: set[str]) -> str:
@@ -2350,6 +2473,7 @@ class CodingAgent:
         provider = OpenAICompatibleProvider.from_env()
         messages = session["messages"]
         tool_definitions = self._tool_definitions_for_prompt(prompt)
+        tool_scope_prompt = prompt
         allowed_tool_names = {
             definition["function"]["name"]
             for definition in tool_definitions
@@ -2360,9 +2484,14 @@ class CodingAgent:
         workspace_revision = 0
         diff_verified_revision = -1
         recovered_artifact_path = ""
+        svg_task = SvgArtifactAdapter.is_svg_artifact_request(prompt)
+        svg_mutation_seen = False
+        svg_creation_written = False
+        svg_preflight_pending = False
+        svg_repair_read_paths: set[str] = set()
         turn_limit = self.MAX_TURNS
-        if SvgArtifactAdapter.is_repair_request(prompt):
-            turn_limit = min(turn_limit, self.MAX_SVG_REPAIR_TURNS)
+        if svg_task:
+            turn_limit = min(turn_limit, self.MAX_SVG_ARTIFACT_TURNS)
 
         for turn in range(1, turn_limit + 1):
             if recovered_artifact_path:
@@ -2380,7 +2509,12 @@ class CodingAgent:
                         "assistant_delta",
                         {"session_id": session_id, "turn": turn, "text": text},
                     )
-                    stream_options["tool_choice"] = self._tool_choice_for_tools(allowed_tool_names)
+                    stream_options["tool_choice"] = (
+                        "required"
+                        if svg_task and (not svg_mutation_seen or svg_preflight_pending)
+                        else "auto" if svg_task
+                        else self._tool_choice_for_tools(allowed_tool_names)
+                    )
                 message = provider.chat(
                     messages,
                     tools=tool_definitions,
@@ -2480,6 +2614,72 @@ class CodingAgent:
                     self.ledger.append("coding_session_failed", failure)
                     self._save_session(session)
                     raise PermanentError(session["error"])
+                svg_preflight_failures: list[tuple[str, str]] = []
+                if svg_task:
+                    for artifact_path in sorted(path for path in changed_paths if path.casefold().endswith(".svg")):
+                        try:
+                            artifact_issues = self.toolbox.svg_structure_issues_for_file(artifact_path)
+                        except Exception as exc:
+                            artifact_issues = [f"无法完成结构预检（{type(exc).__name__}）"]
+                        svg_preflight_failures.extend(
+                            (artifact_path, issue) for issue in artifact_issues
+                        )
+                if svg_preflight_failures:
+                    compact_issues = "\n".join(
+                        f"- {path}: {issue}" for path, issue in svg_preflight_failures[:8]
+                    )
+                    if turn >= turn_limit:
+                        error = (
+                            f"SVG 结构预检在 {turn_limit} 个 Agent 回合后仍未通过；"
+                            "文件保留在工作区，未自动提交。\n" + compact_issues
+                        )
+                        session["status"] = "failed"
+                        session["error"] = error[:3000]
+                        session["updated_at"] = now_iso()
+                        failure = {
+                            "session_id": session_id,
+                            "turn": turn,
+                            "issues": compact_issues[:1800],
+                        }
+                        self.ledger.append("svg_preflight_failed", failure)
+                        self.ledger.append("coding_session_failed", failure | {"error": error[:1000]})
+                        self._save_session(session)
+                        raise PermanentError(error)
+                    if messages and messages[-1].get("role") == "assistant" and not messages[-1].get("tool_calls"):
+                        messages.pop()
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "The SVG was saved, but the Harness structural preflight found unresolved issues:\n"
+                                f"{compact_issues}\n"
+                                "Read the generated SVG and make focused exact edits with replace_in_file; preserve "
+                                "valid artwork and avoid broad replacement. The user's original request remains "
+                                "unchanged. After edits, wait for the structural preflight result. This preflight "
+                                "does not prove visual rendering or semantic correctness."
+                            ),
+                        }
+                    )
+                    svg_preflight_pending = True
+                    svg_repair_read_paths.clear()
+                    if self.EXPLICIT_COMMAND_INTENT.search(prompt) is None:
+                        tool_scope_prompt = (
+                            "Repair only these localized SVG issues in the SVG just created; preserve valid artwork. "
+                            "Use exact replace_in_file edits and inspect git_diff."
+                        )
+                        tool_definitions = self._svg_artifact_repair_tool_definitions()
+                        allowed_tool_names = {item["function"]["name"] for item in tool_definitions}
+                    retry_event = {
+                        "session_id": session_id,
+                        "turn": turn,
+                        "issues": compact_issues[:1800],
+                    }
+                    self.ledger.append("svg_preflight_retry_scheduled", retry_event)
+                    self._emit("svg_preflight_retry_scheduled", retry_event)
+                    recovered_artifact_path = ""
+                    session["updated_at"] = now_iso()
+                    self._save_session(session)
+                    continue
                 if changed_paths and diff_verified_revision != workspace_revision:
                     # The model's premature final text is not shown or retained;
                     # it must review the actual diff before producing a final answer.
@@ -2621,13 +2821,30 @@ class CodingAgent:
                 call_id = str(call.get("id", new_id("tool")))
                 raw_arguments = function.get("arguments", "{}")
                 tool_succeeded = False
+                normalized_tool_path = ""
                 try:
                     arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
                     if not isinstance(arguments, dict):
                         raise ValueError("工具参数必须是 JSON 对象")
                     if name not in allowed_tool_names:
                         raise PermanentError(f"Tool {name!r} is not available for this task.")
-                    self._validate_tool_edit_scope(prompt, name, arguments)
+                    normalized_tool_path = self._normalized_tool_path(arguments.get("path", ""))
+                    if (
+                        svg_preflight_pending
+                        and name == "replace_in_file"
+                        and normalized_tool_path not in svg_repair_read_paths
+                    ):
+                        raise PermanentError(
+                            "Read the saved SVG with read_file immediately before editing it; "
+                            "then use an exact replace_in_file edit."
+                        )
+                    if (
+                        SvgArtifactAdapter.is_creation_request(prompt)
+                        and svg_creation_written
+                        and name == "write_file"
+                    ):
+                        raise PermanentError("Initial SVG creation already wrote a file; use focused edit tools to repair it.")
+                    self._validate_tool_edit_scope(tool_scope_prompt, name, arguments)
                     tool_event = {"session_id": session_id, "name": name, "arguments": arguments}
                     if call_id in recovered_tool_ids:
                         tool_event["source"] = "harness_svg_artifact_recovery"
@@ -2636,6 +2853,8 @@ class CodingAgent:
                     tool_succeeded = True
                 except Exception as exc:  # Tool errors go back to the model for correction.
                     result = f"工具执行失败：{type(exc).__name__}: {exc}"
+                if svg_preflight_pending and name == "replace_in_file":
+                    svg_repair_read_paths.discard(normalized_tool_path)
                 if tool_succeeded:
                     if call_id in recovered_tool_ids and name == "write_file":
                         recovered_artifact_path = str(arguments.get("path", ""))
@@ -2644,6 +2863,20 @@ class CodingAgent:
                         changed.add(str(arguments.get("path", "")))
                         session["agent_changed_paths"] = sorted(path for path in changed if path)
                         workspace_revision += 1
+                        if svg_task:
+                            svg_mutation_seen = True
+                    if svg_preflight_pending and name == "read_file":
+                        svg_repair_read_paths.add(normalized_tool_path)
+                    if SvgArtifactAdapter.is_creation_request(prompt) and name == "write_file":
+                        svg_creation_written = True
+                    if svg_task and name in {"write_file", "replace_in_file"}:
+                        svg_preflight_pending = "SVG 结构预检提示" in str(result)
+                        if svg_preflight_pending and self.EXPLICIT_COMMAND_INTENT.search(prompt) is None:
+                            tool_scope_prompt = (
+                                "Repair only these localized SVG issues in the SVG just created; preserve valid artwork. "
+                                "Use exact replace_in_file edits and inspect git_diff."
+                            )
+                            svg_repair_read_paths.clear()
                     elif name == "run_command":
                         workspace_revision += 1
                     elif name == "git_diff":
@@ -2656,6 +2889,23 @@ class CodingAgent:
                 )
                 self._emit("tool_result", {"session_id": session_id, "name": name, "result": result})
                 self._save_session(session)
+
+            if (
+                svg_creation_written
+                and self.EXPLICIT_COMMAND_INTENT.search(prompt) is None
+            ):
+                tool_scope_prompt = (
+                    "Repair only these localized SVG issues in the SVG just created; preserve valid artwork. "
+                    "Use exact replace_in_file edits and inspect git_diff."
+                )
+                tool_definitions = self._svg_artifact_repair_tool_definitions()
+                allowed_tool_names = {
+                    definition["function"]["name"]
+                    for definition in tool_definitions
+                    if isinstance(definition, dict)
+                    and isinstance(definition.get("function"), dict)
+                    and isinstance(definition["function"].get("name"), str)
+                }
 
             interval = self.summary_settings.interval_turns
             if (

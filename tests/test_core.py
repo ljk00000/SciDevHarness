@@ -73,8 +73,11 @@ class MissingSvgThenWriteProvider:
                             "name": "write_file",
                             "arguments": json.dumps(
                                 {
-                                    "path": "pelican.svg",
-                                    "content": '<svg xmlns="http://www.w3.org/2000/svg"><title>Pelican</title></svg>',
+                                "path": "pelican.svg",
+                                "content": (
+                                    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
+                                    '<circle id="subject" cx="160" cy="100" r="40"/></svg>'
+                                ),
                                 }
                             ),
                         },
@@ -91,7 +94,10 @@ class TextSvgEnvelopeProvider:
     def chat(self, _messages, tools=None, max_tokens=12000, request_id=""):
         self.calls += 1
         if self.calls == 1:
-            source = '<svg xmlns="http://www.w3.org/2000/svg"><title>Pelican</title></svg>'
+            source = (
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
+                '<title>Pelican</title><circle id="subject" cx="160" cy="100" r="40"/></svg>'
+            )
             envelope = json.dumps(
                 {"name": "write_file", "arguments": {"path": "pelican.svg", "content": source}}
             )
@@ -321,7 +327,10 @@ class CoreTests(unittest.TestCase):
                                     "arguments": json.dumps(
                                         {
                                             "path": "pelican.svg",
-                                            "content": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><circle cx="20" cy="20" r="5"/></svg>',
+                                            "content": (
+                                                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
+                                                '<circle id="subject" cx="20" cy="20" r="5"/></svg>'
+                                            ),
                                         }
                                     ),
                                 },
@@ -419,6 +428,169 @@ class CoreTests(unittest.TestCase):
                 "replace_all",
                 replace_schema["properties"]["edits"]["items"]["properties"],
             )
+
+    def test_svg_creation_returns_generic_preflight_to_model_and_repairs_before_commit(self) -> None:
+        class PreflightRepairProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.message_histories: list[list[dict]] = []
+                self.exposed_tools: list[set[str]] = []
+
+            @staticmethod
+            def call(name: str, arguments: dict, call_id: str) -> dict:
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(arguments)},
+                        }
+                    ],
+                }
+
+            def chat(self, messages, tools=None, max_tokens=12000, request_id=""):
+                self.calls += 1
+                self.message_histories.append([dict(message) for message in messages])
+                self.exposed_tools.append({item["function"]["name"] for item in tools or []})
+                if self.calls == 1:
+                    return self.call(
+                        "write_file",
+                        {
+                            "path": "generated.svg",
+                            "content": (
+                                '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">'
+                                '<g id="scene"><circle cx="160" cy="100" r="40"/></g></svg>'
+                            ),
+                        },
+                        "write_svg",
+                    )
+                if self.calls == 2:
+                    return self.call(
+                        "replace_in_file",
+                        {
+                            "path": "generated.svg",
+                            "old_text": "<circle cx=\"160\" cy=\"100\" r=\"40\"/>",
+                            "new_text": '<circle id="subject" cx="160" cy="100" r="40"/>',
+                        },
+                        "edit_without_read",
+                    )
+                if self.calls == 3:
+                    return self.call("read_file", {"path": "generated.svg"}, "read_svg")
+                if self.calls == 4:
+                    return self.call(
+                        "replace_in_file",
+                        {
+                            "path": "generated.svg",
+                            "edits": [
+                                {
+                                    "old_text": '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">',
+                                    "new_text": (
+                                        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" '
+                                        'viewBox="0 0 320 200">'
+                                    ),
+                                },
+                                {
+                                    "old_text": '<circle cx="160" cy="100" r="40"/>',
+                                    "new_text": '<circle id="subject" cx="160" cy="100" r="40"/>',
+                                },
+                            ],
+                        },
+                        "repair_svg",
+                    )
+                return {"role": "assistant", "content": "SVG structure has been checked.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            agent = CodingAgent(root, ledger, GitManager(root), summary_settings=SummarySettings(enabled=False))
+            provider = PreflightRepairProvider()
+            prompt = "Generate an SVG of a pelican riding a bicycle"
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {"session_id": "svg_preflight_repair", "prompt": prompt}})
+
+            self.assertTrue(result["git_result_sha"])
+            self.assertEqual(provider.calls, 6)
+            self.assertEqual(provider.exposed_tools[0], {"write_file"})
+            repair_tools = set(CodingAgent.SVG_ARTIFACT_TOOLS)
+            self.assertEqual(provider.exposed_tools[1:], [repair_tools] * 5)
+            rejected_edit_feedback = [
+                message.get("content", "")
+                for message in provider.message_histories[2]
+                if message.get("role") == "tool"
+            ]
+            self.assertTrue(any("Read the saved SVG with read_file" in message for message in rejected_edit_feedback))
+            preflight_messages = [
+                message.get("content", "")
+                for message in provider.message_histories[1]
+                if message.get("role") == "tool"
+            ]
+            self.assertTrue(any("SVG 结构预检提示" in message for message in preflight_messages))
+            first_user_prompt = next(
+                message["content"] for message in provider.message_histories[0] if message.get("role") == "user"
+            )
+            self.assertTrue(first_user_prompt.endswith(prompt))
+            self.assertEqual(first_user_prompt.count(prompt), 1)
+            system_prompt = provider.message_histories[0][0]["content"].casefold()
+            self.assertNotIn("pelican", system_prompt)
+            self.assertNotIn("bicycle", system_prompt)
+            self.assertEqual(agent.toolbox.svg_structure_issues_for_file("generated.svg"), [])
+
+    def test_svg_preflight_exhaustion_preserves_file_and_prevents_auto_commit(self) -> None:
+        class IgnoresPreflightProvider:
+            calls = 0
+
+            def chat(self, _messages, tools=None, max_tokens=12000, request_id=""):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "invalid_svg_write",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": json.dumps(
+                                        {
+                                            "path": "incomplete.svg",
+                                            "content": (
+                                                '<svg xmlns="http://www.w3.org/2000/svg"><title>Empty</title></svg>'
+                                            ),
+                                        }
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                return {"role": "assistant", "content": "Done.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            agent = CodingAgent(root, ledger, GitManager(root), summary_settings=SummarySettings(enabled=False))
+            agent.MAX_SVG_ARTIFACT_TURNS = 3
+            provider = IgnoresPreflightProvider()
+            prompt = "Generate an SVG of a pelican riding a bicycle"
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "SVG 结构预检在 3 个 Agent 回合后仍未通过"):
+                    agent.run({"payload": {"session_id": "svg_preflight_exhausted", "prompt": prompt}})
+
+            self.assertTrue((root / "incomplete.svg").is_file())
+            self.assertEqual(provider.calls, 3)
+            session = json.loads(
+                (root / ".research" / "sessions" / "svg_preflight_exhausted.json").read_text(encoding="utf-8")
+            )
+            events = [json.loads(line) for line in ledger.events_path.read_text(encoding="utf-8").splitlines()]
+            event_names = [event["event_type"] for event in events]
+            self.assertEqual(session["status"], "failed")
+            self.assertIn("svg_preflight_failed", event_names)
+            self.assertNotIn("git_commit_created", event_names)
+            self.assertNotIn("coding_session_completed", event_names)
 
     def test_targeted_svg_repair_rejects_replace_all(self) -> None:
         prompt = "Repair only these localized SVG issues in drawing.svg using replace_in_file."
@@ -532,7 +704,7 @@ class CoreTests(unittest.TestCase):
                 GitManager(root),
                 summary_settings=SummarySettings(enabled=False),
             )
-            agent.MAX_SVG_REPAIR_TURNS = 2
+            agent.MAX_SVG_ARTIFACT_TURNS = 2
 
             class RepeatedReadProvider:
                 calls = 0
@@ -1239,6 +1411,43 @@ class CoreTests(unittest.TestCase):
             with self.assertRaisesRegex(PermanentError, "格式错误的 SVG"):
                 toolbox.write_file("broken.svg", "<svg><path></svg>")
             self.assertFalse((root / "broken.svg").exists())
+
+    def test_svg_write_feedback_checks_viewbox_and_ids_on_visible_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(root, EventLedger(root))
+            result = toolbox.write_file(
+                "drawing.svg",
+                '<svg xmlns="http://www.w3.org/2000/svg"><defs><path id="template" d="M0 0"/></defs>'
+                '<g id="scene"><path d="M1 1L8 8"/><circle cx="5" cy="5" r="2"/></g></svg>',
+            )
+
+            self.assertIn("SVG 结构预检提示", result)
+            self.assertIn("viewBox", result)
+            self.assertIn("只标在 g 分组上", result)
+            self.assertNotIn("pelican", result.casefold())
+            self.assertNotIn("bicycle", result.casefold())
+            self.assertEqual(len(toolbox.svg_structure_issues_for_file("drawing.svg")), 2)
+
+    def test_svg_write_feedback_flags_duplicate_ids_and_passes_clean_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(root, EventLedger(root))
+            duplicated = toolbox.write_file(
+                "duplicate.svg",
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">'
+                '<circle id="shape" r="3"/><path id="shape" d="M1 1L2 2"/></svg>',
+            )
+            self.assertIn("重复 SVG id", duplicated)
+
+            valid = toolbox.write_file(
+                "valid.svg",
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">'
+                '<circle id="subject" r="3"/><path id="detail" d="M1 1L2 2"/></svg>',
+            )
+            self.assertIn("结构预检通过", valid)
+            self.assertIn("未执行视觉渲染", valid)
+            self.assertEqual(toolbox.svg_structure_issues_for_file("valid.svg"), [])
 
     def test_replace_in_file_tool_schema_supports_batched_edits(self) -> None:
         definitions = CodingToolbox.definitions()

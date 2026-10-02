@@ -22,6 +22,7 @@ from scripts.smoke_pelican_svg import (
     record_smoke_event,
     repair_guidance_for_failed_edit,
     repair_guidance_after_read_without_edit,
+    run_smoke,
     smoke_session_id,
     validate_and_render_svg,
 )
@@ -698,6 +699,13 @@ class PelicanSvgTests(unittest.TestCase):
             self.assertGreater(result["non_background_samples"], 25)
             self.assertEqual(result["intrinsic_width"], 320)
             self.assertEqual(result["element_counts"]["circle"], 6)
+
+    def test_smoke_budgets_are_bounded_before_any_model_request(self) -> None:
+        self.assertEqual(PELICAN_PROMPT, "Generate an SVG of a pelican riding a bicycle")
+        with self.assertRaisesRegex(ValueError, "max_repairs"):
+            run_smoke("", "", "", max_repairs=MAX_REPAIR_ATTEMPTS + 1)
+        with self.assertRaisesRegex(ValueError, "agent_turn_limit"):
+            run_smoke("", "", "", max_repairs=0, agent_turn_limit=1)
 
     def test_visible_illustration_does_not_depend_on_title_or_description_labels(self) -> None:
         unlabeled = VALID_PELICAN_SVG.replace(b"  <title>Pelican riding a bicycle</title>\n", b"")
