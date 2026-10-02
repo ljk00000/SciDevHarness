@@ -1461,8 +1461,11 @@ class DevelopmentTreeView(QQuickWidget):
             card_width = min(card_width, max(132, int((self.width() - 48) / 2)))
         trunk_x = self.width() // 2
         card_height = 68
-        top = 88
-        row_height = 122
+        compact_layout = self.width() < 520 or self.height() < 360
+        top = 48 if compact_layout else 88
+        row_height = 80 if compact_layout else 122
+        attempt_offset = 40 if compact_layout else 54
+        attempt_slot_height = 90
         cards: dict[str, tuple[int, int, QRect]] = {}
         dots: dict[str, tuple[int, int]] = {}
         attempts_by_parent: dict[str, int] = {}
@@ -1473,7 +1476,7 @@ class DevelopmentTreeView(QQuickWidget):
         y = top
         for node in main_nodes:
             main_y[node["id"]] = y
-            y += row_height + max(0, attempts_by_parent.get(str(node["id"]), 0) - 1) * 90
+            y += row_height + max(0, attempts_by_parent.get(str(node["id"]), 0) - 1) * attempt_slot_height
         for node in main_nodes:
             y = main_y[node["id"]]
             dots[node["id"]] = (trunk_x, y)
@@ -1488,7 +1491,7 @@ class DevelopmentTreeView(QQuickWidget):
             children_count[parent_id] = slot + 1
             offset = self._node_offsets.get(str(node["id"]), QPointF())
             dot_x = int(parent_x + 78 + offset.x())
-            dot_y = max(90, int(parent_y + 54 + slot * 90 + offset.y()))
+            dot_y = max(90, int(parent_y + attempt_offset + slot * attempt_slot_height + offset.y()))
             card_x = min(self.width() - card_width - 12, dot_x + 24)
             cards[node["id"]] = (dot_x, dot_y, QRect(card_x, dot_y - card_height // 2, card_width, card_height))
             dots[node["id"]] = (dot_x, dot_y)
@@ -2283,7 +2286,7 @@ class ClientWindow(QMainWindow):
         short_layout_changed = self._git_tree_short_layout != short_layout
         self._git_tree_short_layout = short_layout
         self.git_page_header.setFixedHeight(56 if short_layout else 68)
-        self.git_metrics_panel.setVisible(not short_layout)
+        self.git_metrics_panel.setVisible(not narrow and not short_layout)
         if hasattr(self, "git_page_subtitle"):
             self.git_page_subtitle.setText(
                 "主线与尝试方向"
@@ -2328,8 +2331,7 @@ class ClientWindow(QMainWindow):
             if orientation_changed or short_layout_changed:
                 self.git_page.layout().activate()
                 split_height = max(1, self.git_tree_splitter.height())
-                # Leave enough room for both a useful tree canvas and the
-                # selected-node summary; hide only redundant metrics on short screens.
+                # Keep a useful selected-node summary beside the compact canvas.
                 details_ratio = 0.43 if short_layout else 0.42
                 self.git_tree_splitter.setSizes(
                     [int(split_height * (1 - details_ratio)), int(split_height * details_ratio)]

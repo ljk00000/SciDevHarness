@@ -1,6 +1,7 @@
 # 当前工作
 
-## 2026-10-02 12:39（Asia/Shanghai）· 主仓库整合完成
+## 2026-10-02 13:08（Asia/Shanghai）· Harness 回归与模型闭环
 
-- 唯一公开主线为 [ljk00000/SciDevHarness](https://github.com/ljk00000/SciDevHarness)；v5 历史已快进至 `master`，并保留 `release/v5`。
-- 下一步：若继续模型质量评估，沿用固定提示词与当前失败基线；本机 Qwen2.5-Coder-7B 尚不能稳定生成通过视觉检查的 SVG，不重复下载模型。
+- 已加嵌套工具参数 schema 校验和 SVG 修复无改动的有界重试；当前完整测试 162 项通过，窄屏 UI smoke 通过。
+- 固定提示词的本地 Qwen smoke 仍失败：修复阶段复述 `<tool_response>` 而非调用编辑工具，Harness 明确标失败且不提交。
+- 待办：提交并推送到唯一公开主仓库，检查 Windows CI；模型生成质量仍需后续优化，不重复下载。

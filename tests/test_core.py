@@ -772,6 +772,34 @@ class CoreTests(unittest.TestCase):
             edit_phase = agent._svg_preflight_repair_tool_definitions(file_was_read=True)
             self.assertEqual({tool["function"]["name"] for tool in read_phase}, {"read_file"})
             self.assertEqual({tool["function"]["name"] for tool in edit_phase}, {"replace_in_file"})
+            parser = OpenAICompatibleProvider(
+                "http://127.0.0.1:11434/v1", "local", "test", text_tool_call_fallback=True
+            )
+            edit_tool = edit_phase[0]
+            hidden_bulk_edit = {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "name": "replace_in_file",
+                        "arguments": {
+                            "path": "drawing.svg",
+                            "edits": [
+                                {
+                                    "old_text": "before",
+                                    "new_text": "after",
+                                    "replace_all": True,
+                                }
+                            ],
+                        },
+                    }
+                ),
+            }
+            rejected = parser._coerce_text_tool_calls(hidden_bulk_edit, edit_phase)
+            self.assertNotIn("tool_calls", rejected)
+            self.assertEqual(
+                rejected["tool_parse_error"],
+                {"name": "replace_in_file", "reason": "arguments_schema_mismatch"},
+            )
 
     def test_svg_repair_is_not_reclassified_as_creation_and_updates_its_named_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -797,6 +825,151 @@ class CoreTests(unittest.TestCase):
 
             missing_target_prompt = prompt.replace(target.name, "missing.svg")
             self.assertIsNone(SvgArtifactAdapter.create_tool_call(missing_target_prompt, response, root))
+
+    def test_svg_repair_without_changes_gets_one_bounded_retry_before_completion(self) -> None:
+        class NoopThenEditProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.histories: list[list[dict]] = []
+
+            @staticmethod
+            def tool_call(name: str, arguments: dict, call_id: str) -> dict:
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(arguments)},
+                        }
+                    ],
+                }
+
+            def chat(self, messages, tools=None, max_tokens=12000, request_id="", **_kwargs):
+                self.calls += 1
+                self.histories.append([dict(message) for message in messages])
+                if self.calls in {1, 3}:
+                    return self.tool_call("read_file", {"path": "drawing.svg"}, f"read_{self.calls}")
+                if self.calls == 4:
+                    return self.tool_call(
+                        "replace_in_file",
+                        {
+                            "path": "drawing.svg",
+                            "old_text": '<circle id="subject" cx="50" cy="50" r="10"/>',
+                            "new_text": '<circle id="subject" cx="50" cy="50" r="11"/>',
+                        },
+                        "edit_subject",
+                    )
+                return {"role": "assistant", "content": "The SVG repair is complete.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            target = root / "drawing.svg"
+            target.write_text(
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+                '<circle id="subject" cx="50" cy="50" r="10"/></svg>',
+                encoding="utf-8",
+            )
+            ledger = EventLedger(root)
+            events: list[tuple[str, dict]] = []
+            git = GitManager(root)
+            git.commit_changes("repair baseline")
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                event_callback=lambda name, data: events.append((name, data)),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            provider = NoopThenEditProvider()
+            prompt = (
+                "Repair only these localized SVG issues in drawing.svg using replace_in_file. "
+                "Validator: adjust the subject circle."
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {"session_id": "svg_noop_then_edit", "prompt": prompt}})
+
+            self.assertEqual(provider.calls, 6)
+            self.assertEqual(result["session_id"], "svg_noop_then_edit")
+            self.assertTrue(result["git_result_sha"])
+            self.assertIn('r="11"', target.read_text(encoding="utf-8"))
+            self.assertEqual(
+                sum(name == "svg_repair_retry_scheduled" for name, _data in events),
+                1,
+            )
+            retry_context = provider.histories[2]
+            self.assertTrue(
+                any(
+                    message.get("role") == "user" and "no file edit has been applied" in message.get("content", "")
+                    for message in retry_context
+                )
+            )
+
+    def test_svg_repair_with_no_edits_after_retry_fails_without_completion_or_commit(self) -> None:
+        class NoopRepairProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def chat(self, _messages, tools=None, max_tokens=12000, request_id="", **_kwargs):
+                self.calls += 1
+                name = "read_file" if self.calls in {1, 3} else ""
+                if name:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": f"read_{self.calls}",
+                                "type": "function",
+                                "function": {"name": name, "arguments": json.dumps({"path": "drawing.svg"})},
+                            }
+                        ],
+                    }
+                return {"role": "assistant", "content": "No edit is necessary.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            target = root / "drawing.svg"
+            original = (
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+                '<circle id="subject" cx="50" cy="50" r="10"/></svg>'
+            )
+            target.write_text(original, encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            git.commit_changes("repair baseline")
+            agent = CodingAgent(root, ledger, git, summary_settings=SummarySettings(enabled=False))
+            provider = NoopRepairProvider()
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "without changing the file after its bounded retry"):
+                    agent.run(
+                        {
+                            "payload": {
+                                "session_id": "svg_noop_exhausted",
+                                "prompt": (
+                                    "Repair only these localized SVG issues in drawing.svg using replace_in_file. "
+                                    "Validator: adjust the subject circle."
+                                ),
+                            }
+                        }
+                    )
+
+            self.assertEqual(provider.calls, 4)
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+            session = json.loads(
+                (root / ".research" / "sessions" / "svg_noop_exhausted.json").read_text(encoding="utf-8")
+            )
+            event_names = [
+                json.loads(line)["event_type"]
+                for line in ledger.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(session["status"], "failed")
+            self.assertIn("coding_session_failed", event_names)
+            self.assertNotIn("coding_session_completed", event_names)
+            self.assertNotIn("git_commit_created", event_names)
 
     def test_svg_creation_without_a_file_gets_one_bounded_recovery_turn(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1787,6 +1960,24 @@ class CoreTests(unittest.TestCase):
             {"path": "drawing.svg", "edits": [{"old_text": "old", "new_text": "new"}]},
         )
         self.assertEqual(normalized_tool_response["content"], "")
+
+        nested_unknown_field = {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "name": "replace_in_file",
+                    "arguments": {
+                        "path": "drawing.svg",
+                        "edits": [
+                            {"old_text": "old", "new_text": "new", "unadvertised": True}
+                        ],
+                    },
+                }
+            ),
+        }
+        rejected_nested = provider._coerce_text_tool_calls(nested_unknown_field, [replace_tool])
+        self.assertNotIn("tool_calls", rejected_nested)
+        self.assertEqual(rejected_nested["tool_parse_error"]["reason"], "arguments_schema_mismatch")
 
         tool_response_with_prose = {
             "role": "assistant",

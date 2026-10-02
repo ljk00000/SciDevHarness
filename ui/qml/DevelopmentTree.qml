@@ -90,9 +90,11 @@ Item {
     function mainYFor(nodeId) {
         var main = mainNodes()
         var targetIndex = mainIndexFor(nodeId)
-        var y = 88
+        var y = root.compactHeader ? 48 : 88
+        var mainRowHeight = root.compactHeader ? 80 : 122
+        var attemptSlotHeight = 90
         for (var index = 0; index < targetIndex; index++) {
-            y += 122 + Math.max(0, attemptsForParent(String(main[index].id)) - 1) * 90
+            y += mainRowHeight + Math.max(0, attemptsForParent(String(main[index].id)) - 1) * attemptSlotHeight
         }
         return y
     }
@@ -111,7 +113,9 @@ Item {
         var main = mainNodes()
         var parentId = String(node.parent_id || (main.length ? main[main.length - 1].id : "root"))
         var parentY = mainYFor(parentId)
-        return Math.max(90, parentY + 54 + attemptSlotFor(node) * 90 + offsetFor(node.id, "y"))
+        var attemptOffset = root.compactHeader ? 40 : 54
+        var attemptSlotHeight = 90
+        return Math.max(90, parentY + attemptOffset + attemptSlotFor(node) * attemptSlotHeight + offsetFor(node.id, "y"))
     }
 
     function cardXFor(node) {
@@ -654,6 +658,7 @@ Item {
 
     Text {
         z: 5
+        visible: !root.compactHeader
         x: 18
         y: 10
         text: "开发尝试树"

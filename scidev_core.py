@@ -998,6 +998,80 @@ class OpenAICompatibleProvider:
         )
 
     @staticmethod
+    def _tool_arguments_match_schema(value: Any, schema: dict[str, Any]) -> bool:
+        """Validate the JSON Schema subset used by declared coding tools, recursively."""
+        value_type = schema.get("type")
+        if isinstance(value_type, list):
+            if not any(
+                OpenAICompatibleProvider._tool_arguments_match_schema(
+                    value,
+                    {**schema, "type": candidate_type},
+                )
+                for candidate_type in value_type
+            ):
+                return False
+        elif value_type == "object":
+            if not isinstance(value, dict):
+                return False
+            properties = schema.get("properties") or {}
+            if not isinstance(properties, dict):
+                return False
+            if set(schema.get("required") or ()) - value.keys():
+                return False
+            extra_keys = value.keys() - properties.keys()
+            additional_schema = schema.get("additionalProperties")
+            if extra_keys and additional_schema is not True and not isinstance(additional_schema, dict):
+                return False
+            if isinstance(additional_schema, dict) and any(
+                not OpenAICompatibleProvider._tool_arguments_match_schema(value[key], additional_schema)
+                for key in extra_keys
+            ):
+                return False
+            return all(
+                key not in value
+                or not isinstance(property_schema, dict)
+                or OpenAICompatibleProvider._tool_arguments_match_schema(value[key], property_schema)
+                for key, property_schema in properties.items()
+            )
+        elif value_type == "array":
+            if not isinstance(value, list):
+                return False
+            if len(value) < int(schema.get("minItems", 0)):
+                return False
+            max_items = schema.get("maxItems")
+            if max_items is not None and len(value) > int(max_items):
+                return False
+            item_schema = schema.get("items")
+            if isinstance(item_schema, dict) and any(
+                not OpenAICompatibleProvider._tool_arguments_match_schema(item, item_schema)
+                for item in value
+            ):
+                return False
+        elif value_type == "string":
+            if not isinstance(value, str):
+                return False
+            if len(value) < int(schema.get("minLength", 0)):
+                return False
+            max_length = schema.get("maxLength")
+            if max_length is not None and len(value) > int(max_length):
+                return False
+        elif value_type == "integer":
+            if isinstance(value, bool) or not isinstance(value, int):
+                return False
+        elif value_type == "number":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return False
+        elif value_type == "boolean":
+            if not isinstance(value, bool):
+                return False
+        elif value_type == "null" and value is not None:
+            return False
+
+        if "enum" in schema and value not in schema["enum"]:
+            return False
+        return True
+
+    @staticmethod
     def _coerce_text_tool_calls(
         message: dict[str, Any],
         tools: list[dict[str, Any]],
@@ -1007,17 +1081,13 @@ class OpenAICompatibleProvider:
         if not isinstance(content, str) or not content:
             return message
 
-        allowed: dict[str, tuple[set[str], set[str]]] = {}
+        allowed: dict[str, dict[str, Any]] = {}
         for tool in tools:
             function = tool.get("function") if isinstance(tool, dict) else None
             if not isinstance(function, dict) or not function.get("name"):
                 continue
             parameters = function.get("parameters") or {}
-            properties = parameters.get("properties") or {}
-            allowed[str(function["name"])] = (
-                set(properties) if isinstance(properties, dict) else set(),
-                set(parameters.get("required") or ()),
-            )
+            allowed[str(function["name"])] = parameters if isinstance(parameters, dict) else {}
         if not allowed:
             return message
 
@@ -1100,8 +1170,7 @@ class OpenAICompatibleProvider:
                 rejected_tool_name = name
                 rejected_reason = "arguments_not_object"
                 continue
-            properties, required = allowed[name]
-            if required - arguments.keys() or arguments.keys() - properties:
+            if not OpenAICompatibleProvider._tool_arguments_match_schema(arguments, allowed[name]):
                 rejected_tool_name = name
                 rejected_reason = "arguments_schema_mismatch"
                 continue
@@ -2153,6 +2222,7 @@ class CodingAgent:
     MAX_SVG_ARTIFACT_TURNS = 8
     MAX_TOOL_FORMAT_RETRIES = 2
     MAX_SVG_CREATION_RETRIES = 1
+    MAX_SVG_REPAIR_NOOP_RETRIES = 1
     MAX_IDENTICAL_SVG_PREFLIGHT_RETRIES = 2
     SVG_CREATION_TOOLS = frozenset({"write_file"})
     SVG_LOCAL_REPAIR_TOOLS = frozenset({"read_file", "replace_in_file", "git_diff"})
@@ -2600,6 +2670,7 @@ class CodingAgent:
             session["git_preexisting_paths"] = sorted(self.git.status_paths())
             session["agent_changed_paths"] = []
             session["svg_creation_retries"] = 0
+            session["svg_repair_noop_retries"] = 0
             session["messages"].append(
                 {
                     "role": "user",
@@ -2637,6 +2708,7 @@ class CodingAgent:
         turn_limit = self.MAX_TURNS
         if svg_task:
             turn_limit = min(turn_limit, self.MAX_SVG_ARTIFACT_TURNS)
+        svg_repair_noop_retries = int(session.get("svg_repair_noop_retries", 0) or 0)
 
         for turn in range(1, turn_limit + 1):
             if svg_preflight_pending and self.EXPLICIT_COMMAND_INTENT.search(prompt) is None:
@@ -2819,6 +2891,47 @@ class CodingAgent:
                     self.ledger.append("coding_session_failed", failure)
                     self._save_session(session)
                     raise PermanentError(session["error"])
+                if SvgArtifactAdapter.is_repair_request(prompt) and not changed_paths:
+                    if svg_repair_noop_retries < self.MAX_SVG_REPAIR_NOOP_RETRIES and turn < turn_limit:
+                        svg_repair_noop_retries += 1
+                        session["svg_repair_noop_retries"] = svg_repair_noop_retries
+                        if messages and messages[-1].get("role") == "assistant" and not messages[-1].get("tool_calls"):
+                            messages[-1] = {
+                                "role": "assistant",
+                                "content": "The previous response did not modify the requested SVG.",
+                            }
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "This is a targeted SVG repair task, but no file edit has been applied. "
+                                    "The task is not complete. Re-read the current file if needed, then use "
+                                    "replace_in_file for the exact reported issue. Preserve unrelated artwork; "
+                                    "do not claim success without an actual edit."
+                                ),
+                            }
+                        )
+                        retry_event = {
+                            "session_id": session_id,
+                            "turn": turn,
+                            "attempt": svg_repair_noop_retries,
+                            "reason": "SVG repair response returned without a workspace edit",
+                        }
+                        self.ledger.append("svg_repair_retry_scheduled", retry_event)
+                        self._emit("svg_repair_retry_scheduled", retry_event)
+                        session["updated_at"] = now_iso()
+                        self._save_session(session)
+                        continue
+                    error = (
+                        "The targeted SVG repair returned without changing the file after its bounded retry; "
+                        "the session was marked failed and no commit was created."
+                    )
+                    session["status"] = "failed"
+                    session["error"] = error
+                    session["updated_at"] = now_iso()
+                    self.ledger.append("coding_session_failed", {"session_id": session_id, "error": error})
+                    self._save_session(session)
+                    raise PermanentError(error)
                 svg_preflight_failures: list[tuple[str, str]] = []
                 if svg_task:
                     for artifact_path in sorted(path for path in changed_paths if path.casefold().endswith(".svg")):

@@ -302,8 +302,9 @@ def verify_git_splitter_layout(window: ClientWindow, name: str, orientation: Qt.
             f"{policy.horizontalPolicy().name}/{policy.verticalPolicy().name}"
         )
     short_layout = window.height() < 560
-    if window.git_metrics_panel.isHidden() != short_layout:
-        raise RuntimeError(f"version-tree metrics do not match the short-screen layout for {name}")
+    narrow_layout = splitter.width() < 700
+    if window.git_metrics_panel.isHidden() != (short_layout or narrow_layout):
+        raise RuntimeError(f"version-tree metrics do not match the compact-layout policy for {name}")
     expected_header_height = 56 if short_layout else 68
     if window.git_page_header.height() != expected_header_height:
         raise RuntimeError(
@@ -566,6 +567,14 @@ def main(argv: list[str] | None = None) -> int:
                 f"visual-card-bottom={visible_branch_bottom:.1f}px logical-card-bottom={branch_card.bottom()}px viewport="
                 f"{window.git_tree_scroll.viewport().size()} splitter={window.git_tree_splitter.sizes()}"
             )
+        if float(root.property("zoom")) < 0.95:
+            raise RuntimeError(
+                "compact version-tree auto-fit shrank the cards below the readable zoom target: "
+                f"zoom={float(root.property('zoom')):.3f}"
+            )
+        logical_card = window.git_tree._positions()[0]["fast-warmup"][2]
+        if logical_card.width() * float(root.property("zoom")) < 130:
+            raise RuntimeError("compact version-tree branch cards are too narrow for readable labels")
         scroll_bar = window.git_tree_scroll.verticalScrollBar()
         if scroll_bar.maximum() <= 0:
             raise RuntimeError("narrow version tree does not expose the offscreen content")

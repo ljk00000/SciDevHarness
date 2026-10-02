@@ -591,6 +591,11 @@ class PelicanSvgTests(unittest.TestCase):
             "tool_started",
             {"session_id": "s1", "name": "write_file", "arguments": {"path": "art.svg", "content": "<svg/>"}},
         )
+        record_smoke_event(
+            events,
+            "tool_call_rejected",
+            {"session_id": "s1", "tool_name": "replace_in_file", "reason": "arguments_schema_mismatch", "turn": 3},
+        )
 
         with tempfile.TemporaryDirectory() as temporary:
             path = persist_failure_diagnostic(
@@ -604,10 +609,12 @@ class PelicanSvgTests(unittest.TestCase):
             )
             report = json.loads(path.read_text(encoding="utf-8"))
 
-        self.assertEqual(len(report["recent_events"]), 2)
+        self.assertEqual(len(report["recent_events"]), 3)
         self.assertEqual(report["recent_events"][0]["text_characters"], len("partial tail"))
         self.assertEqual(report["recent_events"][0]["text_preview"], "partial tail")
         self.assertEqual(report["recent_events"][1]["name"], "write_file")
+        self.assertEqual(report["recent_events"][2]["tool_name"], "replace_in_file")
+        self.assertEqual(report["recent_events"][2]["reason"], "arguments_schema_mismatch")
 
     def test_failure_diagnostic_is_bounded_and_omits_credential_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
