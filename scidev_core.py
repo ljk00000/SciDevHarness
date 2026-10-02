@@ -1021,23 +1021,41 @@ class OpenAICompatibleProvider:
         if not allowed:
             return message
 
+        # Models sometimes copy read_file's display line numbers onto both
+        # tool wrapper tags and JSON lines. Strip only that exact visual prefix
+        # while parsing; the original assistant text is retained on failure.
+        parse_content = re.sub(r"(?m)^[ \t]*\d+[ \t]*:[ \t]?", "", content)
+
         patterns = (
-            re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.IGNORECASE | re.DOTALL),
-            re.compile(r"<tool_request>\s*(.*?)\s*</tool_request>", re.IGNORECASE | re.DOTALL),
-            re.compile(r"```(?:json|xml)\s*(.*?)```", re.IGNORECASE | re.DOTALL),
+            (re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.IGNORECASE | re.DOTALL), False),
+            (re.compile(r"<tool_request>\s*(.*?)\s*</tool_request>", re.IGNORECASE | re.DOTALL), False),
+            # Some Ollama templates surface a line-numbered tool envelope using
+            # this wrapper. Accept it only when the entire body is still a
+            # schema-valid declared tool call below.
+            (
+                re.compile(r"\A\s*<tool_response>\s*(.*?)\s*</tool_response>\s*\Z", re.IGNORECASE | re.DOTALL),
+                True,
+            ),
+            (re.compile(r"```(?:json|xml)\s*(.*?)```", re.IGNORECASE | re.DOTALL), False),
             # Some local models omit the requested wrapper. Only accept a JSON
             # object that occupies the entire response; prose/code examples
             # must never be promoted to executable workspace actions.
-            re.compile(r"\A\s*(\{.*\})\s*\Z", re.DOTALL),
+            (re.compile(r"\A\s*(\{.*\})\s*\Z", re.DOTALL), False),
         )
         matches = sorted(
-            (match for pattern in patterns for match in pattern.finditer(content)),
-            key=lambda match: match.start(),
+            (
+                (match, strip_line_numbers)
+                for pattern, strip_line_numbers in patterns
+                for match in pattern.finditer(parse_content)
+            ),
+            key=lambda item: item[0].start(),
         )
         tool_calls: list[dict[str, Any]] = []
         consumed_spans: list[tuple[int, int]] = []
-        for match in matches:
+        for match, strip_line_numbers in matches:
             candidate = match.group(1).strip()
+            if strip_line_numbers:
+                candidate = re.sub(r"(?m)^[ \t]*\d+[ \t]*:[ \t]?", "", candidate)
             try:
                 payload = json.loads(candidate)
             except (json.JSONDecodeError, TypeError):
@@ -1083,7 +1101,7 @@ class OpenAICompatibleProvider:
 
         if not tool_calls:
             return message
-        remaining = content
+        remaining = parse_content
         for start, end in reversed(consumed_spans):
             remaining = remaining[:start] + remaining[end:]
         normalized = dict(message)
@@ -1362,10 +1380,10 @@ class CodingToolbox:
             ),
             function(
                 "replace_in_file",
-                "在文件中进行精确文本替换。old_text 必须唯一且与原文完全匹配；只有用户明确要求替换所有匹配项时才启用 replace_all。",
+                "在文件中进行精确文本替换。old_text 必须唯一且与原文完全匹配；从 read_file 复制时先删除每行开头的显示行号。只有用户明确要求替换所有匹配项时才启用 replace_all。",
                 {
                     "path": {"type": "string", "description": "相对项目根目录的文件路径"},
-                    "old_text": {"type": "string", "description": "需要被替换的原文"},
+                    "old_text": {"type": "string", "description": "需要被替换的原文；删除 read_file 输出的 N: 行号前缀"},
                     "new_text": {"type": "string", "description": "替换后的文本"},
                     "replace_all": {"type": "boolean", "description": "仅当用户明确要求替换所有匹配项时设为 true"},
                 },
@@ -1441,6 +1459,16 @@ class CodingToolbox:
             return raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise PermanentError(f"文件不是有效 UTF-8 文本，拒绝读取或编辑：{path.name}") from exc
+
+    @staticmethod
+    def _copied_read_file_line_numbers(old_text: str, source_text: str) -> bool:
+        lines = [line for line in old_text.splitlines() if line.strip()]
+        if not lines or any(not re.match(r"^[ \t]*\d+:[ \t]?", line) for line in lines):
+            return False
+        unnumbered = re.sub(r"(?m)^[ \t]*\d+:[ \t]?", "", old_text)
+        unnumbered = unnumbered.replace("\r\n", "\n").replace("\r", "\n")
+        source = source_text.replace("\r\n", "\n").replace("\r", "\n")
+        return bool(unnumbered and unnumbered in source)
 
     @staticmethod
     def _validate_svg_document(path: Path, content: str | bytes) -> ET.Element | None:
@@ -1653,6 +1681,11 @@ class CodingToolbox:
                         new_text = new_text.replace("\n", newline)
                     break
         if count == 0:
+            if self._copied_read_file_line_numbers(old_text, text):
+                raise PermanentError(
+                    f"old_text 在 {path} 中未找到：read_file 每行前的 N: 是显示行号，不是文件内容；"
+                    "请删除这些前缀后重试。"
+                )
             raise PermanentError(f"old_text 在 {path} 中未找到，请先重新读取文件")
         if count > 1 and not replace_all:
             raise PermanentError(f"old_text 在 {path} 中匹配 {count} 次，请提供更精确文本或明确 replace_all=true")
@@ -1718,6 +1751,11 @@ class CodingToolbox:
                             matched_after = after.replace("\n", newline)
                         break
             if count == 0:
+                if self._copied_read_file_line_numbers(before, original):
+                    raise PermanentError(
+                        f"Exact old_text not found in {path}: read_file line-number prefixes (N:) "
+                        "are display-only; remove them and retry."
+                    )
                 raise PermanentError(f"Exact old_text not found in {path}; reread the file before retrying")
             if count > 1 and not replace_all:
                 raise PermanentError(
@@ -2062,6 +2100,7 @@ class CodingAgent:
     MAX_TURNS = 32
     MAX_SVG_ARTIFACT_TURNS = 8
     MAX_SVG_CREATION_RETRIES = 1
+    MAX_IDENTICAL_SVG_PREFLIGHT_RETRIES = 2
     SVG_CREATION_TOOLS = frozenset({"write_file"})
     SVG_LOCAL_REPAIR_TOOLS = frozenset({"read_file", "replace_in_file", "git_diff"})
     SVG_ARTIFACT_TOOLS = frozenset({"read_file", "write_file", "replace_in_file", "git_diff"})
@@ -2071,20 +2110,19 @@ class CodingAgent:
         r"|(?:运行|执行)(?:命令|脚本|测试)",
         re.IGNORECASE,
     )
-    SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent。直接用工具完成用户在工作区内的请求；实际操作，不能用方案、代码块或声称代替工具结果。
+    SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent。直接用工具完成用户在工作区内的请求；只报告实际执行结果，不以方案或代码块冒充。
 
 文件任务
-- 创建/生成文件即授权：选合理文件名，在工作区根目录调用 `write_file` 一次；不要为名称、路径、尺寸或风格追问。严格按用户指定对象与动作，不得换成相似对象。内容只放工具参数；没有成功工具结果不得声称已保存。简单图像/SVG 不用 shell 或下载。
-- 修改现有文件时，将引用的旧请求只视为背景；先读目标和必要上下文、保留无关内容。局部用 `replace_in_file`，同文件多项独立精确修改可一次批量调用；仅整体替换用 `write_file`，并核验结果。
+- 生成文件即授权：选合理路径，在工作区根目录调用 `write_file` 一次；不要为名称、路径、尺寸或风格追问。严格按用户指定对象与动作，不得换成相似对象。内容只放工具参数；没有成功工具结果不得声称已保存。简单图像/SVG 不用 shell 或下载。
+- 修改时将引用的旧请求只视为背景；先读目标、保留无关内容。`read_file` 行首 `N:` 仅是显示行号，写入 `old_text` 前去掉。局部用 `replace_in_file`，同文件多项独立精确修改可一次批量调用；仅整体替换用 `write_file` 并核验。
 - 仅读任务所需文件；不得访问 `.git`、`.research`、密钥、环境变量、数据集或工作区外路径。
-- 修改后运行最小相关检查。运行命令须逐条经 UI 批准；被拒绝或超时后不得重试、拆分或变形规避。用户点名的工具/检查必须实际执行；未执行或失败要明说，不能将请求、计划或工具 JSON 当作结果。工具报错先分析修正；完成后简述改动、验证和限制。
-- 仅当实质歧义会改变结果或任务超出范围时询问；否则用合理默认。不要擅自运行长实验/训练或下载大文件。
+- 修改后跑最小相关检查；命令逐条经 UI 批准，拒绝/超时后不得重试、拆分或变形规避。用户点名的检查必须实跑；未执行或失败须说明，不把请求、计划或工具 JSON 当结果。工具报错先分析修正；完成后简述改动、验证和限制。
+- 实质歧义会改变结果或超范围才询问；不擅自运行长实验/训练或下载大文件。
 
 图像与 SVG
-- 先定画布、构图比例，再画清主体及连接/接触关系。动作、承载、操作须表现真实支撑和接触点；分离的近邻形状或色块不代表交互。
-- 保持主体和关键部件清晰，避免遮挡、重叠、viewBox 裁切。简单 SVG 少于 60 个元素并闭合标签；主体和每个关键部件分别对应各自可见 SVG 几何元素及唯一语义 `id`；勿重复、勿仅给共享分组命名或用注释代替，ID 不代替几何。
-- 工具若返回“SVG 结构预检提示”，先读文件并用精确局部编辑修复；结构通过不证明视觉渲染或语义正确，未实际渲染不得声称已渲染。
-- 创建后尽可能实际渲染/验证；只有工具确实确认后才能声称已完成渲染/验证。
+- 先定画布、构图和连接/接触关系；动作、承载、操作须表现真实支撑和接触点，分离的近邻形状或色块不代表交互。主体轮廓先清晰，复杂对象勿用孤立基础形状代替。
+- 保持比例与留白，避免遮挡、重叠、`viewBox` 裁切。简单 SVG 少于 60 个元素并闭合标签；每个关键部件各自对应可见几何与唯一语义 `id`，勿重复、勿仅给共享分组命名，ID 不代替几何。
+- 工具返回“SVG 结构预检提示”时，先读文件并精确局部修复。结构通过不证明视觉渲染或语义正确；创建后尽可能实际渲染/验证，只有工具确实确认后才能声称已完成渲染/验证。
 """
 
     def __init__(
@@ -2205,6 +2243,46 @@ class CodingAgent:
             raise PermanentError(
                 "replace_all is disabled for a targeted SVG repair; use exact unique old_text for each shape"
             )
+
+    def _svg_preflight_fingerprint(self, failures: list[tuple[str, str]]) -> str:
+        digest = hashlib.sha256()
+        paths = sorted({path for path, _issue in failures})
+        for path, issue in sorted(failures):
+            digest.update(path.encode("utf-8", errors="replace"))
+            digest.update(b"\0")
+            digest.update(issue.encode("utf-8", errors="replace"))
+            digest.update(b"\0")
+        for path in paths:
+            digest.update(path.encode("utf-8", errors="replace"))
+            digest.update(b"\0")
+            try:
+                target = self.toolbox._resolve(path, allow_root=False)
+                digest.update(target.read_bytes())
+            except OSError as exc:
+                digest.update(type(exc).__name__.encode("ascii", errors="ignore"))
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    def _fail_svg_preflight(
+        self,
+        session: dict[str, Any],
+        session_id: str,
+        turn: int,
+        issues: str,
+        error: str,
+        *,
+        stalled: bool = False,
+    ) -> None:
+        session["status"] = "failed"
+        session["error"] = error[:3000]
+        session["updated_at"] = now_iso()
+        failure = {"session_id": session_id, "turn": turn, "issues": issues[:1800]}
+        self.ledger.append("svg_preflight_failed", failure)
+        if stalled:
+            self.ledger.append("svg_preflight_stalled", failure)
+        self.ledger.append("coding_session_failed", failure | {"error": error[:1000]})
+        self._save_session(session)
+        raise PermanentError(error)
 
     def _save_session(self, session: dict[str, Any]) -> None:
         path = self._session_path(session["session_id"])
@@ -2489,6 +2567,8 @@ class CodingAgent:
         svg_creation_written = False
         svg_preflight_pending = False
         svg_repair_read_paths: set[str] = set()
+        last_svg_preflight_fingerprint: str | None = None
+        identical_svg_preflight_retries = 0
         turn_limit = self.MAX_TURNS
         if svg_task:
             turn_limit = min(turn_limit, self.MAX_SVG_ARTIFACT_TURNS)
@@ -2628,23 +2708,31 @@ class CodingAgent:
                     compact_issues = "\n".join(
                         f"- {path}: {issue}" for path, issue in svg_preflight_failures[:8]
                     )
+                    fingerprint = self._svg_preflight_fingerprint(svg_preflight_failures)
+                    if fingerprint == last_svg_preflight_fingerprint:
+                        identical_svg_preflight_retries += 1
+                    else:
+                        identical_svg_preflight_retries = 0
+                    last_svg_preflight_fingerprint = fingerprint
+                    if identical_svg_preflight_retries >= self.MAX_IDENTICAL_SVG_PREFLIGHT_RETRIES:
+                        error = (
+                            f"SVG 结构预检连续 {self.MAX_IDENTICAL_SVG_PREFLIGHT_RETRIES} 次重试后，问题和文件均未变化；"
+                            "已停止空转，文件保留在工作区，未自动提交。\n" + compact_issues
+                        )
+                        self._fail_svg_preflight(
+                            session,
+                            session_id,
+                            turn,
+                            compact_issues,
+                            error,
+                            stalled=True,
+                        )
                     if turn >= turn_limit:
                         error = (
                             f"SVG 结构预检在 {turn_limit} 个 Agent 回合后仍未通过；"
                             "文件保留在工作区，未自动提交。\n" + compact_issues
                         )
-                        session["status"] = "failed"
-                        session["error"] = error[:3000]
-                        session["updated_at"] = now_iso()
-                        failure = {
-                            "session_id": session_id,
-                            "turn": turn,
-                            "issues": compact_issues[:1800],
-                        }
-                        self.ledger.append("svg_preflight_failed", failure)
-                        self.ledger.append("coding_session_failed", failure | {"error": error[:1000]})
-                        self._save_session(session)
-                        raise PermanentError(error)
+                        self._fail_svg_preflight(session, session_id, turn, compact_issues, error)
                     if messages and messages[-1].get("role") == "assistant" and not messages[-1].get("tool_calls"):
                         messages.pop()
                     messages.append(

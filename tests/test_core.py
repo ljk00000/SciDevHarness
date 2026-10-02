@@ -592,6 +592,63 @@ class CoreTests(unittest.TestCase):
             self.assertNotIn("git_commit_created", event_names)
             self.assertNotIn("coding_session_completed", event_names)
 
+    def test_svg_preflight_stops_early_when_identical_file_and_issues_repeat(self) -> None:
+        class IgnoresDuplicateIdFeedback:
+            calls = 0
+
+            def chat(self, _messages, tools=None, max_tokens=12000, request_id=""):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "duplicate_svg_write",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": json.dumps(
+                                        {
+                                            "path": "duplicate.svg",
+                                            "content": (
+                                                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">'
+                                                '<circle id="same" cx="5" cy="5" r="2"/>'
+                                                '<path id="same" d="M1 1L2 2"/></svg>'
+                                            ),
+                                        }
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                return {"role": "assistant", "content": "Done.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            agent = CodingAgent(root, ledger, GitManager(root), summary_settings=SummarySettings(enabled=False))
+            agent.MAX_SVG_ARTIFACT_TURNS = 8
+            provider = IgnoresDuplicateIdFeedback()
+            prompt = "Generate an SVG of a pelican riding a bicycle"
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "SVG 结构预检连续 2 次重试后"):
+                    agent.run({"payload": {"session_id": "svg_preflight_stalled", "prompt": prompt}})
+
+            self.assertEqual(provider.calls, 4)
+            self.assertTrue((root / "duplicate.svg").is_file())
+            session = json.loads(
+                (root / ".research" / "sessions" / "svg_preflight_stalled.json").read_text(encoding="utf-8")
+            )
+            events = [json.loads(line) for line in ledger.events_path.read_text(encoding="utf-8").splitlines()]
+            event_names = [event["event_type"] for event in events]
+            self.assertEqual(session["status"], "failed")
+            self.assertIn("svg_preflight_stalled", event_names)
+            self.assertNotIn("git_commit_created", event_names)
+            self.assertNotIn("coding_session_completed", event_names)
+
     def test_targeted_svg_repair_rejects_replace_all(self) -> None:
         prompt = "Repair only these localized SVG issues in drawing.svg using replace_in_file."
         with self.assertRaisesRegex(PermanentError, "replace_all is disabled"):
@@ -1007,19 +1064,22 @@ class CoreTests(unittest.TestCase):
             "将引用的旧请求只视为背景",
             "同文件多项独立精确修改可一次批量调用",
             "不得访问 `.git`、`.research`、密钥、环境变量、数据集或工作区外路径",
-            "运行命令须逐条经 UI 批准",
+            "命令逐条经 UI 批准",
             "不得重试、拆分或变形规避",
-            "用户点名的工具/检查必须实际执行",
-            "不能将请求、计划或工具 JSON 当作结果",
+            "用户点名的检查必须实跑",
+            "不把请求、计划或工具 JSON 当结果",
             "完成后简述改动、验证和限制",
             "实质歧义会改变结果",
-            "不要擅自运行长实验/训练或下载大文件",
+            "不擅自运行长实验/训练或下载大文件",
+            "`read_file` 行首 `N:` 仅是显示行号",
+            "写入 `old_text` 前去掉",
             "连接/接触关系",
             "动作、承载、操作须表现真实支撑和接触点",
             "分离的近邻形状或色块不代表交互",
-            "viewBox 裁切",
+            "复杂对象勿用孤立基础形状代替",
+            "`viewBox` 裁切",
             "少于 60 个元素并闭合标签",
-            "每个关键部件分别对应各自可见 SVG 几何元素",
+            "每个关键部件各自对应可见几何",
             "唯一语义 `id`",
             "勿仅给共享分组命名",
             "勿重复",
@@ -1320,6 +1380,39 @@ class CoreTests(unittest.TestCase):
                 toolbox.write_file("contains_nul.txt", "text\x00not-safe")
             self.assertFalse((root / "contains_nul.txt").exists())
 
+    def test_replace_in_file_explains_read_file_line_number_prefixes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "drawing.svg"
+            original = (
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">\n'
+                '  <circle id="eye" cx="5" cy="5" r="2"/>\n'
+                '  <circle id="body" cx="10" cy="10" r="4"/>\n'
+                "</svg>\n"
+            )
+            source.write_text(original, encoding="utf-8")
+            toolbox = CodingToolbox(root, EventLedger(root))
+
+            with self.assertRaisesRegex(PermanentError, "显示行号，不是文件内容"):
+                toolbox.replace_in_file(
+                    "drawing.svg",
+                    '3:   <circle id="eye" cx="5" cy="5" r="2"/>',
+                    '  <circle id="eye" cx="5" cy="5" r="3"/>',
+                )
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
+
+            with self.assertRaisesRegex(PermanentError, "line-number prefixes.*display-only"):
+                toolbox.replace_in_file(
+                    "drawing.svg",
+                    edits=[
+                        {
+                            "old_text": '4:   <circle id="body" cx="10" cy="10" r="4"/>',
+                            "new_text": '  <circle id="body" cx="10" cy="10" r="5"/>',
+                        }
+                    ],
+                )
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
+
     def test_replace_in_file_accepts_lf_snippet_in_crlf_file_and_preserves_crlf(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1561,6 +1654,42 @@ class CoreTests(unittest.TestCase):
         normalized_request = provider._coerce_text_tool_calls(tagged_request, tools)
         self.assertEqual(normalized_request["tool_calls"][0]["function"]["name"], "write_file")
         self.assertEqual(normalized_request["content"], "")
+
+        replace_tool = next(
+            tool for tool in CodingToolbox.definitions()
+            if tool["function"]["name"] == "replace_in_file"
+        )
+        numbered_tool_response = {
+            "role": "assistant",
+            "content": (
+                "1: <tool_response>\n"
+                '2: {"name": "replace_in_file", "arguments": {"path": "drawing.svg",\n'
+                '3: "edits": [{"old_text": "old", "new_text": "new"}]}}\n'
+                "4: </tool_response>"
+            ),
+        }
+        normalized_tool_response = provider._coerce_text_tool_calls(
+            numbered_tool_response,
+            [replace_tool],
+        )
+        self.assertEqual(
+            normalized_tool_response["tool_calls"][0]["function"]["name"],
+            "replace_in_file",
+        )
+        self.assertEqual(
+            json.loads(normalized_tool_response["tool_calls"][0]["function"]["arguments"]),
+            {"path": "drawing.svg", "edits": [{"old_text": "old", "new_text": "new"}]},
+        )
+        self.assertEqual(normalized_tool_response["content"], "")
+
+        tool_response_with_prose = {
+            "role": "assistant",
+            "content": "Please do this: " + numbered_tool_response["content"],
+        }
+        self.assertNotIn(
+            "tool_calls",
+            provider._coerce_text_tool_calls(tool_response_with_prose, [replace_tool]),
+        )
 
         unwrapped_call = {
             "role": "assistant",
