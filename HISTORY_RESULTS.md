@@ -1,5 +1,13 @@
 # 历史与结果
 
+## 2026-10-02 12:39（Asia/Shanghai）· v5 并入唯一公开主仓库
+
+- `SciDevHarness` 主仓库 `master` 快进至 `40ca5e6bdddb77133513c6863035fc0dad424fc5`，保留 `release/v5`（`3ba6861e5bd542866e1d37fd47816e95880daa95`）。v5 全历史保留。
+- 将 `SciDevHarness-Research-IDE[-v2/-v3/-v4/-v5]`、`SciDevHarness-{Client,Public,Open,IDE,Desktop}` 共 10 个重复仓库设为私有，未删除仓库/分支；该项目系列现在仅主仓库公开。主线与 v5 分支 [Windows CI 均通过](https://github.com/ljk00000/SciDevHarness/actions/runs/36965218558)（[v5 CI](https://github.com/ljk00000/SciDevHarness/actions/runs/36965167675)）。
+- 工具文本解析现在把不完整/不匹配 schema 的已声明调用安全拒绝并有限重试；不会执行或把无效 JSON 当作完成。全量 `unittest` 160/160 通过；独立打包许可审计仍标记 `manual-review-required`。
+- 固定提示 `Generate an SVG of a pelican riding a bicycle` 的 Qwen2.5-Coder-7B 本地 smoke 用 14 次请求、3 轮修复后仍未过视觉检查（实心轮、车架/后轮未连接、身体/头部标识和腿/嘴袋关系不合格）。已保存预览与诊断；没有把模型限制误记为 Harness 成功。
+- Qt 离屏 UI 烟测覆盖 1500×920 至 780×480、文件编辑、版本树拖拽/平移/缩放和持久化；检查现有截图布局通过。原生桌面窗口不可枚举，本次不宣称实机截图验收。
+
 ## 2026-10-02 11:34（Asia/Shanghai）· 新建并公开 v5 仓库
 
 - 创建公开仓库 [ljk00000/SciDevHarness-Research-IDE-v5](https://github.com/ljk00000/SciDevHarness-Research-IDE-v5)。核心源码提交 `a7370793d899ecbf4e4fadeeaaa88f751e6979ae` 已推送；`main` 远端 SHA 与本地源码提交一致，仓库可见性为 `PUBLIC`。
