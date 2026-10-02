@@ -1,8 +1,7 @@
 # 当前工作
 
-## 2026-10-02 09:22（Asia/Shanghai）· SVG 语义标注与修复预算
+## 2026-10-02 09:32（Asia/Shanghai）· 公开发布与后续验证
 
-- 当前重点：用固定原句 `Generate an SVG of a pelican riding a bicycle` 检查通用提示和 SVG 工具闭环；提示未写入 pelican/bicycle 专项规则。完整图像质量仍未达标。
-- 新增骑行关系检查：躯干落座、车架连接座管节点、两个独立踏板圆及双腿分别到达踏板；即使缺少其他 ID，也运行局部关系检查。系统提示和无文件时的一次恢复提示都明确要求把语义名写入可见元素的唯一 `id` 属性。
-- `unittest` 151/151、`py_compile`、`git diff --check` 通过。四次首轮复测（16K 两次、4K 两次）均失败；一次有界修复仍失败，修复阶段发出 17 个请求、累计耗时 368 秒。
-- SVG 修复会话新增独立 8 回合上限（一般编码仍为 32 回合）；超限标记失败并保留工作区，不冒充完成。单测确认停止行为。下一步补通用结构反馈并验证上限能拦截无进展循环，再复核原生窗口截图。
+- 新建公开仓库 [ljk00000/SciDevHarness-Research-IDE-v3](https://github.com/ljk00000/SciDevHarness-Research-IDE-v3)，`main` 已核对到提交 `78d2c5e8f2f9ddeba2a4f61600f0d68b4bea05bf`；此前已有 8 个同项目公开仓库，本次未覆盖旧仓库。
+- 源码改动及 SVG 回归测试已上传；全量 `unittest` 151/151 通过。常见凭据格式扫描仅命中 README 的 `your-key` 示例占位符；未安装 gitleaks，不代表完整历史凭据审计。
+- 后续重点：继续验证通用 SVG 结构反馈和无进展回合上限，并复核原生窗口截图；固定 pelican/bicycle 任务的图像质量仍未达标。
