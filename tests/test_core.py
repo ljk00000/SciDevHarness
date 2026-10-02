@@ -403,7 +403,41 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(label_only_repair_names, {"read_file", "replace_in_file", "git_diff"})
             self.assertIn("replace_in_file", repair_names)
             self.assertEqual(agent._tool_choice_for_tools(simple_names), "required")
-            self.assertEqual(agent._tool_choice_for_tools(localized_repair_names), "auto")
+            self.assertEqual(agent._tool_choice_for_tools(localized_repair_names), "required")
+            self.assertEqual(agent._tool_choice_for_tools(repair_names), "required")
+
+            localized_definitions = agent._tool_definitions_for_prompt(
+                "Repair only localized SVG issues in pelican.svg with replace_in_file."
+            )
+            replace_schema = next(
+                item["function"]["parameters"]
+                for item in localized_definitions
+                if item["function"]["name"] == "replace_in_file"
+            )
+            self.assertNotIn("replace_all", replace_schema["properties"])
+            self.assertNotIn(
+                "replace_all",
+                replace_schema["properties"]["edits"]["items"]["properties"],
+            )
+
+    def test_targeted_svg_repair_rejects_replace_all(self) -> None:
+        prompt = "Repair only these localized SVG issues in drawing.svg using replace_in_file."
+        with self.assertRaisesRegex(PermanentError, "replace_all is disabled"):
+            CodingAgent._validate_tool_edit_scope(
+                prompt,
+                "replace_in_file",
+                {
+                    "path": "drawing.svg",
+                    "edits": [
+                        {"old_text": "<path id=\"body\"/>", "new_text": "<path id=\"body\" d=\"...\"/>", "replace_all": True}
+                    ],
+                },
+            )
+        CodingAgent._validate_tool_edit_scope(
+            "Replace every color in the requested SVG.",
+            "replace_in_file",
+            {"path": "drawing.svg", "replace_all": True},
+        )
 
     def test_svg_repair_is_not_reclassified_as_creation_and_updates_its_named_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -455,6 +489,8 @@ class CoreTests(unittest.TestCase):
             retry_message = provider.message_histories[1][-1]
             self.assertEqual(retry_message["role"], "user")
             self.assertIn("this task is not complete", retry_message["content"])
+            self.assertIn("unique semantic `id`", retry_message["content"])
+            self.assertIn("actual shape contact", retry_message["content"])
             failed_response = provider.message_histories[1][-2]
             self.assertEqual(failed_response["role"], "assistant")
             self.assertEqual(
@@ -480,6 +516,56 @@ class CoreTests(unittest.TestCase):
             ]
             self.assertEqual(len(diff_results), 1)
             self.assertLess(diff_results[0], event_types.index("git_commit_created"))
+
+    def test_svg_repair_session_stops_at_its_own_turn_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            (root / "drawing.svg").write_text(
+                '<svg xmlns="http://www.w3.org/2000/svg"><circle id="wheel" r="10"/></svg>',
+                encoding="utf-8",
+            )
+            ledger = EventLedger(root)
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            agent.MAX_SVG_REPAIR_TURNS = 2
+
+            class RepeatedReadProvider:
+                calls = 0
+
+                def chat(self, _messages, tools=None, max_tokens=12000, request_id=""):
+                    self.calls += 1
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": f"read_{self.calls}",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "drawing.svg"}),
+                                },
+                            }
+                        ],
+                    }
+
+            provider = RepeatedReadProvider()
+            prompt = "Repair the existing SVG in drawing.svg and preserve its valid artwork."
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "超过最大 Agent 步数：2"):
+                    agent.run({"payload": {"session_id": "svg_repair_turn_budget", "prompt": prompt}})
+
+            self.assertEqual(provider.calls, 2)
+            session = json.loads(
+                (root / ".research" / "sessions" / "svg_repair_turn_budget.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session["status"], "failed")
+            self.assertEqual(session["error"], "超过最大 Agent 步数：2")
 
     def test_textual_svg_write_file_envelope_runs_through_normal_tool_and_git_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -743,6 +829,8 @@ class CoreTests(unittest.TestCase):
             "直接用工具完成用户在工作区内的请求",
             "`write_file` 一次",
             "不要为名称、路径、尺寸或风格追问",
+            "严格按用户指定对象与动作，不得换成相似对象",
+            "没有成功工具结果不得声称已保存",
             "简单图像/SVG 不用 shell 或下载",
             "将引用的旧请求只视为背景",
             "同文件多项独立精确修改可一次批量调用",
@@ -759,6 +847,11 @@ class CoreTests(unittest.TestCase):
             "分离的近邻形状或色块不代表交互",
             "viewBox 裁切",
             "少于 60 个元素并闭合标签",
+            "每个关键部件分别对应各自可见 SVG 几何元素",
+            "唯一语义 `id`",
+            "勿仅给共享分组命名",
+            "勿重复",
+            "勿重复",
             "只有工具确实确认后才能声称已完成渲染/验证",
         ):
             with self.subTest(rule=required_rule):
@@ -1075,8 +1168,10 @@ class CoreTests(unittest.TestCase):
             root = Path(temp)
             source = root / "drawing.svg"
             source.write_bytes(
-                b'<circle cx="10" cy="10" r="5" fill="red"/>\r\n'
-                b'<ellipse cx="30" cy="10" rx="8" ry="5" fill="blue"/>\r\n'
+                b'<svg xmlns="http://www.w3.org/2000/svg">\r\n'
+                b'  <circle cx="10" cy="10" r="5" fill="red"/>\r\n'
+                b'  <ellipse cx="30" cy="10" rx="8" ry="5" fill="blue"/>\r\n'
+                b'</svg>\r\n'
             )
             ledger = EventLedger(root)
             toolbox = CodingToolbox(root, ledger)
@@ -1098,7 +1193,7 @@ class CoreTests(unittest.TestCase):
             updated = source.read_bytes()
             self.assertIn(b'id="pelican-eye"/>\r\n', updated)
             self.assertIn(b'id="pelican-body"/>\r\n', updated)
-            self.assertEqual(updated.count(b"\r\n"), 2)
+            self.assertEqual(updated.count(b"\r\n"), 4)
             self.assertIn("2 exact replacements", result)
             events = [
                 json.loads(line)
@@ -1125,6 +1220,26 @@ class CoreTests(unittest.TestCase):
                 )
             self.assertEqual(source.read_bytes(), before_failed_batch)
 
+    def test_svg_file_tools_reject_malformed_xml_without_mutating_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "drawing.svg"
+            valid = '<svg xmlns="http://www.w3.org/2000/svg"><circle id="wheel" r="10"/></svg>'
+            source.write_text(valid, encoding="utf-8")
+            toolbox = CodingToolbox(root, EventLedger(root))
+
+            with self.assertRaisesRegex(PermanentError, "格式错误的 SVG"):
+                toolbox.replace_in_file(
+                    "drawing.svg",
+                    "</svg>",
+                    "</path>",
+                )
+            self.assertEqual(source.read_text(encoding="utf-8"), valid)
+
+            with self.assertRaisesRegex(PermanentError, "格式错误的 SVG"):
+                toolbox.write_file("broken.svg", "<svg><path></svg>")
+            self.assertFalse((root / "broken.svg").exists())
+
     def test_replace_in_file_tool_schema_supports_batched_edits(self) -> None:
         definitions = CodingToolbox.definitions()
         replace_tool = next(
@@ -1134,6 +1249,7 @@ class CoreTests(unittest.TestCase):
         self.assertIn("edits", parameters["properties"])
         self.assertEqual(parameters["properties"]["edits"]["maxItems"], 50)
         self.assertEqual(parameters["required"], ["path"])
+        self.assertIn("用户明确要求", parameters["properties"]["replace_all"]["description"])
 
     def test_run_command_requires_explicit_approval(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

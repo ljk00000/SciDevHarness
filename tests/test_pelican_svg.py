@@ -21,6 +21,7 @@ from scripts.smoke_pelican_svg import (
     persist_failure_diagnostic,
     record_smoke_event,
     repair_guidance_for_failed_edit,
+    repair_guidance_after_read_without_edit,
     smoke_session_id,
     validate_and_render_svg,
 )
@@ -36,15 +37,15 @@ VALID_PELICAN_SVG = b'''<svg xmlns="http://www.w3.org/2000/svg" width="320" heig
   <path id="bicycle-saddle" d="M128 96 Q135 90 142 96" fill="none" stroke="#27374a" stroke-width="4"/>
   <path id="bicycle-handlebar" d="M215 100 Q220 88 228 94" fill="none" stroke="#27374a" stroke-width="4"/>
   <path id="pelican-wing-reaching" d="M190 80 C200 80 215 88 220 94 Q215 96 210 94 Q200 87 188 88Z" fill="#e9c46a" stroke="#27374a" stroke-width="2"/>
-  <path id="bicycle-pedals" d="M172 150 H188 M180 145 V155" fill="none" stroke="#27374a" stroke-width="4"/>
+  <g id="bicycle-pedals"><circle cx="172" cy="150" r="3" fill="#27374a"/><circle cx="188" cy="150" r="3" fill="#27374a"/></g>
   <path id="pelican-body" d="M145 83 Q166 45 200 65 Q186 110 155 107Z" fill="#f4a261"/>
   <circle id="pelican-head" cx="195" cy="62" r="12" fill="#f4a261"/>
   <circle id="pelican-eye" cx="199" cy="60" r="3" fill="#27374a"/>
   <path id="pelican-wing" d="M154 77 Q174 58 190 78 Q175 90 154 77Z" fill="#e9c46a"/>
   <polygon id="pelican-beak" points="198,66 270,76 198,80" fill="#e76f51"/>
   <path id="pelican-pouch" d="M198 79 Q207 103 188 104 Q202 100 198 79Z" fill="#e76f51" stroke="#e76f51" stroke-width="2"/>
-  <path id="pelican-leg-near" d="M155 100 Q145 95 138 94" fill="none" stroke="#27374a" stroke-width="4"/>
-  <path id="pelican-leg-far" d="M175 102 Q180 125 180 150" fill="none" stroke="#27374a" stroke-width="4"/>
+  <path id="pelican-leg-near" d="M155 100 Q165 125 172 150" fill="none" stroke="#27374a" stroke-width="4"/>
+  <path id="pelican-leg-far" d="M175 102 Q180 130 188 150" fill="none" stroke="#27374a" stroke-width="4"/>
 </svg>'''
 
 
@@ -277,6 +278,36 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertNotIn("85", guidance)
         self.assertEqual(repair_guidance_for_failed_edit(events, "initial"), "")
 
+    def test_read_only_repair_turn_gets_one_actionable_follow_up(self) -> None:
+        events = [
+            ("tool_started", {"session_id": "repair_1", "name": "read_file"}),
+            ("tool_result", {"session_id": "repair_1", "name": "read_file", "result": "<svg/>"}),
+        ]
+        guidance = repair_guidance_after_read_without_edit(events, "repair_1")
+        self.assertIn("made no edit", guidance)
+        self.assertIn("replace_in_file", guidance)
+        self.assertIn("old_text", guidance)
+        self.assertEqual(repair_guidance_after_read_without_edit(events, "repair_2"), "")
+
+    def test_successful_svg_repair_does_not_get_no_edit_guidance(self) -> None:
+        events = [
+            ("tool_started", {"session_id": "repair_1", "name": "read_file"}),
+            ("tool_result", {"session_id": "repair_1", "name": "read_file", "result": "<svg/>"}),
+            (
+                "tool_started",
+                {
+                    "session_id": "repair_1",
+                    "name": "replace_in_file",
+                    "arguments": {"path": "pelican.svg"},
+                },
+            ),
+            (
+                "tool_result",
+                {"session_id": "repair_1", "name": "replace_in_file", "result": "Applied replacement"},
+            ),
+        ]
+        self.assertEqual(repair_guidance_after_read_without_edit(events, "repair_1"), "")
+
     def test_shell_request_trace_omits_the_command_text(self) -> None:
         events = [
             (
@@ -367,6 +398,27 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertNotIn("preserve every passing element", prompt)
         self.assertLess(len(prompt), 1800)
 
+    def test_missing_viewbox_repair_uses_the_exact_root_tag_and_tool_schema(self) -> None:
+        prompt = pelican_repair_prompt(
+            "pelican_bicycle.svg",
+            "SVG must define a four-number viewBox",
+        )
+        self.assertIn("Repair only this localized missing root `viewBox`", prompt)
+        self.assertIn("positive numeric width and height", prompt)
+        self.assertIn("full opening tag as `old_text`", prompt)
+        self.assertIn("`new_text`", prompt)
+        self.assertTrue(SvgArtifactAdapter.is_local_repair_request(prompt))
+
+    def test_malformed_xml_repair_prompt_stays_local_and_uses_unique_tags(self) -> None:
+        prompt = pelican_repair_prompt(
+            "pelican_bicycle.svg",
+            "SVG is not well-formed XML: mismatched tag: line 15, column 4",
+        )
+        self.assertIn("localized SVG XML syntax error", prompt)
+        self.assertIn("exact complete current tag as unique `old_text`", prompt)
+        self.assertIn("Never set `replace_all`", prompt)
+        self.assertTrue(SvgArtifactAdapter.is_local_repair_request(prompt))
+
     def test_many_missing_ids_use_a_label_only_repair_when_viewbox_is_valid(self) -> None:
         prompt = pelican_repair_prompt(
             "pelican_bicycle.svg",
@@ -412,11 +464,28 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertIn("Make a targeted localized repair", prompt)
         self.assertTrue(SvgArtifactAdapter.is_local_repair_request(prompt))
         self.assertIn("Add missing `pelican-head`", prompt)
-        self.assertIn("Lengthen the tapered bill", prompt)
+        self.assertIn("Use a tapered polygon", prompt)
+        self.assertIn("three head radii", prompt)
         self.assertIn("Connect the far leg", prompt)
         self.assertIn("at least four radial spoke segments", prompt)
         self.assertIn("edit only its child shape", prompt)
         self.assertNotIn("complete, polished", prompt)
+
+    def test_many_missing_and_malformed_parts_use_full_repair_tool_path(self) -> None:
+        reason = (
+            "SVG preflight failed; missing=['bicycle-handlebar', 'bicycle-pedals', "
+            "'bicycle-spokes', 'pelican-pouch']; malformed=["
+            "'bicycle-frame must be a connected polyline (got path)', "
+            "'pelican-beak must be a polygon (got path)', "
+            "'left-wheel must be an unfilled, visibly outlined tire', "
+            "'right-wheel must be an unfilled, visibly outlined tire']; duplicate_ids=[]"
+        )
+        prompt = pelican_repair_prompt("pelican_bicycle.svg", reason)
+        self.assertIn("Replace it once with a complete, polished pelican riding a bicycle", prompt)
+        self.assertIn("Call `write_file` once", prompt)
+        self.assertNotIn("Make a targeted localized repair", prompt)
+        self.assertTrue(SvgArtifactAdapter.is_repair_request(prompt))
+        self.assertFalse(SvgArtifactAdapter.is_local_repair_request(prompt))
 
     def test_duplicate_id_only_uses_a_targeted_repair_prompt(self) -> None:
         prompt = pelican_repair_prompt(
@@ -472,6 +541,24 @@ class PelicanSvgTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(RuntimeError, r"viewBox is too small.*missing=.*left-wheel.*near_matches"):
                 validate_and_render_svg(incomplete, Path(temporary) / "preview.png")
+
+    def test_partial_svg_still_checks_oversized_body_and_disconnected_frame(self) -> None:
+        partial = b'''<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
+          <circle id="left-wheel" cx="130" cy="325" r="60" fill="#8b4513" stroke="#18324b"/>
+          <circle id="right-wheel" cx="500" cy="325" r="60" fill="#8b4513" stroke="#18324b"/>
+          <polyline id="bicycle-frame" points="275,230 350,200 452,230" fill="none" stroke="#18324b"/>
+          <rect id="bicycle-saddle" x="300" y="225" width="100" height="50"/>
+          <circle id="bicycle-handlebar" cx="452" cy="205" r="50"/>
+          <path id="pelican-body" d="M260,100 C300,50 460,50 520,120 C470,200 300,200 260,100 Z" fill="#e4b35b"/>
+        </svg>'''
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(RuntimeError) as caught:
+                validate_and_render_svg(partial, Path(temporary) / "preview.png")
+        message = str(caught.exception)
+        self.assertIn("pelican-body is too wide and overwhelms the bicycle", message)
+        self.assertIn("bicycle frame must meet the rear wheel hub", message)
+        self.assertIn("bicycle-saddle must be a compact sitting pad", message)
+        self.assertIn("bicycle-handlebar must be a compact grip", message)
 
     def test_duplicate_ids_and_core_shape_errors_are_reported_together(self) -> None:
         malformed = VALID_PELICAN_SVG.replace(
@@ -610,7 +697,7 @@ class PelicanSvgTests(unittest.TestCase):
             self.assertGreater(preview.stat().st_size, 1000)
             self.assertGreater(result["non_background_samples"], 25)
             self.assertEqual(result["intrinsic_width"], 320)
-            self.assertEqual(result["element_counts"]["circle"], 4)
+            self.assertEqual(result["element_counts"]["circle"], 6)
 
     def test_visible_illustration_does_not_depend_on_title_or_description_labels(self) -> None:
         unlabeled = VALID_PELICAN_SVG.replace(b"  <title>Pelican riding a bicycle</title>\n", b"")
@@ -804,14 +891,44 @@ class PelicanSvgTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "too flat"):
                 validate_and_render_svg(flat_body, Path(temporary) / "preview.png")
 
-    def test_floating_rider_leg_is_rejected_when_it_misses_the_saddle(self) -> None:
+    def test_floating_rider_leg_is_rejected_when_it_misses_the_body(self) -> None:
         floating_leg = VALID_PELICAN_SVG.replace(
-            b'd="M155 100 Q145 95 138 94"',
+            b'd="M155 100 Q165 125 172 150"',
             b'd="M40 20 Q50 30 60 40"',
         )
         with tempfile.TemporaryDirectory() as temporary:
-            with self.assertRaisesRegex(RuntimeError, "connect the body to the saddle"):
+            with self.assertRaisesRegex(RuntimeError, "must visibly begin at the pelican body"):
                 validate_and_render_svg(floating_leg, Path(temporary) / "preview.png")
+
+    def test_rider_body_must_rest_on_the_saddle_even_during_partial_validation(self) -> None:
+        floating = VALID_PELICAN_SVG.replace(
+            b'd="M128 96 Q135 90 142 96"',
+            b'd="M128 156 Q135 150 142 156"',
+        ).replace(b'  <path id="pelican-wing"', b'  <!-- intentionally missing wing -->\n  <path id="pelican-wing-hidden"')
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "body must rest on or closely touch the bicycle-saddle"):
+                validate_and_render_svg(floating, Path(temporary) / "preview.png")
+
+    def test_bicycle_requires_two_distinct_pedal_circles(self) -> None:
+        duplicate_pedal = VALID_PELICAN_SVG.replace(b'cx="188" cy="150"', b'cx="172" cy="150"')
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "two distinct visible pedal circles"):
+                validate_and_render_svg(duplicate_pedal, Path(temporary) / "preview.png")
+
+    def test_two_rider_legs_must_reach_different_pedals(self) -> None:
+        same_pedal = VALID_PELICAN_SVG.replace(
+            b'd="M175 102 Q180 130 188 150"',
+            b'd="M175 102 Q180 130 172 150"',
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "must reach separate pedal positions"):
+                validate_and_render_svg(same_pedal, Path(temporary) / "preview.png")
+
+    def test_frame_must_meet_the_saddle_seat_joint(self) -> None:
+        floating_seat = VALID_PELICAN_SVG.replace(b'135,95', b'160,95')
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "frame must meet the seat joint directly"):
+                validate_and_render_svg(floating_seat, Path(temporary) / "preview.png")
 
     def test_reaching_wing_must_be_closed_filled_and_touch_the_handlebar(self) -> None:
         detached = VALID_PELICAN_SVG.replace(

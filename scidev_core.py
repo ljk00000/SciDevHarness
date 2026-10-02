@@ -1345,7 +1345,7 @@ class CodingToolbox:
             ),
             function(
                 "write_file",
-                "创建或完整重写一个文本文件。适合新文件或小文件；已有大文件优先使用 replace_in_file。",
+                "创建或完整重写文本文件。用户要求生成文件时，把完整内容放在本工具的 content 参数并实际调用；不要只在回复/代码块输出文件内容或声称已保存。已有大文件优先使用 replace_in_file。",
                 {
                     "path": {"type": "string", "description": "相对项目根目录的文件路径"},
                     "content": {"type": "string", "description": "文件的完整 UTF-8 内容"},
@@ -1354,12 +1354,12 @@ class CodingToolbox:
             ),
             function(
                 "replace_in_file",
-                "在文件中进行精确文本替换。old_text 必须与文件中的内容完全匹配。",
+                "在文件中进行精确文本替换。old_text 必须唯一且与原文完全匹配；只有用户明确要求替换所有匹配项时才启用 replace_all。",
                 {
                     "path": {"type": "string", "description": "相对项目根目录的文件路径"},
                     "old_text": {"type": "string", "description": "需要被替换的原文"},
                     "new_text": {"type": "string", "description": "替换后的文本"},
-                    "replace_all": {"type": "boolean", "description": "是否替换全部匹配，默认 false"},
+                    "replace_all": {"type": "boolean", "description": "仅当用户明确要求替换所有匹配项时设为 true"},
                 },
                 ["path", "old_text", "new_text"],
             ),
@@ -1396,7 +1396,10 @@ class CodingToolbox:
                 "properties": {
                     "old_text": {"type": "string"},
                     "new_text": {"type": "string"},
-                    "replace_all": {"type": "boolean"},
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "仅当用户明确要求替换所有匹配项时设为 true",
+                    },
                 },
                 "required": ["old_text", "new_text"],
                 "additionalProperties": False,
@@ -1430,6 +1433,23 @@ class CodingToolbox:
             return raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise PermanentError(f"文件不是有效 UTF-8 文本，拒绝读取或编辑：{path.name}") from exc
+
+    @staticmethod
+    def _validate_svg_document(path: Path, content: str | bytes) -> None:
+        """Keep SVG writes and edits well-formed before they reach disk or auto-commit."""
+        if path.suffix.casefold() != ".svg":
+            return
+        raw = content.encode("utf-8") if isinstance(content, str) else bytes(content)
+        lowered = raw.lower()
+        if b"<!doctype" in lowered or b"<!entity" in lowered:
+            raise PermanentError(f"拒绝写入包含 DTD 或实体声明的 SVG：{path.name}")
+        try:
+            root = ET.fromstring(raw)
+        except ET.ParseError as exc:
+            raise PermanentError(f"拒绝写入格式错误的 SVG：{exc}") from exc
+        local_name = root.tag.rsplit("}", 1)[-1].casefold() if isinstance(root.tag, str) else ""
+        if local_name != "svg":
+            raise PermanentError(f"拒绝写入根元素不是 svg 的文件：{path.name}")
 
     def list_files(self, path: str = ".", depth: int = 3) -> str:
         base = self._resolve(path)
@@ -1491,6 +1511,7 @@ class CodingToolbox:
             raise PermanentError(f"拒绝写入过大文件（上限 {self.MAX_WRITE_BYTES} bytes）")
         if b"\x00" in encoded:
             raise PermanentError(f"拒绝写入包含 NUL 字节的文本文件：{path}")
+        self._validate_svg_document(target, encoded)
         if target.exists():
             if not target.is_file():
                 raise PermanentError(f"目标不是普通文件，拒绝覆盖：{path}")
@@ -1544,6 +1565,7 @@ class CodingToolbox:
         if count > 1 and not replace_all:
             raise PermanentError(f"old_text 在 {path} 中匹配 {count} 次，请提供更精确文本或明确 replace_all=true")
         updated = text.replace(matched_old_text, new_text, -1 if replace_all else 1)
+        self._validate_svg_document(target, updated)
         encoded = updated.encode("utf-8")
         if len(encoded) > self.MAX_WRITE_BYTES:
             raise PermanentError(f"拒绝写入过大文件（上限 {self.MAX_WRITE_BYTES} bytes）")
@@ -1611,6 +1633,7 @@ class CodingToolbox:
                 raise PermanentError("Batch edit would create a binary or oversized text file")
             total_matches += count
 
+        self._validate_svg_document(target, updated)
         target.write_bytes(updated.encode("utf-8"))
         relative = target.relative_to(self.project_root).as_posix()
         self.ledger.append(
@@ -1939,6 +1962,7 @@ class CodingAgent:
     """Codex-style coding loop: inspect, edit, run checks, inspect diff, commit."""
 
     MAX_TURNS = 32
+    MAX_SVG_REPAIR_TURNS = 8
     MAX_SVG_CREATION_RETRIES = 1
     SVG_CREATION_TOOLS = frozenset({"write_file"})
     SVG_LOCAL_REPAIR_TOOLS = frozenset({"read_file", "replace_in_file", "git_diff"})
@@ -1952,7 +1976,7 @@ class CodingAgent:
     SYSTEM_PROMPT = """你是 SciDevHarness 的本地科研编码 Agent。直接用工具完成用户在工作区内的请求；实际操作，不能用方案、代码块或声称代替工具结果。
 
 文件任务
-- 用户要求创建/生成可保存文件即为授权：选合理文件名，在工作区根目录调用 `write_file` 一次；不要为名称、路径、尺寸或风格追问。简单图像/SVG 不用 shell 或下载。写入成功后简短确认，不重复输出整份文件。
+- 用户要求创建/生成可保存文件即为授权：选合理文件名，在工作区根目录调用 `write_file` 一次；不要为名称、路径、尺寸或风格追问。严格按用户指定对象与动作，不得换成相似对象。文件内容只放在工具参数里；没有成功工具结果不得声称已保存。简单图像/SVG 不用 shell 或下载。写入成功后简短确认，不重复输出整份文件。
 - 修改现有文件时，将引用的旧请求只视为背景。先读取目标及必要上下文，保留无关内容；局部修改用 `replace_in_file`，同文件多项独立精确修改可一次批量调用；仅在确需整体替换时用 `write_file`。实际调用工具并核验返回结果。
 - 仅在任务依赖时读取项目文件/目录。不得访问 `.git`、`.research`、密钥、环境变量、数据集或工作区外路径。
 - 修改后运行最小相关检查。运行命令须逐条经 UI 批准；被拒绝或超时后不得重试、拆分或变形规避。用户点名的工具/检查必须实际执行；未执行或失败要明说，不能将请求、计划或工具 JSON 当作结果。工具报错先分析修正，不假称完成；完成后简述改动、验证和限制。
@@ -1960,7 +1984,7 @@ class CodingAgent:
 
 图像与 SVG
 - 先定画布、构图与比例，再画清可识别主体和各部件的连接/接触关系，最后加细节和样式。动作、承载、操作须表现真实支撑和接触点；分离的近邻形状或色块不代表交互。
-- 保持主体姿态和关键部件清晰；避免不合理遮挡、重叠和 viewBox 裁切，留白与对比适度。简单 SVG 少于 60 个元素并闭合标签；语义 ID 可辅助检查但不能代替可见几何。
+- 保持主体姿态和关键部件清晰；避免不合理遮挡、重叠和 viewBox 裁切，留白与对比适度。简单 SVG 少于 60 个元素并闭合标签；主体和每个关键部件分别对应各自可见 SVG 几何元素及唯一语义 `id`；勿重复、勿仅给共享分组命名或用注释代替；ID 辅助检查但不能代替几何。
 - 创建后尽可能实际渲染/验证；只有工具确实确认后才能声称已完成渲染/验证。
 """
 
@@ -2013,16 +2037,51 @@ class CodingAgent:
             )
         else:
             return definitions
-        return [
+        selected = [
             definition
             for definition in definitions
             if definition.get("function", {}).get("name") in allowed_tools
         ]
+        if SvgArtifactAdapter.is_local_repair_request(prompt):
+            for definition in selected:
+                if definition.get("function", {}).get("name") != "replace_in_file":
+                    continue
+                properties = definition.get("function", {}).get("parameters", {}).get("properties", {})
+                properties.pop("replace_all", None)
+                edits = properties.get("edits", {})
+                edit_properties = edits.get("items", {}).get("properties", {})
+                edit_properties.pop("replace_all", None)
+        return selected
 
     @classmethod
     def _tool_choice_for_tools(cls, tool_names: set[str]) -> str:
-        """Require the sole authorized file-creation tool instead of accepting narration."""
-        return "required" if tool_names == cls.SVG_CREATION_TOOLS else "auto"
+        """Require a tool for scoped SVG artifact creation and repair operations."""
+        required_tool_sets = {
+            cls.SVG_CREATION_TOOLS,
+            cls.SVG_LOCAL_REPAIR_TOOLS,
+            cls.SVG_ARTIFACT_TOOLS,
+        }
+        return "required" if any(tool_names == allowed for allowed in required_tool_sets) else "auto"
+
+    @staticmethod
+    def _validate_tool_edit_scope(prompt: str, name: str, arguments: dict[str, Any]) -> None:
+        """Prevent broad replacements during a targeted SVG repair."""
+        if (
+            name != "replace_in_file"
+            or not SvgArtifactAdapter.is_local_repair_request(prompt)
+            or not str(arguments.get("path", "")).casefold().endswith(".svg")
+        ):
+            return
+        edits = arguments.get("edits")
+        bulk_requested = arguments.get("replace_all") is True
+        if isinstance(edits, list):
+            bulk_requested = bulk_requested or any(
+                isinstance(edit, dict) and edit.get("replace_all") is True for edit in edits
+            )
+        if bulk_requested:
+            raise PermanentError(
+                "replace_all is disabled for a targeted SVG repair; use exact unique old_text for each shape"
+            )
 
     def _save_session(self, session: dict[str, Any]) -> None:
         path = self._session_path(session["session_id"])
@@ -2301,8 +2360,11 @@ class CodingAgent:
         workspace_revision = 0
         diff_verified_revision = -1
         recovered_artifact_path = ""
+        turn_limit = self.MAX_TURNS
+        if SvgArtifactAdapter.is_repair_request(prompt):
+            turn_limit = min(turn_limit, self.MAX_SVG_REPAIR_TURNS)
 
-        for turn in range(1, self.MAX_TURNS + 1):
+        for turn in range(1, turn_limit + 1):
             if recovered_artifact_path:
                 message = {
                     "role": "assistant",
@@ -2390,8 +2452,9 @@ class CodingAgent:
                                 "Immediately call the declared write_file tool exactly once with a safe .svg "
                                 "filename and complete SVG markup. Do not return a JSON tool-call object or "
                                 "wrap the tool call in XML. If a tool call cannot be emitted, return only one "
-                                "complete fenced svg block. Keep the requested subject recognizable and all "
-                                "drawing geometry inside the viewBox."
+                                "complete fenced svg block. Give each requested key part a unique semantic `id` "
+                                "on its visible SVG element, show requested actions and relationships through "
+                                "actual shape contact, and keep all geometry inside the viewBox."
                             ),
                         }
                     )
@@ -2564,6 +2627,7 @@ class CodingAgent:
                         raise ValueError("工具参数必须是 JSON 对象")
                     if name not in allowed_tool_names:
                         raise PermanentError(f"Tool {name!r} is not available for this task.")
+                    self._validate_tool_edit_scope(prompt, name, arguments)
                     tool_event = {"session_id": session_id, "name": name, "arguments": arguments}
                     if call_id in recovered_tool_ids:
                         tool_event["source"] = "harness_svg_artifact_recovery"
@@ -2605,7 +2669,7 @@ class CodingAgent:
                 self._save_session(session)
 
         session["status"] = "failed"
-        session["error"] = f"超过最大 Agent 步数：{self.MAX_TURNS}"
+        session["error"] = f"超过最大 Agent 步数：{turn_limit}"
         self._save_session(session)
         raise PermanentError(session["error"])
 

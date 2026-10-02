@@ -155,7 +155,7 @@ Read the file first. Then call `replace_in_file` with one `edits` array; each it
         "pelican-eye": "Identify the small dark circular eye.",
         "pelican-beak": "Identify the long forward-pointing polygon beak.",
         "pelican-pouch": "Identify the closed curved throat pouch below the bill.",
-        "pelican-leg-near": "Identify a leg visibly joining the body to the saddle.",
+        "pelican-leg-near": "Identify a distinct leg visibly joining the lower body to one pedal.",
         "pelican-leg-far": "Identify a leg visibly joining the body to the pedal.",
     }
     if (
@@ -183,18 +183,18 @@ Read the file. If a correct visible shape exists, add its missing ID; otherwise 
         "bicycle-frame": "Reshape the connected frame so its rear endpoint meets the rear hub and one vertex meets the pedal/crank center.",
         "bicycle-fork": "Move the fork so one endpoint touches the front wheel hub and the other joins the front frame/head tube.",
         "bicycle-spokes": "Add at least four radial spoke segments inside each wheel; keep them centered on the hubs.",
-        "bicycle-saddle": "Use a compact, clearly visible saddle directly above the frame's seat joint.",
-        "bicycle-handlebar": "Keep the handlebar ahead of the saddle and connect its grip to the reaching wing tip.",
-        "bicycle-pedals": "Place a compact crank/pedal at a frame vertex, within reach of the far leg.",
+        "bicycle-saddle": "Use a compact, clearly visible saddle directly above the frame's seat joint; keep it small relative to a wheel.",
+        "bicycle-handlebar": "Use a compact grip ahead of the saddle, not a wheel-sized circle; connect it to the reaching wing tip.",
+        "bicycle-pedals": "Keep the crank at the frame vertex and show two separate small pedal circles at distinct positions.",
         "pelican-head": "Keep a distinct filled head touching the front of the torso, with enough room for the eye and bill.",
         "pelican-eye": "Keep one small dark eye inside the head.",
-        "pelican-beak": "Lengthen the tapered bill from the head so it projects forward at least three head radii; retain a recognizable pelican bill rather than a tiny triangle.",
+        "pelican-beak": "Use a tapered polygon; lengthen the bill from the head so it projects forward at least three head radii, not a tiny triangle.",
         "pelican-body": "Use a compact organic torso behind and overlapping the head; keep its width below roughly half the wheel spacing and leave the wing as a separate feature.",
         "pelican-wing": "Place the filled curved wing mostly inside the torso, not as a second body-sized silhouette.",
         "pelican-pouch": "Make a small closed, filled curved throat pouch beneath the long bill; keep it narrower than three head radii.",
         "pelican-wing-reaching": "Draw a closed filled curve from the shoulder to the handlebar, ending at the actual grip while overlapping the torso at its base.",
-        "pelican-leg-near": "Connect the near leg continuously from the lower torso to the saddle.",
-        "pelican-leg-far": "Connect the far leg continuously from the lower torso to the pedal/crank.",
+        "pelican-leg-near": "Connect a distinct near leg continuously from the lower torso to one pedal circle.",
+        "pelican-leg-far": "Connect the far leg continuously from the lower torso to the other pedal circle.",
     }
     targeted_geometry: dict[str, str] = {}
     unmatched_geometry = []
@@ -208,7 +208,14 @@ Read the file. If a correct visible shape exists, add its missing ID; otherwise 
             unmatched_geometry.append(issue)
         else:
             targeted_geometry[part] = geometry_guidance[part]
-    if (malformed_parts or missing_parts) and len(missing_parts) <= 6 and not duplicate_ids and not unmatched_geometry:
+    complex_structural_failure = len(missing_parts) >= 4 and len(malformed_parts) >= 3
+    if (
+        (malformed_parts or missing_parts)
+        and len(missing_parts) <= 6
+        and not duplicate_ids
+        and not unmatched_geometry
+        and not complex_structural_failure
+    ):
         edits = []
         for identifier in missing_parts:
             instruction = missing_guidance.get(identifier, f"add a visible shape with this exact ID: {identifier}")
@@ -219,10 +226,14 @@ Read the file. If a correct visible shape exists, add its missing ID; otherwise 
 Targeted shape edits:
 {edit_instructions}
 Read the existing SVG first. When an ID is on a `<g>`, edit only its child shape and keep the wrapper. Batch independent changes in one `edits` array with the tool's `old_text`/`new_text` fields, then inspect `git_diff`; do not rewrite the file or use shell."""
-    if len(missing_parts) >= 7 or (len(malformed_parts) >= 3 and (duplicate_ids or unmatched_geometry)):
-        return f"""Repair the existing SVG in {target}; it has several structural errors. Replace it once with a complete, polished pelican riding a bicycle, but preserve the valid artwork and layer order. Validator: {failure_reason}
-Use viewBox="0 0 640 420", balanced whitespace, navy outlines `#18324b`, teal `#168b83`, ochre `#e4b35b`, coral `#e9785b`, and background `#f4f7fb`; use only valid CSS/SVG color values, preferably these hex codes. Fixed layout: wheel centers (130,325) and (500,325), radius 60; frame polyline passes through both hubs and crank (390,265), with seat joint (275,230); saddle near (275,225), handlebar near (452,205); bird body around x=275..390/y=122..213, head centered (370,140) with radius 20, bill projecting right to x=468, and pouch hanging below. Connect both legs to the saddle/pedal and the reaching wing tip to the handlebar. Draw radial spokes, a fork and coherent anatomy; keep every shape inside the canvas.
-Use each exact ID once: left-wheel, right-wheel, bicycle-frame, bicycle-fork, bicycle-spokes, bicycle-saddle, bicycle-handlebar, bicycle-pedals, pelican-body, pelican-head, pelican-eye, pelican-wing, pelican-wing-reaching, pelican-beak, pelican-pouch, pelican-leg-near, pelican-leg-far. Wheels are `<circle>`; frame is `<polyline>`; spokes are one `<g>` containing radial lines; beak is `<polygon>`; body is a curved `<path>` or `<ellipse>`; head/eye are circles; pouch is a closed curved path. Call `write_file` once and inspect `git_diff`. Do not use shell."""
+    if (
+        len(missing_parts) >= 7
+        or complex_structural_failure
+        or (len(malformed_parts) >= 3 and (duplicate_ids or unmatched_geometry))
+    ):
+        return f"""Repair the existing SVG in {target} once. Replace it once with a complete, polished pelican riding a bicycle; preserve valid artwork and layer order. Validator: {failure_reason}
+Use `viewBox="0 0 640 420"`; palette navy `#18324b`, teal `#168b83`, ochre `#e4b35b`, coral `#e9785b` on `#f4f7fb`. Put unfilled wheels (130,325)/(500,325), radius 60. A triangular frame connects hubs, crank (390,265), seat (275,230), and head joint (452,205); saddle/grip sit on their joints. Torso near x=275..395/y=135..210 rests on saddle; head (370,140), radius 20; long tapered bill projects right 60+ units, pouch hangs below. Two distinct legs reach different pedal circles; reaching wing touches grip. Add radial spokes to both wheels and a fork to the front hub; keep shapes in bounds.
+Use each ID once: left-wheel, right-wheel, bicycle-frame, bicycle-fork, bicycle-spokes, bicycle-saddle, bicycle-handlebar, bicycle-pedals, pelican-body, pelican-head, pelican-eye, pelican-wing, pelican-wing-reaching, pelican-beak, pelican-pouch, pelican-leg-near, pelican-leg-far. Wheels are `<circle>`; frame is `<polyline>`; spokes are one `<g>`; pedals are one `<g>` with two circles; beak is `<polygon>`; body is a curved `<path>` or `<ellipse>`; head/eye are circles; pouch is a closed path. Call `write_file` once and inspect `git_diff`; no shell."""
     if duplicate_ids:
         return f"""Repair duplicate SVG IDs in {target} only. Validator: {failure_reason}
 For each listed duplicate, preserve the ID on the correct primary shape and rename redundant copies to unique descriptive IDs; for `bicycle-spokes`, prefer one `<g id="bicycle-spokes">` around its spoke lines. Read the file, make the smallest exact `replace_in_file` edit(s), then inspect `git_diff`. Preserve all other artwork; do not use shell."""
@@ -231,7 +242,13 @@ For each listed duplicate, preserve the ID on the correct primary shape and rena
 Read the file, preserve all correct artwork, and use exact `replace_in_file` edits only. Replace both defective/prefixed wheel elements with these exact circles, then inspect `git_diff`; do not rewrite the whole SVG or use shell:
 `<circle id="left-wheel" cx="125" cy="326" r="72" fill="none" stroke="#18324B" stroke-width="8"/>`
 `<circle id="right-wheel" cx="515" cy="326" r="72" fill="none" stroke="#18324B" stroke-width="8"/>`"""
-    if "viewBox is too small" in failure_reason:
+    if "not well-formed xml" in failure_reason.casefold():
+        return f"""Repair only this localized SVG XML syntax error in {target}. Validator: {failure_reason}
+Read the indicated lines and preserve the drawing. Fix only the mismatched or malformed tag with one `replace_in_file` call; use the exact complete current tag as unique `old_text` and a properly closed `new_text`. Never set `replace_all`, rewrite the whole SVG, or return a code block instead of invoking the tool. Inspect `git_diff` after the edit."""
+    if "must define a four-number viewbox" in failure_reason.casefold():
+        return f"""Repair only this localized missing root `viewBox` in {target}. Validator: {failure_reason}
+Read the current root `<svg ...>` opening tag. Preserve its existing dimensions, namespace, and all other attributes; add `viewBox="0 0 WIDTH HEIGHT"` using the positive numeric width and height already present in that tag. Make one exact `replace_in_file` call with the full opening tag as `old_text` and the minimally updated tag as `new_text`, then inspect `git_diff`. Do not output an SVG/code block or claim a save instead of calling the tool."""
+    if "viewbox is too small" in failure_reason.casefold():
         return f"""Repair only the localized root `viewBox` issue in {target}. Validator: {failure_reason}
 Read the current SVG. Preserve the drawing; adjust the root viewBox to fully contain it with dimensions at least 300x180, scaling the artwork uniformly if required. Use one precise `replace_in_file`, inspect `git_diff`, and do not use shell."""
     return f"""Repair only the reported issue in {target}. Validator: {failure_reason}
@@ -326,6 +343,28 @@ def repair_guidance_for_failed_edit(events: list[tuple[str, dict[str, Any]]], se
                 "Reread the file and copy the complete current SVG element exactly before retrying."
             )
     return ""
+
+
+def repair_guidance_after_read_without_edit(
+    events: list[tuple[str, dict[str, Any]]], session_id: str
+) -> str:
+    """Give one bounded follow-up when a repair turn read the SVG but made no edit."""
+    session_events = [
+        (name, data)
+        for name, data in events
+        if str(data.get("session_id", "")) == session_id
+    ]
+    if not any(name == "tool_result" and data.get("name") == "read_file" for name, data in session_events):
+        return ""
+    if any(str(call.get("session_id", "")) == session_id for call in collect_svg_mutations(session_events)):
+        return ""
+    return (
+        "Your last turn only read the SVG and made no edit. Now carry out the requested repair above "
+        "with one `replace_in_file` call, using the tool's exact `path`, `old_text`, and `new_text` "
+        "fields copied from the current file. Every `old_text` must be unique; never set `replace_all`. "
+        "Do not repeat the file contents or claim success; "
+        "inspect `git_diff` only after an actual edit."
+    )
 
 
 def collect_shell_requests(events: list[tuple[str, dict[str, Any]]]) -> list[dict[str, str]]:
@@ -437,6 +476,149 @@ def _paint_is_visible_against_canvas(value: str) -> bool:
         sum((channel - background) ** 2 for channel, background in zip(effective, SMOKE_BACKGROUND.getRgb()[:3]))
     )
     return delta >= 24
+
+
+_SVG_PATH_TOKEN = re.compile(r"[A-Za-z]|[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?")
+
+
+def _svg_path_endpoints(path_data: str) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Return the first and final points for the common SVG path commands."""
+    tokens = _SVG_PATH_TOKEN.findall(path_data)
+    current = (0.0, 0.0)
+    subpath_start = current
+    first: tuple[float, float] | None = None
+    command = ""
+    index = 0
+    arity = {"M": 2, "L": 2, "T": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "A": 7}
+    while index < len(tokens):
+        if tokens[index].isalpha():
+            command = tokens[index]
+            index += 1
+            if command.upper() == "Z":
+                current = subpath_start
+                continue
+        if not command or command.upper() not in arity:
+            return None
+        upper = command.upper()
+        relative = command.islower()
+        size = arity[upper]
+        if index + size > len(tokens) or any(token.isalpha() for token in tokens[index:index + size]):
+            return None
+        values = [float(token) for token in tokens[index:index + size]]
+        index += size
+        if upper in {"M", "L", "T"}:
+            point = (values[-2], values[-1])
+        elif upper == "H":
+            point = (values[0], current[1])
+        elif upper == "V":
+            point = (current[0], values[0])
+        elif upper == "A":
+            point = (values[5], values[6])
+        else:
+            point = (values[-2], values[-1])
+        if relative:
+            point = (current[0] + point[0], current[1] + point[1])
+        current = point
+        if upper == "M":
+            subpath_start = point
+            command = "l" if relative else "L"
+        if first is None:
+            first = point
+    if first is None:
+        return None
+    return first, current
+
+
+def _pedal_circles(element: ET.Element | None) -> list[tuple[float, float, float]]:
+    """Read visible circle/ellipse pedal centers from the semantic group."""
+    pedals: list[tuple[float, float, float]] = []
+    if element is None:
+        return pedals
+    for shape in element.iter():
+        tag = _svg_tag_name(shape)
+        if tag not in {"circle", "ellipse"}:
+            continue
+        try:
+            x = float(shape.attrib.get("cx", "0"))
+            y = float(shape.attrib.get("cy", "0"))
+            rx = float(shape.attrib.get("r", shape.attrib.get("rx", "0")))
+            ry = float(shape.attrib.get("r", shape.attrib.get("ry", "0")))
+        except ValueError:
+            continue
+        if rx > 0 and ry > 0:
+            pedals.append((x, y, max(rx, ry)))
+    return pedals
+
+
+def _collect_rider_pose_issues(
+    identified_elements: dict[str, ET.Element],
+    bounds: dict[str, QRectF],
+) -> list[str]:
+    """Validate the rider's seat, leg, and distinct pedal relationships."""
+    issues: list[str] = []
+    body = bounds.get("pelican-body")
+    saddle = bounds.get("bicycle-saddle")
+    left = bounds.get("left-wheel")
+    right = bounds.get("right-wheel")
+    wheel_radius = min(left.width(), left.height(), right.width(), right.height()) / 2 if left and right else 0.0
+    tolerance = max(3.0, wheel_radius * 0.2)
+    if body and saddle and not body.adjusted(-tolerance, -tolerance, tolerance, tolerance).intersects(saddle):
+        issues.append("pelican-body must rest on or closely touch the bicycle-saddle")
+
+    pedal_positions = _pedal_circles(identified_elements.get("bicycle-pedals"))
+    distinct_pedals: list[tuple[float, float, float]] = []
+    for pedal in pedal_positions:
+        if all(
+            math.hypot(pedal[0] - other[0], pedal[1] - other[1]) >= max(3.0, wheel_radius * 0.2)
+            for other in distinct_pedals
+        ):
+            distinct_pedals.append(pedal)
+    pedals_element = identified_elements.get("bicycle-pedals")
+    if pedals_element is not None and len(distinct_pedals) < 2:
+        issues.append("bicycle-pedals must contain two distinct visible pedal circles")
+
+    legs = [identified_elements.get("pelican-leg-near"), identified_elements.get("pelican-leg-far")]
+    leg_bounds = [bounds.get("pelican-leg-near"), bounds.get("pelican-leg-far")]
+    leg_ends: list[tuple[float, float]] = []
+    for leg, rect, label in zip(legs, leg_bounds, ("near", "far")):
+        if leg is None or rect is None:
+            continue
+        endpoints = _svg_path_endpoints(leg.attrib.get("d", "")) if _svg_tag_name(leg) == "path" else None
+        if endpoints is None:
+            issues.append(f"pelican-leg-{label} must be a path with a clear body-to-pedal endpoint")
+            continue
+        start, end = endpoints
+        leg_ends.append(end)
+        if body and not body.adjusted(-tolerance, -tolerance, tolerance, tolerance).contains(*start):
+            issues.append(f"pelican-leg-{label} must visibly begin at the pelican body")
+        if len(distinct_pedals) >= 2:
+            distances = [math.hypot(end[0] - x, end[1] - y) for x, y, _ in distinct_pedals]
+            if min(distances) > tolerance + min(radius for _, _, radius in distinct_pedals):
+                issues.append(f"pelican-leg-{label} must visibly reach a pedal position")
+    if len(leg_ends) == 2 and len(distinct_pedals) >= 2:
+        direct = (
+            math.dist(leg_ends[0], distinct_pedals[0][:2]),
+            math.dist(leg_ends[1], distinct_pedals[1][:2]),
+        )
+        crossed = (
+            math.dist(leg_ends[0], distinct_pedals[1][:2]),
+            math.dist(leg_ends[1], distinct_pedals[0][:2]),
+        )
+        matching = min((direct, crossed), key=sum)
+        if any(distance > tolerance + distinct_pedals[index][2] for index, distance in enumerate(matching)):
+            issues.append("pelican-leg-near and pelican-leg-far must reach separate pedal positions")
+        if math.dist(leg_ends[0], leg_ends[1]) < max(3.0, wheel_radius * 0.15):
+            issues.append("pelican-leg-near and pelican-leg-far must be visibly distinct")
+
+    frame = identified_elements.get("bicycle-frame")
+    if frame is not None and saddle is not None and _svg_tag_name(frame) == "polyline":
+        numbers = [float(value) for value in re.findall(r"[-+]?(?:\d*\.\d+|\d+\.?\d*)", frame.attrib.get("points", ""))]
+        points = list(zip(numbers[::2], numbers[1::2]))
+        seat_joint = saddle.center()
+        seat_tolerance = max(3.0, wheel_radius * 0.35)
+        if not any(math.hypot(x - seat_joint.x(), y - seat_joint.y()) <= seat_tolerance for x, y in points):
+            issues.append("bicycle-frame must meet the seat joint directly beneath the saddle")
+    return issues
 
 
 def _collect_illustration_geometry_issues(
@@ -572,10 +754,6 @@ def _collect_illustration_geometry_issues(
             issues.append(f"{part_id} must be a visible non-empty shape")
     if handlebar_bounds.center().x() <= saddle_bounds.center().x():
         issues.append("bicycle-handlebar must be ahead of the saddle")
-    if near_leg_bounds.intersected(body_bounds).isEmpty() or near_leg_bounds.intersected(saddle_bounds).isEmpty():
-        issues.append("pelican-leg-near must visibly connect the body to the saddle")
-    if far_leg_bounds.intersected(body_bounds).isEmpty() or far_leg_bounds.intersected(pedal_bounds).isEmpty():
-        issues.append("pelican-leg-far must visibly connect the body to the pedals")
 
     reaching_wing = semantic_elements["pelican-wing-reaching"]
     reaching_wing_path = reaching_wing.attrib.get("d", "")
@@ -657,6 +835,71 @@ def _collect_illustration_geometry_issues(
             spoke_segments += max(0, len(coordinates) // 2 - 1)
     if _svg_tag_name(spokes) != "g" or spoke_segments < 8:
         issues.append("bicycle-spokes must contain visible radial spoke lines for both wheels")
+    issues.extend(_collect_rider_pose_issues(identified_elements, bounds))
+    return issues
+
+
+def _collect_partial_illustration_geometry_issues(
+    identified_elements: dict[str, ET.Element],
+    renderer: QSvgRenderer,
+    parents: dict[ET.Element, ET.Element],
+    css_rules: list[tuple[str, dict[str, str]]],
+) -> list[str]:
+    """Check visible core relationships even while other semantic IDs are missing."""
+    issues: list[str] = []
+    bounds = {
+        identifier: renderer.boundsOnElement(identifier)
+        for identifier in identified_elements
+    }
+    wheel_ids = ("left-wheel", "right-wheel")
+    if all(identifier in bounds for identifier in wheel_ids):
+        left, right = (bounds[identifier] for identifier in wheel_ids)
+        left_radius = min(left.width(), left.height()) / 2
+        right_radius = min(right.width(), right.height()) / 2
+        wheel_distance = math.hypot(right.center().x() - left.center().x(), right.center().y() - left.center().y())
+        if left_radius > 0 and right_radius > 0:
+            if wheel_distance < 0.9 * (left_radius + right_radius):
+                issues.append("SVG bicycle wheels overlap instead of forming a readable bicycle")
+            if abs(right.center().y() - left.center().y()) > 0.35 * (left_radius + right_radius):
+                issues.append("SVG bicycle wheels are not aligned at a readable height")
+
+            saddle = bounds.get("bicycle-saddle")
+            if saddle and saddle.width() > 1.5 * min(left_radius, right_radius):
+                issues.append("bicycle-saddle must be a compact sitting pad, not a large block")
+            handlebar = bounds.get("bicycle-handlebar")
+            if handlebar and max(handlebar.width(), handlebar.height()) > 1.5 * min(left_radius, right_radius):
+                issues.append("bicycle-handlebar must be a compact grip, not a wheel-sized circle")
+
+            body = bounds.get("pelican-body")
+            if body and body.width() > wheel_distance * 0.58:
+                issues.append("pelican-body is too wide and overwhelms the bicycle")
+            if body and body.height() < wheel_distance * 0.19:
+                issues.append("pelican-body is too flat to read as a bird torso")
+            if wheel_distance > 0:
+                frame = identified_elements.get("bicycle-frame")
+                if frame is not None and _svg_tag_name(frame) == "polyline":
+                    numbers = [
+                        float(value)
+                        for value in re.findall(r"[-+]?(?:\d*\.\d+|\d+\.?\d*)", frame.attrib.get("points", ""))
+                    ]
+                    points = list(zip(numbers[::2], numbers[1::2]))
+                    tolerance = max(1.0, min(left_radius, right_radius) * 0.25)
+                    if not any(math.hypot(x - left.center().x(), y - left.center().y()) <= tolerance for x, y in points):
+                        issues.append("SVG bicycle frame must meet the rear wheel hub")
+                    pedals = bounds.get("bicycle-pedals")
+                    if pedals:
+                        crank = pedals.center()
+                        if not any(math.hypot(x - crank.x(), y - crank.y()) <= tolerance for x, y in points):
+                            issues.append("SVG bicycle frame must meet the visible crank/pedals")
+
+    issues.extend(_collect_rider_pose_issues(identified_elements, bounds))
+
+    pouch = identified_elements.get("pelican-pouch")
+    if pouch is not None:
+        fill = _svg_presentation_value(pouch, "fill", parents, css_rules)
+        stroke = _svg_presentation_value(pouch, "stroke", parents, css_rules)
+        if not _paint_is_visible_against_canvas(fill) and not _paint_is_visible_against_canvas(stroke):
+            issues.append("pelican-pouch must have a visible fill or outline distinct from the blank canvas")
     return issues
 
 
@@ -812,6 +1055,7 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         "bicycle-frame": ({"polyline"}, "a connected polyline"),
         "bicycle-fork": ({"path", "polyline", "line"}, "a visible path or line"),
         "bicycle-spokes": ({"g"}, "a group containing spoke shapes"),
+        "bicycle-pedals": ({"g"}, "a group containing two separate pedal circles"),
         "pelican-head": ({"circle", "ellipse"}, "a circle or ellipse"),
         "pelican-eye": ({"circle"}, "a circle"),
         "pelican-beak": ({"polygon"}, "a polygon"),
@@ -853,6 +1097,19 @@ def validate_and_render_svg(source: bytes, preview_path: Path) -> dict[str, Any]
         ):
             clipped_parts.append(f"{identifier} is clipped by the viewBox")
     malformed_parts.extend(clipped_parts)
+    if "bicycle-pedals" in identified_elements and len(_pedal_circles(identified_elements["bicycle-pedals"])) < 2:
+        malformed_parts.append("bicycle-pedals must contain two distinct visible pedal circles")
+    if viewbox_problem or missing_parts or malformed_parts or duplicate_ids:
+        malformed_parts.extend(
+            issue
+            for issue in _collect_partial_illustration_geometry_issues(
+                identified_elements,
+                renderer,
+                parents,
+                css_rules,
+            )
+            if issue not in malformed_parts
+        )
     if viewbox_problem or missing_parts or malformed_parts or duplicate_ids:
         raise RuntimeError(
             f"SVG preflight failed; {viewbox_problem or 'viewBox dimensions are adequate'}; "
@@ -1366,11 +1623,15 @@ def run_smoke(
                 result = run_agent(repair_prompt, smoke_session_id(repair_attempt + 1))
                 file_calls = collect_file_calls()
                 if len(file_calls) <= previous_write_count:
-                    failed_edit_guidance = repair_guidance_for_failed_edit(
+                    retry_guidance = repair_guidance_for_failed_edit(
                         events, smoke_session_id(repair_attempt + 1)
                     )
-                    if failed_edit_guidance and repair_attempt < MAX_REPAIR_ATTEMPTS:
-                        deferred_edit_feedback = failed_edit_guidance
+                    if not retry_guidance:
+                        retry_guidance = repair_guidance_after_read_without_edit(
+                            events, smoke_session_id(repair_attempt + 1)
+                        )
+                    if retry_guidance and repair_attempt < MAX_REPAIR_ATTEMPTS:
+                        deferred_edit_feedback = retry_guidance
                         continue
                     diagnostic_path = persist_failure_diagnostic(
                         artifacts,
