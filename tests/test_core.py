@@ -2349,14 +2349,22 @@ class CoreTests(unittest.TestCase):
             provider = OpenAICompatibleProvider.from_env()
         self.assertEqual(provider.presence_penalty, 0.0)
         self.assertEqual(provider.with_model("summary-model").presence_penalty, 0.0)
+        reviewer = provider.with_model("vision-model", streaming=False, temperature=0.0)
+        self.assertFalse(reviewer.streaming)
+        self.assertEqual(reviewer.temperature, 0.0)
+        self.assertEqual(reviewer.model, "vision-model")
 
         response = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).encode()
         with patch("scidev_core.urlopen", return_value=BytesIO(response)) as opener:
-            provider.chat([{"role": "user", "content": "test"}], max_tokens=12000)
+            provider.chat([{"role": "user", "content": "test"}], max_tokens=12000, reasoning_effort="none")
         request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(request_body["max_tokens"], 12000)
         self.assertEqual(request_body["temperature"], 0.2)
         self.assertEqual(request_body["presence_penalty"], 0.0)
+        self.assertEqual(request_body["reasoning_effort"], "none")
+
+        with self.assertRaisesRegex(PermanentError, "reasoning_effort"):
+            provider.chat([{"role": "user", "content": "test"}], reasoning_effort="minimal")
 
         with patch.dict(os.environ, {**provider_environment, "SCIDEV_PRESENCE_PENALTY": "2.1"}, clear=True):
             with self.assertRaisesRegex(PermanentError, "SCIDEV_PRESENCE_PENALTY"):

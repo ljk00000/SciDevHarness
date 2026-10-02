@@ -70,6 +70,16 @@ $env:SCIDEV_MODEL="your-local-ollama-model-tag"
 
 客户端默认启用流式响应，让模型生成过程实时显示在对话中；可设置 `SCIDEV_STREAMING=false` 关闭。`SCIDEV_TEMPERATURE` 可配置为 0–2（通用默认 0.2；本机 Qwen 启动脚本默认 0，并尊重用户已设置的值）；其对稳定性、工具调用和内容质量的影响取决于模型，降低温度不保证更好。`SCIDEV_PRESENCE_PENALTY` 可选配置为 -2–2。`SCIDEV_REQUEST_TIMEOUT_SECONDS` 可配置为 5–600 秒，通用启动默认 90 秒；本机 Qwen 启动脚本默认 240 秒以适配较慢的本地推理。这些变量仅在启动器子进程内生效。
 
+可选的独立视觉盲审需要兼容当前 API endpoint 的多模态模型。例如已有 Ollama 视觉模型时，可在启动前设置：
+
+```powershell
+$env:SCIDEV_VISION_MODEL="qwen3.5:4b"
+$env:SCIDEV_VISION_REASONING_EFFORT="none"
+.\start_qwen_local.bat
+```
+
+启用后，Harness 会在 SVG 写入/修改后把安全栅格化的图像交给该模型；常规编码任务也可调用 `inspect_visual_artifact` 检查 PNG/JPEG/WebP/SVG。审查模型看不到原始任务、文件名或 SVG 源码，只给出可见缺陷线索，不判定任务通过。`SCIDEV_VISION_REASONING_EFFORT` 为可选项（`none`/`low`/`medium`/`high`/`max`），用于支持该 OpenAI-compatible 扩展的推理模型；Qwen3.5 经 Ollama `/v1` 时建议设为 `none`，以避免只输出 thinking 而没有审查正文。此功能默认关闭；若当前 endpoint 是云服务，启用后图像会发送到该 endpoint，请勿对不适合外传的素材启用。
+
 要在隔离临时仓库里端到端验证本地模型的工具调用、代码能力、Git 自动提交和对话总结，可运行以下烟测。除固定安全脚本外，还会让模型新写奇偶判断、正数过滤求和、区间夹取，并修复一个已有函数的边界 bug；共检查 18 个样例。生成函数先经过 AST 语法白名单校验（拒绝导入、函数调用、属性访问、推导式和顶层副作用；循环只可遍历测试输入），再用空内建环境运行；只连接回环地址、仅使用已安装模型，绝不拉取或下载权重：
 
 ```powershell

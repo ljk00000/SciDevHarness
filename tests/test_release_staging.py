@@ -77,6 +77,7 @@ class ReleaseStagingTests(unittest.TestCase):
             "scripts/smoke_local_ollama.py",
             "scidev_client.py",
             "scidev_core.py",
+            "scidev_visual.py",
             "scripts/bootstrap.py",
             "start_client.bat",
             "start_qwen_local.bat",

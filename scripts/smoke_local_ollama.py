@@ -211,6 +211,7 @@ def _record_local_request(
     *,
     model: str,
     requests: list[dict[str, Any]],
+    allowed_models: set[str] | None = None,
 ) -> None:
     """Record and validate wire metadata without exposing prompts or secrets."""
     payload = json.loads(request.data.decode("utf-8"))
@@ -227,7 +228,8 @@ def _record_local_request(
         "::1",
     }:
         raise RuntimeError("provider request did not use the local loopback endpoint")
-    if record["model"] != model:
+    expected_models = allowed_models or {model}
+    if record["model"] not in expected_models:
         raise RuntimeError("provider request used a model other than the selected local model")
     if not isinstance(record["max_tokens"], int) or record["max_tokens"] < 10_000:
         raise RuntimeError("provider request max_tokens was below 10000")

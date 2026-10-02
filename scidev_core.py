@@ -24,6 +24,8 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from scidev_visual import VisualArtifactReviewer
+
 
 DEFAULT_EXCLUDED_PATH_NAMES = frozenset(
     {".git", ".research", "__pycache__", ".pytest_cache", ".venv", "venv", "node_modules"}
@@ -943,16 +945,22 @@ class OpenAICompatibleProvider:
             raise ValueError("temperature must be between 0 and 2")
         self.temperature = float(temperature)
 
-    def with_model(self, model: str) -> "OpenAICompatibleProvider":
+    def with_model(
+        self,
+        model: str,
+        *,
+        streaming: bool | None = None,
+        temperature: float | None = None,
+    ) -> "OpenAICompatibleProvider":
         return type(self)(
             self.base_url,
             self.api_key,
             model.strip() or self.model,
             self.timeout,
             self.text_tool_call_fallback,
-            self.streaming,
+            self.streaming if streaming is None else streaming,
             self.presence_penalty,
-            self.temperature,
+            self.temperature if temperature is None else temperature,
         )
 
     @classmethod
@@ -1392,6 +1400,7 @@ class OpenAICompatibleProvider:
         request_id: str = "",
         on_delta: Callable[[str], None] | None = None,
         tool_choice: str = "auto",
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         body_data: dict[str, Any] = {
             "model": self.model,
@@ -1402,6 +1411,11 @@ class OpenAICompatibleProvider:
         }
         if self.presence_penalty is not None:
             body_data["presence_penalty"] = self.presence_penalty
+        if reasoning_effort is not None:
+            effort = str(reasoning_effort).strip().lower()
+            if effort not in {"none", "low", "medium", "high", "max"}:
+                raise PermanentError("reasoning_effort must be one of none, low, medium, high, max")
+            body_data["reasoning_effort"] = effort
         if tools:
             body_data["tools"] = tools
             if tool_choice not in {"auto", "required"}:
@@ -1507,10 +1521,12 @@ class CodingToolbox:
         project_root: Path,
         ledger: EventLedger,
         command_approval: Callable[[str, int], bool] | None = None,
+        visual_reviewer: VisualArtifactReviewer | None = None,
     ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
         self.command_approval = command_approval
+        self.visual_reviewer = visual_reviewer
 
     @classmethod
     def _is_sensitive_name(cls, name: str) -> bool:
@@ -1526,7 +1542,7 @@ class CodingToolbox:
         )
 
     @staticmethod
-    def definitions() -> list[dict[str, Any]]:
+    def definitions(*, include_visual_review: bool = False) -> list[dict[str, Any]]:
         def function(name: str, description: str, properties: dict[str, Any], required: list[str] | None = None):
             return {
                 "type": "function",
@@ -1624,6 +1640,20 @@ class CodingToolbox:
             },
         }
         parameters["required"] = ["path"]
+        if include_visual_review:
+            definitions.append(
+                function(
+                    "inspect_visual_artifact",
+                    "对工作区内的 PNG/JPEG/WebP/SVG 做独立盲审。完成图像或 SVG 创建/修改后调用；审查器看不到原始任务、文件名和源码，只返回可见缺陷线索，不代表任务通过。",
+                    {
+                        "path": {
+                            "type": "string",
+                            "description": "工作区内 PNG、JPEG、WebP 或 SVG 文件的相对路径",
+                        }
+                    },
+                    ["path"],
+                )
+            )
         return definitions
 
     def _resolve(self, raw_path: str, allow_root: bool = True) -> Path:
@@ -1834,7 +1864,7 @@ class CodingToolbox:
         result = f"已写入 {relative}（{len(encoded)} bytes）"
         if svg_root is not None:
             result += "\n" + self._format_svg_structure_feedback(svg_root)
-        return result
+        return self._append_visual_review(target, relative, result)
 
     def replace_in_file(
         self,
@@ -1894,7 +1924,7 @@ class CodingToolbox:
         result = f"已修改 {relative}（匹配 {count} 次）"
         if svg_root is not None:
             result += "\n" + self._format_svg_structure_feedback(svg_root)
-        return result
+        return self._append_visual_review(target, relative, result)
 
     def replace_many_in_file(self, path: str, edits: list[dict[str, Any]]) -> str:
         if not isinstance(edits, list) or not 1 <= len(edits) <= 50:
@@ -1968,7 +1998,42 @@ class CodingToolbox:
         result = f"Applied {len(normalized)} exact replacements to {relative} ({total_matches} match(es))"
         if svg_root is not None:
             result += "\n" + self._format_svg_structure_feedback(svg_root)
-        return result
+        return self._append_visual_review(target, relative, result)
+
+    def _append_visual_review(self, target: Path, relative: str, result: str) -> str:
+        if self.visual_reviewer is None or target.suffix.casefold() != ".svg":
+            return result
+        try:
+            review = self.visual_reviewer.inspect(target)
+        except Exception as exc:  # Visual critique is advisory; never roll back a successful file edit.
+            detail = f"{type(exc).__name__}: {exc}"[:300]
+            self.ledger.append(
+                "visual_review_failed",
+                {"path": relative, "model": self.visual_reviewer.model, "error": detail},
+            )
+            return result + f"\n独立视觉盲审不可用（文件已保存，未据此判断成败）：{detail}"
+        self.ledger.append(
+            "visual_review_completed",
+            {"path": relative, "model": self.visual_reviewer.model, "review_characters": len(review)},
+        )
+        return result + "\n" + review
+
+    def inspect_visual_artifact(self, path: str) -> str:
+        if self.visual_reviewer is None:
+            raise PermanentError("未配置 SCIDEV_VISION_MODEL，视觉盲审工具不可用")
+        target = self._resolve(path, allow_root=False)
+        if not target.exists() or not target.is_file():
+            raise PermanentError(f"视觉文件不存在：{path}")
+        try:
+            review = self.visual_reviewer.inspect(target)
+        except Exception as exc:
+            raise PermanentError(f"视觉盲审失败（文件未修改）：{type(exc).__name__}: {str(exc)[:300]}") from exc
+        relative = target.relative_to(self.project_root).as_posix()
+        self.ledger.append(
+            "visual_review_completed",
+            {"path": relative, "model": self.visual_reviewer.model, "review_characters": len(review)},
+        )
+        return review
 
     def run_command(self, command: str, timeout_seconds: int = 120) -> str:
         command = str(command or "").strip()
@@ -2038,6 +2103,7 @@ class CodingToolbox:
             "replace_in_file": self.replace_in_file,
             "run_command": self.run_command,
             "git_diff": self.git_diff,
+            "inspect_visual_artifact": self.inspect_visual_artifact,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -2336,7 +2402,12 @@ class CodingAgent:
         self.git = git
         self.event_callback = event_callback
         self.summary_settings = summary_settings or SummarySettings.load(self.project_root)
-        self.toolbox = CodingToolbox(self.project_root, ledger, command_approval=command_approval)
+        self.toolbox = CodingToolbox(
+            self.project_root,
+            ledger,
+            command_approval=command_approval,
+            visual_reviewer=None,
+        )
 
     def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self.event_callback:
@@ -2358,7 +2429,7 @@ class CodingAgent:
         )
 
     def _tool_definitions_for_prompt(self, prompt: str) -> list[dict[str, Any]]:
-        definitions = self.toolbox.definitions()
+        definitions = self.toolbox.definitions(include_visual_review=self.toolbox.visual_reviewer is not None)
         if self.EXPLICIT_COMMAND_INTENT.search(prompt):
             return definitions
         if SvgArtifactAdapter.is_creation_request(prompt):
@@ -2776,6 +2847,17 @@ class CodingAgent:
         session["updated_at"] = now_iso()
         self._save_session(session)
         provider = OpenAICompatibleProvider.from_env()
+        vision_model = (os.getenv("SCIDEV_VISION_MODEL") or "").strip()
+        vision_reasoning_effort = (os.getenv("SCIDEV_VISION_REASONING_EFFORT") or "").strip()
+        self.toolbox.visual_reviewer = (
+            VisualArtifactReviewer(
+                self.project_root,
+                provider.with_model(vision_model, streaming=False, temperature=0.0),
+                reasoning_effort=vision_reasoning_effort or None,
+            )
+            if vision_model and isinstance(provider, OpenAICompatibleProvider)
+            else None
+        )
         messages = session["messages"]
         tool_definitions = self._tool_definitions_for_prompt(prompt)
         tool_scope_prompt = prompt

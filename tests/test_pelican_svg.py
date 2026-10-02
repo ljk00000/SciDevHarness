@@ -11,11 +11,11 @@ from pathlib import Path
 
 from scidev_core import SvgArtifactAdapter
 from scripts.smoke_pelican_svg import (
-    MAX_REPAIR_ATTEMPTS,
     PELICAN_PROMPT,
     _TimedResponse,
     collect_svg_mutations,
     collect_shell_requests,
+    fixed_prompt_task,
     latest_svg_write_path,
     pelican_repair_prompt,
     persist_failure_diagnostic,
@@ -177,18 +177,13 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertEqual(record["body_seconds"], 0.7)
         self.assertEqual(record["elapsed_seconds"], 0.8)
 
-    def test_each_visual_repair_uses_a_fresh_completed_session_id(self) -> None:
-        session_ids = [smoke_session_id(attempt) for attempt in range(MAX_REPAIR_ATTEMPTS + 1)]
-        self.assertEqual(len(session_ids), len(set(session_ids)))
-        self.assertEqual(session_ids[0], "live_pelican_svg_smoke")
-        self.assertEqual(
-            session_ids[1:],
-            [
-                "live_pelican_svg_smoke_repair_1",
-                "live_pelican_svg_smoke_repair_2",
-                "live_pelican_svg_smoke_repair_3",
-            ],
-        )
+    def test_smoke_input_is_only_the_immutable_user_prompt(self) -> None:
+        task = fixed_prompt_task(smoke_session_id(0))
+        self.assertEqual(task["payload"]["prompt"], "Generate an SVG of a pelican riding a bicycle")
+        self.assertEqual(set(task["payload"]), {"session_id", "prompt"})
+
+    def test_smoke_does_not_start_additional_user_repair_sessions(self) -> None:
+        self.assertEqual(smoke_session_id(0), "live_pelican_svg_smoke")
 
     def test_latest_svg_output_wins_when_repair_creates_a_new_filename(self) -> None:
         calls = [
@@ -719,10 +714,8 @@ class PelicanSvgTests(unittest.TestCase):
 
     def test_smoke_budgets_are_bounded_before_any_model_request(self) -> None:
         self.assertEqual(PELICAN_PROMPT, "Generate an SVG of a pelican riding a bicycle")
-        with self.assertRaisesRegex(ValueError, "max_repairs"):
-            run_smoke("", "", "", max_repairs=MAX_REPAIR_ATTEMPTS + 1)
         with self.assertRaisesRegex(ValueError, "agent_turn_limit"):
-            run_smoke("", "", "", max_repairs=0, agent_turn_limit=1)
+            run_smoke("", "", "", agent_turn_limit=1)
 
     def test_visible_illustration_does_not_depend_on_title_or_description_labels(self) -> None:
         unlabeled = VALID_PELICAN_SVG.replace(b"  <title>Pelican riding a bicycle</title>\n", b"")

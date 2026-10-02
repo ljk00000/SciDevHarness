@@ -50,6 +50,7 @@ PELICAN_PROMPT = "Generate an SVG of a pelican riding a bicycle"
 SMOKE_SESSION_PREFIX = "live_pelican_svg_smoke"
 REQUEST_METRIC_FIELDS = (
     "phase",
+    "model",
     "streaming",
     "max_tokens",
     "tools",
@@ -67,7 +68,6 @@ REQUEST_METRIC_FIELDS = (
     "tool_argument_bytes",
 )
 MAX_SVG_BYTES = 2_000_000
-MAX_REPAIR_ATTEMPTS = 3
 RENDER_WIDTH = 1200
 RENDER_HEIGHT = 800
 SMOKE_BACKGROUND = QColor("#f4f7fb")
@@ -90,8 +90,13 @@ def smoke_session_id(attempt: int) -> str:
     """Give each repair a new Coding Session instead of resuming a completed one."""
     if attempt < 0:
         raise ValueError("smoke attempt cannot be negative")
-    suffix = "" if attempt == 0 else f"_repair_{attempt}"
+    suffix = "" if attempt == 0 else f"_attempt_{attempt}"
     return f"{SMOKE_SESSION_PREFIX}{suffix}"
+
+
+def fixed_prompt_task(session_id: str) -> dict[str, Any]:
+    """Build the only user task allowed by this benchmark."""
+    return {"payload": {"session_id": session_id, "prompt": PELICAN_PROMPT}}
 
 
 def pelican_repair_prompt(filename: str, failure_reason: str) -> str:
@@ -1426,11 +1431,8 @@ def run_smoke(
     model: str,
     api_key: str,
     artifact_dir: Path | None = None,
-    max_repairs: int = MAX_REPAIR_ATTEMPTS,
     agent_turn_limit: int = CodingAgent.MAX_SVG_ARTIFACT_TURNS,
 ) -> dict[str, Any]:
-    if not 0 <= max_repairs <= MAX_REPAIR_ATTEMPTS:
-        raise ValueError(f"max_repairs must be between 0 and {MAX_REPAIR_ATTEMPTS}")
     if not 2 <= agent_turn_limit <= CodingAgent.MAX_SVG_ARTIFACT_TURNS:
         raise ValueError(f"agent_turn_limit must be between 2 and {CodingAgent.MAX_SVG_ARTIFACT_TURNS}")
     endpoint = validate_local_base_url(base_url)
@@ -1438,6 +1440,8 @@ def run_smoke(
     if not model:
         raise ValueError("model name cannot be empty")
     configure_local_environment(endpoint, model, api_key)
+    vision_model = (os.getenv("SCIDEV_VISION_MODEL") or "").strip()
+    allowed_models = {model} | ({vision_model} if vision_model else set())
     artifacts = (artifact_dir or Path(tempfile.mkdtemp(prefix="scidev-pelican-svg-"))).expanduser().resolve()
     artifacts.mkdir(parents=True, exist_ok=True)
 
@@ -1447,12 +1451,21 @@ def run_smoke(
     request_phase = {"value": "initial"}
 
     def observe_request(request: Request, timeout: float = 90.0):
-        _record_local_request(request, model=model, requests=wire_requests)
+        payload = json.loads(request.data.decode("utf-8"))
+        requested_model = str(payload.get("model") or "")
+        _record_local_request(
+            request,
+            model=model,
+            requests=wire_requests,
+            allowed_models=allowed_models,
+        )
         started = time.perf_counter()
         record = wire_requests[-1]
         record["request_bytes"] = len(request.data or b"")
-        record["phase"] = request_phase["value"]
-        streaming = json.loads(request.data.decode("utf-8")).get("stream") is True
+        record["phase"] = (
+            f"{request_phase['value']}_visual_review" if requested_model == vision_model and vision_model else request_phase["value"]
+        )
+        streaming = payload.get("stream") is True
         try:
             response = real_urlopen(request, timeout=timeout)
         except Exception:
@@ -1499,23 +1512,19 @@ def run_smoke(
         )
         agent.MAX_SVG_ARTIFACT_TURNS = agent_turn_limit
 
-        def run_agent(task_prompt: str, session_id: str) -> dict[str, Any]:
-            request_phase["value"] = (
-                "initial"
-                if session_id == SMOKE_SESSION_PREFIX
-                else session_id.removeprefix(f"{SMOKE_SESSION_PREFIX}_")
-            )
-            task = {"payload": {"session_id": session_id, "prompt": task_prompt}}
+        def run_agent(session_id: str) -> dict[str, Any]:
+            if session_id != SMOKE_SESSION_PREFIX:
+                raise RuntimeError("the canonical SVG smoke accepts one exact user prompt per run")
+            request_phase["value"] = "initial"
+            task = fixed_prompt_task(session_id)
             try:
                 with patch("scidev_core.urlopen", new=observe_request):
                     return agent.run(task)
             except Exception as exc:
-                repair_suffix = session_id.removeprefix(f"{SMOKE_SESSION_PREFIX}_repair_")
-                attempt = int(repair_suffix) if repair_suffix.isdigit() else 0
                 diagnostic_path = persist_failure_diagnostic(
                     artifacts,
                     model=model,
-                    attempt=attempt,
+                    attempt=0,
                     session_id=session_id,
                     reason=f"{type(exc).__name__}: {exc}",
                     events=events,
@@ -1563,7 +1572,7 @@ def run_smoke(
             )
 
         started = time.perf_counter()
-        result = run_agent(PELICAN_PROMPT, smoke_session_id(0))
+        result = run_agent(smoke_session_id(0))
         file_calls = collect_file_calls()
         tool_names = [
             str(data.get("name"))
@@ -1594,70 +1603,25 @@ def run_smoke(
 
         preview_png = artifacts / "pelican_bicycle_preview.png"
         saved_svg = artifacts / "pelican_bicycle.svg"
-        validation: dict[str, Any] | None = None
-        relative_svg = ""
-        svg_path = root
-        deferred_edit_feedback = ""
-        for repair_attempt in range(max_repairs + 1):
-            relative_svg, svg_path = current_svg_path()
-            shutil.copyfile(svg_path, saved_svg)
-            try:
-                validation = validate_and_render_svg(svg_path.read_bytes(), preview_png)
-                break
-            except RuntimeError as exc:
-                if repair_attempt >= max_repairs:
-                    diagnostic_path = persist_failure_diagnostic(
-                        artifacts,
-                        model=model,
-                        attempt=repair_attempt,
-                        session_id=smoke_session_id(repair_attempt),
-                        reason=str(exc),
-                        events=events,
-                        request_count=len(wire_requests),
-                        request_metrics=wire_requests,
-                    )
-                    raise RuntimeError(
-                        f"pelican SVG still failed after {max_repairs} repairs: {exc}; "
-                        f"diagnostic saved to {diagnostic_path}"
-                    ) from exc
-                previous_write_count = len(file_calls)
-                repair_prompt = pelican_repair_prompt(Path(relative_svg).name, str(exc))
-                if deferred_edit_feedback:
-                    repair_prompt = f"{repair_prompt}\n\nPrevious tool error:\n{deferred_edit_feedback}"
-                    deferred_edit_feedback = ""
-                # CodingAgent intentionally resumes an existing session ID.
-                # A repair prompt is a new task, so it must never reuse the
-                # completed session that produced the invalid SVG.
-                result = run_agent(repair_prompt, smoke_session_id(repair_attempt + 1))
-                file_calls = collect_file_calls()
-                if len(file_calls) <= previous_write_count:
-                    retry_guidance = repair_guidance_for_failed_edit(
-                        events, smoke_session_id(repair_attempt + 1)
-                    )
-                    if not retry_guidance:
-                        retry_guidance = repair_guidance_after_read_without_edit(
-                            events, smoke_session_id(repair_attempt + 1)
-                        )
-                    if retry_guidance and repair_attempt < max_repairs:
-                        deferred_edit_feedback = retry_guidance
-                        continue
-                    diagnostic_path = persist_failure_diagnostic(
-                        artifacts,
-                        model=model,
-                        attempt=repair_attempt + 1,
-                        session_id=smoke_session_id(repair_attempt + 1),
-                        reason=str(exc),
-                        events=events,
-                        request_count=len(wire_requests),
-                        request_metrics=wire_requests,
-                    )
-                    raise RuntimeError(
-                        "Qwen did not revise the SVG after structural visual feedback; "
-                        f"diagnostic saved to {diagnostic_path}"
-                    ) from exc
-                reject_shell_if_requested(repair_attempt + 1, smoke_session_id(repair_attempt + 1))
-        if validation is None:
-            raise RuntimeError("pelican SVG visual validation did not complete")
+        relative_svg, svg_path = current_svg_path()
+        shutil.copyfile(svg_path, saved_svg)
+        try:
+            validation = validate_and_render_svg(svg_path.read_bytes(), preview_png)
+        except RuntimeError as exc:
+            diagnostic_path = persist_failure_diagnostic(
+                artifacts,
+                model=model,
+                attempt=0,
+                session_id=smoke_session_id(0),
+                reason=str(exc),
+                events=events,
+                request_count=len(wire_requests),
+                request_metrics=wire_requests,
+            )
+            raise RuntimeError(
+                "the exact one-sentence SVG task failed visual validation; "
+                f"diagnostic saved to {diagnostic_path}"
+            ) from exc
         total_elapsed = round(time.perf_counter() - started, 3)
 
         model_tools = [
@@ -1704,6 +1668,7 @@ def run_smoke(
             "prompt": PELICAN_PROMPT,
             "endpoint": endpoint,
             "model": model,
+            "vision_review_model": vision_model or None,
             "svg_file": relative_svg,
             "svg_artifact": str(saved_svg),
             "commit": commit_sha,
@@ -1712,7 +1677,7 @@ def run_smoke(
             "harness_artifact_recoveries": artifact_recoveries,
             "conversation_summary_enabled": summary_settings.enabled,
             "agent_turn_limit": agent_turn_limit,
-            "max_repair_attempts": max_repairs,
+            "task_prompt_count": 1,
             "requests": wire_requests,
             "temporary_workspace_clean": True,
             **validation,
@@ -1737,12 +1702,6 @@ def main(argv: list[str] | None = None) -> int:
         help="where to save the generated SVG and PNG preview (defaults to a new temp folder)",
     )
     parser.add_argument(
-        "--max-repairs",
-        type=int,
-        default=MAX_REPAIR_ATTEMPTS,
-        help=f"maximum visual repair sessions after the exact initial prompt (0-{MAX_REPAIR_ATTEMPTS})",
-    )
-    parser.add_argument(
         "--agent-turn-limit",
         type=int,
         default=CodingAgent.MAX_SVG_ARTIFACT_TURNS,
@@ -1756,7 +1715,6 @@ def main(argv: list[str] | None = None) -> int:
             args.model,
             args.api_key,
             args.artifact_dir,
-            max_repairs=args.max_repairs,
             agent_turn_limit=args.agent_turn_limit,
         )
     except Exception as exc:  # noqa: BLE001 - report one actionable local SVG smoke error.
