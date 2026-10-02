@@ -6,6 +6,7 @@
 - 新增可选 `single_user_prompt_only` 模式，Harness 遇到格式错误、缺文件、结构预检失败等需要追加用户消息的情况时，在下一次模型请求前停止；原有客户端默认恢复行为不变。pelican smoke 启用该模式，并在 HTTP 边界断言每个请求仅含一个 user 消息、主任务内容以原句结束；每次只评测一条任务，不下载模型。
 - Qwen2.5-Coder-7B 真实运行（max tokens 12,000）仍失败：一次请求，user 消息数 1，产物 viewBox 仅 100×100；渲染为抽象蓝椭圆/黄三角，无自行车，严格预检缺 17 个语义部件。失败在结构预检后即时停止，没有人工/模型重写提示、额外补救调用或 Git commit；未验证 SVG 与 PNG 预览保存在 `%LOCALAPPDATA%\Temp\scidev-pelican-svg-bjcaxu7z`。
 - 全量 `unittest` 180/180、`compileall`、`git diff --check` 通过。初次开启严格模式时发现结构反馈会额外触发模型请求，现已改为工具结果后立即停止；本次最新运行流量降为单次请求，完整 user 消息数证据在诊断 JSON。
+- 代码提交 `3341966a09d9334ef12cbd98e07fb1f834ae8189` 已推送且远端 SHA 匹配；Windows CI [36991274617](https://github.com/ljk00000/SciDevHarness/actions/runs/36991274617) 的 Python 3.12/3.13/3.14 全通过。
 
 ## 2026-10-02 16:56（Asia/Shanghai）· 推理模型参数与高 context 对照
 
