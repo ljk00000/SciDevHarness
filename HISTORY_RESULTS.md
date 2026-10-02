@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-02 16:56（Asia/Shanghai）· 推理模型参数与高 context 对照
+
+- 增加 opt-in `SCIDEV_REASONING_EFFORT` 并透传到支持此字段的 OpenAI-compatible 模型；默认不发送。Qwen3.5-4B 的 `none` 模式返回了有效工具调用和可辨认的 pelican/bicycle 插画，但 5 次本机调用约 255 秒，严格预检仍失败；Qwen2.5-Coder-7B 在 32K context 下也未通过。更大 context 不是内容质量的充分修复。
+- 临时 Ollama 服务仅监听 `127.0.0.1:11435`，退出时已停止；未改常驻模型/服务配置、未下载模型。Ollama `/v1` 不提供逐请求 context 设置，需在服务或模型层处理。
+- 全量 `unittest` 176/176、`compileall`、差异检查通过。提交 `b11974f` 已推送；[Windows CI #23 三版本全部通过](https://github.com/ljk00000/SciDevHarness/actions/runs/36986631048)。原生窗口仍无法由 CUA 枚举，响应式 UI 只完成离屏验证。
+
 ## 2026-10-02 16:30（Asia/Shanghai）· 单提示词执行与盲审能力
 
 - 移除 Pelican smoke 在失败后把评测缺陷改写成新提示词/另开会话的路径；每次基准只送固定原句。可选视觉盲审仅收安全栅格图，不收任务、文件名或源码；默认关闭，且不代表任务通过。盲审限长/去重，极端响应仍保持有效 JSON。
