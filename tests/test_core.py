@@ -388,6 +388,76 @@ class CoreTests(unittest.TestCase):
             self.assertNotIn('"command":"del *"', retry_feedback)
             self.assertNotIn('"command":"del *"', str(retry_messages))
 
+    def test_single_user_prompt_mode_recovers_invalid_tool_schema_via_assistant_feedback(self) -> None:
+        class InvalidThenCorrectProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.user_message_counts: list[int] = []
+                self.message_histories: list[list[dict[str, Any]]] = []
+
+            def chat(self, messages, tools=None, max_tokens=12000, request_id="", **_kwargs):
+                self.calls += 1
+                self.user_message_counts.append(sum(message.get("role") == "user" for message in messages))
+                self.message_histories.append([dict(message) for message in messages])
+                if self.calls == 1:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [],
+                        "tool_parse_error": {
+                            "name": "write_file",
+                            "reason": "invalid_json",
+                            "detail": "missing closing brace",
+                        },
+                    }
+                if self.calls == 2:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "valid_write",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": json.dumps({"path": "hello.py", "content": "print(1)"}),
+                                },
+                            }
+                        ],
+                    }
+                return {"role": "assistant", "content": "Created hello.py.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                single_user_prompt_only=True,
+            )
+            provider = InvalidThenCorrectProvider()
+            prompt = "Create hello.py containing print(1)."
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {"session_id": "single_prompt_tool_schema", "prompt": prompt}})
+
+            self.assertGreater(provider.calls, 2)
+            self.assertEqual(provider.user_message_counts, [1] * provider.calls)
+            self.assertTrue(result["git_result_sha"])
+            self.assertEqual((root / "hello.py").read_text(encoding="utf-8"), "print(1)")
+            feedback = provider.message_histories[1][-1]
+            self.assertEqual(feedback["role"], "assistant")
+            self.assertIn("invalid_json", feedback["content"])
+            self.assertIn("write_file", feedback["content"])
+            event_types = [
+                json.loads(line)["event_type"]
+                for line in (root / ".research" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertIn("harness_followup_suppressed", event_types)
+
     def test_simple_svg_tasks_hide_and_reject_shell_tools(self) -> None:
         class SvgPolicyProvider:
             def __init__(self) -> None:
@@ -1253,37 +1323,67 @@ class CoreTests(unittest.TestCase):
             self.assertIn("harness_followup_blocked", event_types)
             self.assertNotIn("svg_creation_retry_scheduled", event_types)
 
-    def test_single_user_prompt_mode_stops_immediately_on_svg_preflight_failure(self) -> None:
+    def test_single_user_prompt_mode_uses_svg_tool_feedback_without_adding_user_prompts(self) -> None:
         class InvalidSvgProvider:
             def __init__(self) -> None:
                 self.calls = 0
                 self.user_message_counts: list[int] = []
+                self.tool_history: list[list[str]] = []
+                self.message_histories: list[list[dict[str, Any]]] = []
 
             def chat(self, messages, tools=None, max_tokens=12000, request_id=""):
                 self.calls += 1
                 self.user_message_counts.append(sum(message.get("role") == "user" for message in messages))
-                return {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
-                        {
-                            "id": "write_invalid_svg",
-                            "type": "function",
-                            "function": {
-                                "name": "write_file",
-                                "arguments": json.dumps(
-                                    {
-                                        "path": "pelican.svg",
-                                        "content": (
-                                            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
-                                            '<circle cx="50" cy="50" r="20"/></svg>'
-                                        ),
-                                    }
-                                ),
-                            },
-                        }
-                    ],
-                }
+                self.tool_history.append([tool["function"]["name"] for tool in tools or []])
+                self.message_histories.append([dict(message) for message in messages])
+                if self.calls == 1:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "write_invalid_svg",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": json.dumps(
+                                        {
+                                            "path": "pelican.svg",
+                                            "content": (
+                                                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+                                                '<circle cx="50" cy="50" r="20"/></svg>'
+                                            ),
+                                        }
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                if self.calls == 2:
+                    return {
+                        "role": "assistant",
+                        "content": (
+                            '```svg\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+                            '<circle id="subject" cx="50" cy="50" r="20"/></svg>\n```'
+                        ),
+                        "tool_calls": [],
+                    }
+                if self.calls == 3:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "read_invalid_svg",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({"path": "pelican.svg"}),
+                                },
+                            }
+                        ],
+                    }
+                return {"role": "assistant", "content": "", "tool_calls": []}
 
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1297,20 +1397,34 @@ class CoreTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
                 single_user_prompt_only=True,
             )
+            agent.MAX_SVG_ARTIFACT_TURNS = 5
             provider = InvalidSvgProvider()
             prompt = "Generate an SVG of a pelican riding a bicycle"
 
             with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
-                with self.assertRaisesRegex(PermanentError, "SVG structural preflight failed"):
+                with self.assertRaises(PermanentError):
                     agent.run({"payload": {"session_id": "svg_single_preflight", "prompt": prompt}})
 
-            self.assertEqual(provider.calls, 1)
-            self.assertEqual(provider.user_message_counts, [1])
+            self.assertGreater(provider.calls, 2)
+            self.assertEqual(provider.user_message_counts, [1] * provider.calls)
+            self.assertEqual(provider.tool_history[1], ["read_file"])
+            self.assertEqual(provider.tool_history[2], ["read_file"])
+            self.assertEqual(provider.tool_history[3], ["replace_in_file"])
+            self.assertIn("SVG 结构预检提示", provider.message_histories[1][-1]["content"])
+            self.assertIn("complete-artifact response was not applied", provider.message_histories[2][-1]["content"])
+            self.assertIn("<svg xmlns=", provider.message_histories[3][-1]["content"])
             self.assertTrue((root / "pelican.svg").is_file())
             session = json.loads(
                 (root / ".research" / "sessions" / "svg_single_preflight.json").read_text(encoding="utf-8")
             )
             self.assertEqual(sum(message.get("role") == "user" for message in session["messages"]), 1)
+            event_types = [
+                json.loads(line)["event_type"]
+                for line in (root / ".research" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertIn("harness_followup_suppressed", event_types)
+            self.assertIn("artifact_response_recovery_rejected", event_types)
+            self.assertNotIn("harness_followup_blocked", event_types)
             self.assertFalse(git.head_sha())
 
     def test_svg_creation_without_a_file_gets_one_bounded_recovery_turn(self) -> None:

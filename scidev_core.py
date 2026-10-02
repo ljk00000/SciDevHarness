@@ -3006,29 +3006,43 @@ class CodingAgent:
                     self.ledger.append("coding_session_failed", {"session_id": session_id, "error": error})
                     self._save_session(session)
                     raise PermanentError(error)
-                # Keep the conversation protocol valid while avoiding a large,
-                # malformed JSON response becoming model context or a final answer.
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "The Harness rejected an invalid tool-call response before execution.",
-                    }
-                )
                 declared_tools = ", ".join(sorted(allowed_tool_names))
-                self._append_followup_prompt(
-                    messages,
-                    session,
-                    session_id,
-                    turn,
-                    (
-                        f"The previous {tool_name or 'tool'} call was rejected ({parse_reason}); "
-                        f"{parse_detail + '; ' if parse_detail else ''}"
-                        "no workspace action was executed. Retry using a proper declared function call, "
-                        f"choosing only from: {declared_tools}. Follow that tool's exact schema and include "
-                        "only its documented arguments. Do not print a JSON object or claim success as text."
-                    ),
-                    reason="invalid tool-call response",
+                retry_feedback = (
+                    f"The previous {tool_name or 'tool'} call was rejected before execution ({parse_reason}); "
+                    f"{parse_detail + '; ' if parse_detail else ''}"
+                    "no workspace action was executed. Retry using a proper declared function call, "
+                    f"choosing only from: {declared_tools}. Follow that tool's exact schema and include "
+                    "only its documented arguments. Do not print a JSON object or claim success as text."
                 )
+                if self.single_user_prompt_only:
+                    # Keep the sole user task immutable while feeding the parser's
+                    # actionable rejection back through the existing conversation.
+                    messages.append({"role": "assistant", "content": retry_feedback})
+                    self.ledger.append(
+                        "harness_followup_suppressed",
+                        {
+                            "session_id": session_id,
+                            "turn": turn,
+                            "reason": "invalid tool-call response",
+                            "feedback_source": "tool_protocol",
+                        },
+                    )
+                else:
+                    # Avoid retaining malformed arguments in provider context.
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": "The Harness rejected an invalid tool-call response before execution.",
+                        }
+                    )
+                    self._append_followup_prompt(
+                        messages,
+                        session,
+                        session_id,
+                        turn,
+                        retry_feedback,
+                        reason="invalid tool-call response",
+                    )
                 session["updated_at"] = now_iso()
                 self._save_session(session)
                 continue
@@ -3071,19 +3085,31 @@ class CodingAgent:
                             }
                         )
                         available_tools = ", ".join(sorted(allowed_tool_names))
-                        self._append_followup_prompt(
-                            messages,
-                            session,
-                            session_id,
-                            turn,
-                            (
-                                "A complete SVG response is not an allowed action in this repair phase. "
-                                f"Use only the currently declared tool(s): {available_tools}. "
-                                "For a localized repair, use replace_in_file with exact old_text/new_text "
-                                "from the latest read; preserve unrelated artwork and do not resend the file."
-                            ),
-                            reason="artifact response required a disallowed tool",
-                        )
+                        if self.single_user_prompt_only:
+                            self.ledger.append(
+                                "harness_followup_suppressed",
+                                {
+                                    "session_id": session_id,
+                                    "turn": turn,
+                                    "reason": "artifact response required a disallowed tool",
+                                    "available_tools": sorted(allowed_tool_names),
+                                    "feedback_source": "tool_protocol",
+                                },
+                            )
+                        else:
+                            self._append_followup_prompt(
+                                messages,
+                                session,
+                                session_id,
+                                turn,
+                                (
+                                    "A complete SVG response is not an allowed action in this repair phase. "
+                                    f"Use only the currently declared tool(s): {available_tools}. "
+                                    "For a localized repair, use replace_in_file with exact old_text/new_text "
+                                    "from the latest read; preserve unrelated artwork and do not resend the file."
+                                ),
+                                reason="artifact response required a disallowed tool",
+                            )
                         session["updated_at"] = now_iso()
                         self._save_session(session)
                         continue
@@ -3276,21 +3302,35 @@ class CodingAgent:
                             "Call read_file on the current SVG now. Then make focused exact edits with "
                             "replace_in_file; preserve valid artwork and avoid broad replacement."
                         )
-                    self._append_followup_prompt(
-                        messages,
-                        session,
-                        session_id,
-                        turn,
-                        (
-                            "The SVG was saved, but the Harness structural preflight found unresolved issues:\n"
-                            f"{compact_issues}\n"
-                            f"{repair_step} Re-read after any edit attempt that changes the file or returns "
-                            "an error; never reuse stale old_text. The user's original request remains "
-                            "unchanged. After edits, wait for the structural preflight result. This preflight "
-                            "does not prove visual rendering or semantic correctness."
-                        ),
-                        reason="SVG structural preflight failed",
-                    )
+                    if self.single_user_prompt_only:
+                        # The validation result is already present in the preceding
+                        # write/replace tool response. Let the model continue from
+                        # that evidence without appending another user instruction.
+                        self.ledger.append(
+                            "harness_followup_suppressed",
+                            {
+                                "session_id": session_id,
+                                "turn": turn,
+                                "reason": "SVG structural preflight failed",
+                                "feedback_source": "tool_result",
+                            },
+                        )
+                    else:
+                        self._append_followup_prompt(
+                            messages,
+                            session,
+                            session_id,
+                            turn,
+                            (
+                                "The SVG was saved, but the Harness structural preflight found unresolved issues:\n"
+                                f"{compact_issues}\n"
+                                f"{repair_step} Re-read after any edit attempt that changes the file or returns "
+                                "an error; never reuse stale old_text. The user's original request remains "
+                                "unchanged. After edits, wait for the structural preflight result. This preflight "
+                                "does not prove visual rendering or semantic correctness."
+                            ),
+                            reason="SVG structural preflight failed",
+                        )
                     svg_preflight_pending = True
                     if not already_read_current:
                         svg_repair_read_paths.clear()
@@ -3547,21 +3587,6 @@ class CodingAgent:
                 )
                 self._emit("tool_result", {"session_id": session_id, "name": name, "result": result})
                 self._save_session(session)
-                if (
-                    self.single_user_prompt_only
-                    and svg_task
-                    and name in {"write_file", "replace_in_file"}
-                    and "SVG 结构预检提示" in result
-                ):
-                    self._append_followup_prompt(
-                        messages,
-                        session,
-                        session_id,
-                        turn,
-                        "",
-                        reason="SVG structural preflight failed",
-                    )
-
             if (
                 svg_creation_written
                 and self.EXPLICIT_COMMAND_INTENT.search(prompt) is None
