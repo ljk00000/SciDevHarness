@@ -298,6 +298,25 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(diff_results), 1)
             self.assertLess(diff_results[0], event_types.index("git_commit_created"))
 
+    def test_coding_agent_forwards_opt_in_reasoning_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            provider = OpenAICompatibleProvider("http://127.0.0.1:11434/v1", "local", "reasoning-model")
+            agent = CodingAgent(
+                root,
+                EventLedger(root),
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            with (
+                patch.dict(os.environ, {"SCIDEV_REASONING_EFFORT": "none"}, clear=True),
+                patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
+                patch.object(provider, "chat", return_value={"role": "assistant", "content": "Done", "tool_calls": []}) as chat,
+            ):
+                agent.run({"payload": {"session_id": "reasoning_option", "prompt": "Inspect this project."}})
+
+            self.assertEqual(chat.call_args.kwargs["reasoning_effort"], "none")
+
     def test_invalid_text_tool_call_is_rejected_then_retried_without_executing_raw_json(self) -> None:
         class InvalidThenCorrectProvider:
             def __init__(self) -> None:

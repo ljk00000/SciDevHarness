@@ -2922,6 +2922,9 @@ class CodingAgent:
                         "assistant_delta",
                         {"session_id": session_id, "turn": turn, "text": text},
                     )
+                    reasoning_effort = (os.getenv("SCIDEV_REASONING_EFFORT") or "").strip()
+                    if reasoning_effort:
+                        stream_options["reasoning_effort"] = reasoning_effort
                     stream_options["tool_choice"] = (
                         "required"
                         if svg_task and (not svg_mutation_seen or svg_preflight_pending)
