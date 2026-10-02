@@ -290,6 +290,77 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(diff_results), 1)
             self.assertLess(diff_results[0], event_types.index("git_commit_created"))
 
+    def test_invalid_text_tool_call_is_rejected_then_retried_without_executing_raw_json(self) -> None:
+        class InvalidThenCorrectProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.message_histories: list[list[dict]] = []
+                self.parser = OpenAICompatibleProvider(
+                    "http://127.0.0.1:11434/v1", "local", "test", text_tool_call_fallback=True
+                )
+
+            def chat(self, messages, tools=None, max_tokens=12000, request_id="", **_kwargs):
+                self.calls += 1
+                self.message_histories.append([dict(message) for message in messages])
+                if self.calls == 1:
+                    invalid = {
+                        "role": "assistant",
+                        "content": (
+                            '```json\n{"name":"write_file","arguments":'
+                            '{"path":"hello.py","content":"print(1)","command":"del *"}}\n```'
+                        ),
+                    }
+                    return self.parser._coerce_text_tool_calls(invalid, tools or [])
+                if self.calls == 2:
+                    return {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "valid_write",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": json.dumps(
+                                        {"path": "hello.py", "content": "print(1)"}
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                return {"role": "assistant", "content": "Created hello.py.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            events: list[tuple[str, dict]] = []
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                event_callback=lambda name, payload: events.append((name, payload)),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            provider = InvalidThenCorrectProvider()
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run(
+                    {"payload": {"session_id": "invalid_tool_retry", "prompt": "Create hello.py containing print(1)."}}
+                )
+
+            self.assertEqual(provider.calls, 4)
+            self.assertEqual((root / "hello.py").read_text(encoding="utf-8"), "print(1)")
+            self.assertTrue(result["git_result_sha"])
+            self.assertIn("tool_call_rejected", [name for name, _payload in events])
+            retry_messages = provider.message_histories[1]
+            retry_feedback = "\n".join(
+                str(message.get("content", "")) for message in retry_messages if message.get("role") == "user"
+            )
+            self.assertIn("no workspace action was executed", retry_feedback)
+            self.assertIn("write_file", retry_feedback)
+            self.assertNotIn('"command":"del *"', retry_feedback)
+            self.assertNotIn('"command":"del *"', str(retry_messages))
+
     def test_simple_svg_tasks_hide_and_reject_shell_tools(self) -> None:
         class SvgPolicyProvider:
             def __init__(self) -> None:
@@ -467,18 +538,23 @@ class CoreTests(unittest.TestCase):
                         "write_svg",
                     )
                 if self.calls == 2:
+                    return self.call("read_file", {"path": "generated.svg"}, "read_svg")
+                if self.calls == 3:
                     return self.call(
                         "replace_in_file",
                         {
                             "path": "generated.svg",
-                            "old_text": "<circle cx=\"160\" cy=\"100\" r=\"40\"/>",
-                            "new_text": '<circle id="subject" cx="160" cy="100" r="40"/>',
+                            "old_text": (
+                                '1: <svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">'
+                                '<g id="scene"><circle cx="160" cy="100" r="40"/></g></svg>'
+                            ),
+                            "new_text": "unused",
                         },
-                        "edit_without_read",
+                        "edit_with_display_number",
                     )
-                if self.calls == 3:
-                    return self.call("read_file", {"path": "generated.svg"}, "read_svg")
                 if self.calls == 4:
+                    return self.call("read_file", {"path": "generated.svg"}, "refresh_after_failed_edit")
+                if self.calls == 5:
                     return self.call(
                         "replace_in_file",
                         {
@@ -512,16 +588,30 @@ class CoreTests(unittest.TestCase):
                 result = agent.run({"payload": {"session_id": "svg_preflight_repair", "prompt": prompt}})
 
             self.assertTrue(result["git_result_sha"])
-            self.assertEqual(provider.calls, 6)
+            self.assertEqual(provider.calls, 7)
             self.assertEqual(provider.exposed_tools[0], {"write_file"})
-            repair_tools = set(CodingAgent.SVG_ARTIFACT_TOOLS)
-            self.assertEqual(provider.exposed_tools[1:], [repair_tools] * 5)
+            repair_tools = set(CodingAgent.SVG_LOCAL_REPAIR_TOOLS)
+            self.assertEqual(
+                provider.exposed_tools,
+                [
+                    {"write_file"},
+                    {"read_file"},
+                    {"replace_in_file"},
+                    {"read_file"},
+                    {"replace_in_file"},
+                    repair_tools,
+                    repair_tools,
+                ],
+            )
             rejected_edit_feedback = [
                 message.get("content", "")
-                for message in provider.message_histories[2]
+                for message in provider.message_histories[3]
                 if message.get("role") == "tool"
             ]
-            self.assertTrue(any("Read the saved SVG with read_file" in message for message in rejected_edit_feedback))
+            self.assertTrue(
+                any("read_file 每行前的 N:" in message for message in rejected_edit_feedback),
+                repr(rejected_edit_feedback),
+            )
             preflight_messages = [
                 message.get("content", "")
                 for message in provider.message_histories[1]
@@ -667,6 +757,21 @@ class CoreTests(unittest.TestCase):
             "replace_in_file",
             {"path": "drawing.svg", "replace_all": True},
         )
+
+    def test_post_write_svg_repair_only_exposes_local_edit_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            agent = CodingAgent(root, EventLedger(root), GitManager(root))
+            tools = agent._svg_artifact_repair_tool_definitions()
+            names = {tool["function"]["name"] for tool in tools}
+            self.assertEqual(names, {"read_file", "replace_in_file", "git_diff"})
+            replace_tool = next(tool for tool in tools if tool["function"]["name"] == "replace_in_file")
+            properties = replace_tool["function"]["parameters"]["properties"]
+            self.assertNotIn("replace_all", properties)
+            read_phase = agent._svg_preflight_repair_tool_definitions(file_was_read=False)
+            edit_phase = agent._svg_preflight_repair_tool_definitions(file_was_read=True)
+            self.assertEqual({tool["function"]["name"] for tool in read_phase}, {"read_file"})
+            self.assertEqual({tool["function"]["name"] for tool in edit_phase}, {"replace_in_file"})
 
     def test_svg_repair_is_not_reclassified_as_creation_and_updates_its_named_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1054,6 +1159,7 @@ class CoreTests(unittest.TestCase):
     def test_agent_prompt_requires_explicit_checks_to_be_run_before_completion(self) -> None:
         prompt = CodingAgent.SYSTEM_PROMPT
         self.assertLessEqual(len(prompt), 900)
+        self.assertIn("每次成功修改后，下一次精确编辑前先重新读取", prompt)
         for required_rule in (
             "直接用工具完成用户在工作区内的请求",
             "`write_file` 一次",
@@ -1728,6 +1834,28 @@ class CoreTests(unittest.TestCase):
             "content": '```json\n{"name":"delete_everything","arguments":{}}\n```',
         }
         self.assertNotIn("tool_calls", provider._coerce_text_tool_calls(unknown_tool, tools))
+
+        invalid_declared_tool = {
+            "role": "assistant",
+            "content": (
+                '```json\n{"name":"write_file","arguments":'
+                '{"path":"hello.py","content":"print(1)","command":"del *"}}\n```'
+            ),
+        }
+        rejected = provider._coerce_text_tool_calls(invalid_declared_tool, tools)
+        self.assertNotIn("tool_calls", rejected)
+        self.assertEqual(
+            rejected["tool_parse_error"],
+            {"name": "write_file", "reason": "arguments_schema_mismatch"},
+        )
+
+        truncated_declared_tool = {
+            "role": "assistant",
+            "content": '<tool_call>{"name":"write_file","arguments":{"path":"hello.py"',
+        }
+        rejected_truncated = provider._coerce_text_tool_calls(truncated_declared_tool, tools)
+        self.assertNotIn("tool_calls", rejected_truncated)
+        self.assertEqual(rejected_truncated["tool_parse_error"]["name"], "write_file")
 
         missing_argument = {
             "role": "assistant",

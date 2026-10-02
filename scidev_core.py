@@ -1052,6 +1052,8 @@ class OpenAICompatibleProvider:
         )
         tool_calls: list[dict[str, Any]] = []
         consumed_spans: list[tuple[int, int]] = []
+        rejected_tool_name = ""
+        rejected_reason = ""
         for match, strip_line_numbers in matches:
             candidate = match.group(1).strip()
             if strip_line_numbers:
@@ -1059,6 +1061,10 @@ class OpenAICompatibleProvider:
             try:
                 payload = json.loads(candidate)
             except (json.JSONDecodeError, TypeError):
+                attempted_name = re.search(r'"name"\s*:\s*"([^"\\]+)"', candidate)
+                if attempted_name and attempted_name.group(1) in allowed:
+                    rejected_tool_name = attempted_name.group(1)
+                    rejected_reason = "invalid_json"
                 # Local models occasionally append one redundant closing brace
                 # to an otherwise valid tool envelope. Recover only a valid
                 # JSON prefix followed by exactly that one character; tool and
@@ -1074,18 +1080,30 @@ class OpenAICompatibleProvider:
                 or set(payload) != {"name", "arguments"}
                 or not isinstance(payload.get("name"), str)
             ):
+                attempted_name = payload.get("name") if isinstance(payload, dict) else None
+                if isinstance(attempted_name, str) and attempted_name in allowed:
+                    rejected_tool_name = attempted_name
+                    rejected_reason = "invalid_envelope"
                 continue
             name = payload["name"]
             arguments = payload.get("arguments")
+            if name not in allowed:
+                continue
             if isinstance(arguments, str):
                 try:
                     arguments = json.loads(arguments)
                 except json.JSONDecodeError:
+                    rejected_tool_name = name
+                    rejected_reason = "invalid_arguments_json"
                     continue
-            if not isinstance(arguments, dict) or name not in allowed:
+            if not isinstance(arguments, dict):
+                rejected_tool_name = name
+                rejected_reason = "arguments_not_object"
                 continue
             properties, required = allowed[name]
             if required - arguments.keys() or arguments.keys() - properties:
+                rejected_tool_name = name
+                rejected_reason = "arguments_schema_mismatch"
                 continue
             tool_calls.append(
                 {
@@ -1100,6 +1118,27 @@ class OpenAICompatibleProvider:
             consumed_spans.append((match.start(), match.end()))
 
         if not tool_calls:
+            if not rejected_tool_name:
+                # A truncated JSON envelope may not match the complete-object
+                # regex above. Recover only the name of a declared function
+                # from an unmistakable tool/JSON response shape; never execute
+                # this content or treat arbitrary prose examples as calls.
+                tool_shaped = re.match(
+                    r"\s*(?:<tool_(?:call|request|response)>|```(?:json|xml)\b|\{)",
+                    parse_content,
+                    re.IGNORECASE,
+                )
+                attempted_name = re.search(r'"name"\s*:\s*"([^"\\]+)"', parse_content)
+                if tool_shaped and attempted_name and attempted_name.group(1) in allowed:
+                    rejected_tool_name = attempted_name.group(1)
+                    rejected_reason = "incomplete_or_invalid_tool_envelope"
+            if rejected_tool_name:
+                rejected = dict(message)
+                rejected["tool_parse_error"] = {
+                    "name": rejected_tool_name,
+                    "reason": rejected_reason or "invalid_tool_envelope",
+                }
+                return rejected
             return message
         remaining = parse_content
         for start, end in reversed(consumed_spans):
@@ -1264,7 +1303,11 @@ class OpenAICompatibleProvider:
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 if self.streaming:
-                    message = self._stream_message(response, on_delta=on_delta)
+                    buffer_text_tool_response = self.text_tool_call_fallback and bool(tools)
+                    message = self._stream_message(
+                        response,
+                        on_delta=None if buffer_text_tool_response else on_delta,
+                    )
                 else:
                     data = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
@@ -1277,6 +1320,15 @@ class OpenAICompatibleProvider:
         if self.streaming:
             if self.text_tool_call_fallback and tools and not message.get("tool_calls"):
                 message = self._coerce_text_tool_calls(message, tools)
+                # Buffer text-tool responses until parsing finishes so invalid
+                # JSON is not streamed into the chat UI as if it were an answer.
+                if (
+                    on_delta
+                    and not message.get("tool_parse_error")
+                    and isinstance(message.get("content"), str)
+                    and message["content"]
+                ):
+                    on_delta(message["content"])
             return message
         try:
             message = data["choices"][0]["message"]
@@ -2099,6 +2151,7 @@ class CodingAgent:
 
     MAX_TURNS = 32
     MAX_SVG_ARTIFACT_TURNS = 8
+    MAX_TOOL_FORMAT_RETRIES = 2
     MAX_SVG_CREATION_RETRIES = 1
     MAX_IDENTICAL_SVG_PREFLIGHT_RETRIES = 2
     SVG_CREATION_TOOLS = frozenset({"write_file"})
@@ -2123,6 +2176,7 @@ class CodingAgent:
 - 先定画布、构图和连接/接触关系；动作、承载、操作须表现真实支撑和接触点，分离的近邻形状或色块不代表交互。主体轮廓先清晰，复杂对象勿用孤立基础形状代替。
 - 保持比例与留白，避免遮挡、重叠、`viewBox` 裁切。简单 SVG 少于 60 个元素并闭合标签；每个关键部件各自对应可见几何与唯一语义 `id`，勿重复、勿仅给共享分组命名，ID 不代替几何。
 - 工具返回“SVG 结构预检提示”时，先读文件并精确局部修复。结构通过不证明视觉渲染或语义正确；创建后尽可能实际渲染/验证，只有工具确实确认后才能声称已完成渲染/验证。
+同一文件每次成功修改后，下一次精确编辑前先重新读取；编辑失败时按工具反馈重读再试。
 """
 
     def __init__(
@@ -2191,11 +2245,11 @@ class CodingAgent:
         return selected
 
     def _svg_artifact_repair_tool_definitions(self) -> list[dict[str, Any]]:
-        """Return a stable, narrowly scoped tool schema for post-write SVG repair."""
+        """Return local-only tools for post-write SVG repair; never offer a broad rewrite."""
         selected = [
             definition
             for definition in self.toolbox.definitions()
-            if definition.get("function", {}).get("name") in self.SVG_ARTIFACT_TOOLS
+            if definition.get("function", {}).get("name") in self.SVG_LOCAL_REPAIR_TOOLS
         ]
         for definition in selected:
             if definition.get("function", {}).get("name") != "replace_in_file":
@@ -2205,6 +2259,15 @@ class CodingAgent:
             edit_properties = properties.get("edits", {}).get("items", {}).get("properties", {})
             edit_properties.pop("replace_all", None)
         return selected
+
+    def _svg_preflight_repair_tool_definitions(self, *, file_was_read: bool) -> list[dict[str, Any]]:
+        """Require a read-then-edit sequence while structural SVG repair is pending."""
+        required_name = "replace_in_file" if file_was_read else "read_file"
+        return [
+            definition
+            for definition in self._svg_artifact_repair_tool_definitions()
+            if definition.get("function", {}).get("name") == required_name
+        ]
 
     def _normalized_tool_path(self, raw_path: Any) -> str:
         raw = str(raw_path or "")
@@ -2567,13 +2630,26 @@ class CodingAgent:
         svg_creation_written = False
         svg_preflight_pending = False
         svg_repair_read_paths: set[str] = set()
+        last_svg_preflight_revision: int | None = None
         last_svg_preflight_fingerprint: str | None = None
         identical_svg_preflight_retries = 0
+        tool_format_retries = 0
         turn_limit = self.MAX_TURNS
         if svg_task:
             turn_limit = min(turn_limit, self.MAX_SVG_ARTIFACT_TURNS)
 
         for turn in range(1, turn_limit + 1):
+            if svg_preflight_pending and self.EXPLICIT_COMMAND_INTENT.search(prompt) is None:
+                tool_definitions = self._svg_preflight_repair_tool_definitions(
+                    file_was_read=bool(svg_repair_read_paths)
+                )
+                allowed_tool_names = {
+                    definition["function"]["name"]
+                    for definition in tool_definitions
+                    if isinstance(definition, dict)
+                    and isinstance(definition.get("function"), dict)
+                    and isinstance(definition["function"].get("name"), str)
+                }
             if recovered_artifact_path:
                 message = {
                     "role": "assistant",
@@ -2604,6 +2680,55 @@ class CodingAgent:
                 )
             content = self._text_content(message.get("content"))
             tool_calls = message.get("tool_calls") or []
+            tool_parse_error = message.get("tool_parse_error")
+            if isinstance(tool_parse_error, dict) and not tool_calls:
+                tool_name = str(tool_parse_error.get("name", ""))[:80]
+                parse_reason = str(tool_parse_error.get("reason", "invalid_tool_envelope"))[:80]
+                tool_format_retries += 1
+                rejection = {
+                    "session_id": session_id,
+                    "turn": turn,
+                    "tool_name": tool_name,
+                    "reason": parse_reason,
+                    "retry": tool_format_retries,
+                    "retry_limit": self.MAX_TOOL_FORMAT_RETRIES,
+                }
+                self.ledger.append("model_tool_call_rejected", rejection)
+                self._emit("tool_call_rejected", rejection)
+                if tool_format_retries > self.MAX_TOOL_FORMAT_RETRIES:
+                    error = (
+                        f"Model repeatedly returned an invalid {tool_name or 'declared tool'} call; "
+                        "the Harness rejected it without executing it."
+                    )
+                    session["status"] = "failed"
+                    session["error"] = error
+                    session["updated_at"] = now_iso()
+                    self.ledger.append("coding_session_failed", {"session_id": session_id, "error": error})
+                    self._save_session(session)
+                    raise PermanentError(error)
+                # Keep the conversation protocol valid while avoiding a large,
+                # malformed JSON response becoming model context or a final answer.
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "The Harness rejected an invalid tool-call response before execution.",
+                    }
+                )
+                declared_tools = ", ".join(sorted(allowed_tool_names))
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"The previous {tool_name or 'tool'} call was rejected ({parse_reason}); "
+                            "no workspace action was executed. Retry using a proper declared function call, "
+                            f"choosing only from: {declared_tools}. Follow that tool's exact schema and include "
+                            "only its documented arguments. Do not print a JSON object or claim success as text."
+                        ),
+                    }
+                )
+                session["updated_at"] = now_iso()
+                self._save_session(session)
+                continue
             recovered_tool_ids: set[str] = set()
             if not tool_calls and content:
                 recovered = SvgArtifactAdapter.create_tool_call(prompt, content, self.project_root)
@@ -2741,15 +2866,22 @@ class CodingAgent:
                             "content": (
                                 "The SVG was saved, but the Harness structural preflight found unresolved issues:\n"
                                 f"{compact_issues}\n"
-                                "Read the generated SVG and make focused exact edits with replace_in_file; preserve "
-                                "valid artwork and avoid broad replacement. The user's original request remains "
+                                "Call read_file on the current SVG now. Then make focused exact edits with "
+                                "replace_in_file; preserve valid artwork and avoid broad replacement. Read the "
+                                "latest file again before every later edit attempt, including after tool errors; "
+                                "never reuse old_text from an earlier read. The user's original request remains "
                                 "unchanged. After edits, wait for the structural preflight result. This preflight "
                                 "does not prove visual rendering or semantic correctness."
                             ),
                         }
                     )
                     svg_preflight_pending = True
-                    svg_repair_read_paths.clear()
+                    if (
+                        last_svg_preflight_revision is None
+                        or workspace_revision != last_svg_preflight_revision
+                    ):
+                        svg_repair_read_paths.clear()
+                    last_svg_preflight_revision = workspace_revision
                     if self.EXPLICIT_COMMAND_INTENT.search(prompt) is None:
                         tool_scope_prompt = (
                             "Repair only these localized SVG issues in the SVG just created; preserve valid artwork. "
@@ -2941,8 +3073,8 @@ class CodingAgent:
                     tool_succeeded = True
                 except Exception as exc:  # Tool errors go back to the model for correction.
                     result = f"工具执行失败：{type(exc).__name__}: {exc}"
-                if svg_preflight_pending and name == "replace_in_file":
-                    svg_repair_read_paths.discard(normalized_tool_path)
+                if svg_preflight_pending and name == "replace_in_file" and name in allowed_tool_names:
+                    svg_repair_read_paths.clear()
                 if tool_succeeded:
                     if call_id in recovered_tool_ids and name == "write_file":
                         recovered_artifact_path = str(arguments.get("path", ""))
@@ -2965,6 +3097,15 @@ class CodingAgent:
                                 "Use exact replace_in_file edits and inspect git_diff."
                             )
                             svg_repair_read_paths.clear()
+                        elif self.EXPLICIT_COMMAND_INTENT.search(prompt) is None:
+                            tool_definitions = self._svg_artifact_repair_tool_definitions()
+                            allowed_tool_names = {
+                                definition["function"]["name"]
+                                for definition in tool_definitions
+                                if isinstance(definition, dict)
+                                and isinstance(definition.get("function"), dict)
+                                and isinstance(definition["function"].get("name"), str)
+                            }
                     elif name == "run_command":
                         workspace_revision += 1
                     elif name == "git_diff":
