@@ -1157,7 +1157,7 @@ def persist_failure_diagnostic(
     for event_name, data in events[-16:]:
         item: dict[str, Any] = {"event": event_name}
         # Retain rejection metadata for debugging without persisting tool arguments.
-        for field in ("session_id", "name", "source", "tool_name", "reason", "turn"):
+        for field in ("session_id", "name", "source", "tool_name", "reason", "detail", "turn"):
             if data.get(field) is not None:
                 item[field] = str(data[field])[:160]
         arguments = data.get("arguments")

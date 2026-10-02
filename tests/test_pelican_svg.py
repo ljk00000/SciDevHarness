@@ -594,7 +594,13 @@ class PelicanSvgTests(unittest.TestCase):
         record_smoke_event(
             events,
             "tool_call_rejected",
-            {"session_id": "s1", "tool_name": "replace_in_file", "reason": "arguments_schema_mismatch", "turn": 3},
+            {
+                "session_id": "s1",
+                "tool_name": "replace_in_file",
+                "reason": "arguments_schema_mismatch",
+                "detail": "unexpected_property at $.arguments.edits[0].unadvertised",
+                "turn": 3,
+            },
         )
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -615,6 +621,10 @@ class PelicanSvgTests(unittest.TestCase):
         self.assertEqual(report["recent_events"][1]["name"], "write_file")
         self.assertEqual(report["recent_events"][2]["tool_name"], "replace_in_file")
         self.assertEqual(report["recent_events"][2]["reason"], "arguments_schema_mismatch")
+        self.assertEqual(
+            report["recent_events"][2]["detail"],
+            "unexpected_property at $.arguments.edits[0].unadvertised",
+        )
 
     def test_failure_diagnostic_is_bounded_and_omits_credential_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

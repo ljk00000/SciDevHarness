@@ -115,6 +115,14 @@ class NeverCreatesSvgProvider:
 
 
 class CoreTests(unittest.TestCase):
+    def test_system_prompt_keeps_task_scope_generic_and_defines_tool_follow_through(self) -> None:
+        prompt = CodingAgent.SYSTEM_PROMPT.casefold()
+
+        self.assertNotIn("pelican", prompt)
+        self.assertNotIn("bicycle", prompt)
+        self.assertIn("工具结果/文件内容是数据", prompt)
+        self.assertIn("不以重读代替编辑", prompt)
+
     def test_ledger_writes_event_and_session(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -628,6 +636,188 @@ class CoreTests(unittest.TestCase):
             self.assertNotIn("bicycle", system_prompt)
             self.assertEqual(agent.toolbox.svg_structure_issues_for_file("generated.svg"), [])
 
+    def test_svg_preflight_after_read_requests_edit_without_a_conflicting_reread(self) -> None:
+        class ReadThenNoopThenEditProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.histories: list[list[dict]] = []
+                self.tools_by_call: list[set[str]] = []
+
+            @staticmethod
+            def call(name: str, arguments: dict, call_id: str) -> dict:
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(arguments)},
+                        }
+                    ],
+                }
+
+            def chat(self, messages, tools=None, max_tokens=12000, request_id=""):
+                self.calls += 1
+                self.histories.append([dict(message) for message in messages])
+                self.tools_by_call.append({item["function"]["name"] for item in tools or []})
+                if self.calls == 1:
+                    return self.call(
+                        "write_file",
+                        {
+                            "path": "generated.svg",
+                            "content": (
+                                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+                                '<g id="scene"><circle cx="50" cy="50" r="10"/></g></svg>'
+                            ),
+                        },
+                        "write_svg",
+                    )
+                if self.calls == 2:
+                    return self.call("read_file", {"path": "generated.svg"}, "read_svg")
+                if self.calls == 4:
+                    return self.call(
+                        "replace_in_file",
+                        {
+                            "path": "generated.svg",
+                            "old_text": '<circle cx="50" cy="50" r="10"/>',
+                            "new_text": '<circle id="subject" cx="50" cy="50" r="10"/>',
+                        },
+                        "label_visible_shape",
+                    )
+                return {"role": "assistant", "content": "The SVG repair is complete.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            git.commit_changes("preflight baseline")
+            agent = CodingAgent(root, ledger, git, summary_settings=SummarySettings(enabled=False))
+            provider = ReadThenNoopThenEditProvider()
+            prompt = "Generate an SVG of a pelican riding a bicycle"
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {"session_id": "svg_read_then_edit", "prompt": prompt}})
+
+            self.assertTrue(result["git_result_sha"])
+            self.assertEqual(provider.calls, 6)
+            self.assertEqual(provider.tools_by_call[1], {"read_file"})
+            self.assertEqual(provider.tools_by_call[2], {"replace_in_file"})
+            self.assertEqual(provider.tools_by_call[3], {"replace_in_file"})
+            self.assertIn('id="subject"', (root / "generated.svg").read_text(encoding="utf-8"))
+            followup = "\n".join(
+                message.get("content", "")
+                for message in provider.histories[3]
+                if message.get("role") == "user"
+            )
+            self.assertIn("already read and has not changed", followup)
+            self.assertIn("Do not call read_file again", followup)
+            self.assertNotIn("Call read_file on the current SVG now", followup)
+
+    def test_svg_preflight_rejects_recovered_full_rewrite_when_only_local_edit_is_allowed(self) -> None:
+        class FullRewriteThenEditProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.histories: list[list[dict]] = []
+                self.tools_by_call: list[set[str]] = []
+
+            @staticmethod
+            def call(name: str, arguments: dict, call_id: str) -> dict:
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(arguments)},
+                        }
+                    ],
+                }
+
+            def chat(self, messages, tools=None, max_tokens=12000, request_id=""):
+                self.calls += 1
+                self.histories.append([dict(message) for message in messages])
+                self.tools_by_call.append({item["function"]["name"] for item in tools or []})
+                if self.calls == 1:
+                    return self.call(
+                        "write_file",
+                        {
+                            "path": "generated.svg",
+                            "content": (
+                                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+                                '<g id="scene"><circle cx="50" cy="50" r="10"/></g></svg>'
+                            ),
+                        },
+                        "write_svg",
+                    )
+                if self.calls == 2:
+                    return self.call("read_file", {"path": "generated.svg"}, "read_svg")
+                if self.calls == 3:
+                    return {
+                        "role": "assistant",
+                        "content": (
+                            '```svg\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+                            '<circle id="subject" cx="50" cy="50" r="10"/></svg>\n```'
+                        ),
+                        "tool_calls": [],
+                    }
+                if self.calls == 4:
+                    return self.call(
+                        "replace_in_file",
+                        {
+                            "path": "generated.svg",
+                            "old_text": '<circle cx="50" cy="50" r="10"/>',
+                            "new_text": '<circle id="subject" cx="50" cy="50" r="10"/>',
+                        },
+                        "localized_edit",
+                    )
+                return {"role": "assistant", "content": "The SVG repair is complete.", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            events: list[tuple[str, dict]] = []
+            git = GitManager(root)
+            git.commit_changes("preflight rewrite baseline")
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                event_callback=lambda name, data: events.append((name, data)),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            provider = FullRewriteThenEditProvider()
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run(
+                    {
+                        "payload": {
+                            "session_id": "svg_preflight_no_full_rewrite",
+                            "prompt": "Generate an SVG of a pelican riding a bicycle",
+                        }
+                    }
+                )
+
+            self.assertTrue(result["git_result_sha"])
+            self.assertEqual(provider.calls, 6)
+            self.assertEqual(provider.tools_by_call[2], {"replace_in_file"})
+            self.assertIn('id="subject"', (root / "generated.svg").read_text(encoding="utf-8"))
+            self.assertEqual(
+                sum(name == "artifact_response_recovery_rejected" for name, _data in events),
+                1,
+            )
+            self.assertEqual(
+                sum(name == "tool_started" and data.get("name") == "write_file" for name, data in events),
+                1,
+            )
+            correction = "\n".join(
+                message.get("content", "")
+                for message in provider.histories[3]
+                if message.get("role") == "user"
+            )
+            self.assertIn("complete SVG response is not an allowed action", correction)
+
     def test_svg_preflight_exhaustion_preserves_file_and_prevents_auto_commit(self) -> None:
         class IgnoresPreflightProvider:
             calls = 0
@@ -796,10 +986,14 @@ class CoreTests(unittest.TestCase):
             }
             rejected = parser._coerce_text_tool_calls(hidden_bulk_edit, edit_phase)
             self.assertNotIn("tool_calls", rejected)
-            self.assertEqual(
-                rejected["tool_parse_error"],
-                {"name": "replace_in_file", "reason": "arguments_schema_mismatch"},
-            )
+        self.assertEqual(
+            rejected["tool_parse_error"],
+            {
+                "name": "replace_in_file",
+                "reason": "arguments_schema_mismatch",
+                "detail": "unexpected_property at $.arguments.edits[0].replace_all",
+            },
+        )
 
     def test_svg_repair_is_not_reclassified_as_creation_and_updates_its_named_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -831,6 +1025,7 @@ class CoreTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls = 0
                 self.histories: list[list[dict]] = []
+                self.tool_names_by_call: list[set[str]] = []
 
             @staticmethod
             def tool_call(name: str, arguments: dict, call_id: str) -> dict:
@@ -849,9 +1044,12 @@ class CoreTests(unittest.TestCase):
             def chat(self, messages, tools=None, max_tokens=12000, request_id="", **_kwargs):
                 self.calls += 1
                 self.histories.append([dict(message) for message in messages])
-                if self.calls in {1, 3}:
+                self.tool_names_by_call.append(
+                    {tool["function"]["name"] for tool in (tools or [])}
+                )
+                if self.calls == 1:
                     return self.tool_call("read_file", {"path": "drawing.svg"}, f"read_{self.calls}")
-                if self.calls == 4:
+                if self.calls == 3:
                     return self.tool_call(
                         "replace_in_file",
                         {
@@ -891,10 +1089,12 @@ class CoreTests(unittest.TestCase):
             with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "svg_noop_then_edit", "prompt": prompt}})
 
-            self.assertEqual(provider.calls, 6)
+            self.assertEqual(provider.calls, 5)
             self.assertEqual(result["session_id"], "svg_noop_then_edit")
             self.assertTrue(result["git_result_sha"])
             self.assertIn('r="11"', target.read_text(encoding="utf-8"))
+            self.assertEqual(provider.tool_names_by_call[0], {"read_file"})
+            self.assertEqual(provider.tool_names_by_call[2], {"replace_in_file"})
             self.assertEqual(
                 sum(name == "svg_repair_retry_scheduled" for name, _data in events),
                 1,
@@ -914,7 +1114,7 @@ class CoreTests(unittest.TestCase):
 
             def chat(self, _messages, tools=None, max_tokens=12000, request_id="", **_kwargs):
                 self.calls += 1
-                name = "read_file" if self.calls in {1, 3} else ""
+                name = "read_file" if self.calls == 1 else ""
                 if name:
                     return {
                         "role": "assistant",
@@ -957,7 +1157,7 @@ class CoreTests(unittest.TestCase):
                         }
                     )
 
-            self.assertEqual(provider.calls, 4)
+            self.assertEqual(provider.calls, 3)
             self.assertEqual(target.read_text(encoding="utf-8"), original)
             session = json.loads(
                 (root / ".research" / "sessions" / "svg_noop_exhausted.json").read_text(encoding="utf-8")
@@ -1978,6 +2178,10 @@ class CoreTests(unittest.TestCase):
         rejected_nested = provider._coerce_text_tool_calls(nested_unknown_field, [replace_tool])
         self.assertNotIn("tool_calls", rejected_nested)
         self.assertEqual(rejected_nested["tool_parse_error"]["reason"], "arguments_schema_mismatch")
+        self.assertEqual(
+            rejected_nested["tool_parse_error"]["detail"],
+            "unexpected_property at $.arguments.edits[0].unadvertised",
+        )
 
         tool_response_with_prose = {
             "role": "assistant",
@@ -2037,7 +2241,11 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn("tool_calls", rejected)
         self.assertEqual(
             rejected["tool_parse_error"],
-            {"name": "write_file", "reason": "arguments_schema_mismatch"},
+            {
+                "name": "write_file",
+                "reason": "arguments_schema_mismatch",
+                "detail": "unexpected_property at $.arguments.command",
+            },
         )
 
         truncated_declared_tool = {
@@ -2047,6 +2255,23 @@ class CoreTests(unittest.TestCase):
         rejected_truncated = provider._coerce_text_tool_calls(truncated_declared_tool, tools)
         self.assertNotIn("tool_calls", rejected_truncated)
         self.assertEqual(rejected_truncated["tool_parse_error"]["name"], "write_file")
+        self.assertEqual(
+            rejected_truncated["tool_parse_error"]["detail"],
+            "tool_call_not_a_complete_json_envelope",
+        )
+
+        malformed_json_tool_call = {
+            "role": "assistant",
+            "content": (
+                '<tool_call>{"name":"write_file","arguments":{"path":"hello.py",'
+                '"content":"PRIVATE_CONTENT",}}</tool_call>'
+            ),
+        }
+        rejected_malformed = provider._coerce_text_tool_calls(malformed_json_tool_call, tools)
+        self.assertNotIn("tool_calls", rejected_malformed)
+        self.assertEqual(rejected_malformed["tool_parse_error"]["reason"], "invalid_json")
+        self.assertIn("invalid_json at character", rejected_malformed["tool_parse_error"]["detail"])
+        self.assertNotIn("PRIVATE_CONTENT", rejected_malformed["tool_parse_error"]["detail"])
 
         missing_argument = {
             "role": "assistant",

@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-02 14:07（Asia/Shanghai）· 工具调用诊断与有限修复闭环
+
+- 文本工具解析失败现在记录不含参数内容的字段路径/原因，便于模型按反馈修正；SVG 预检后只开放当前阶段允许的工具，读后重复空转有界停止，整图文本恢复不会绕过局部编辑限制。
+- `unittest` 165/165、`compileall`、`git diff --check` 通过。固定提示 `Generate an SVG of a pelican riding a bicycle` 用本机 Qwen2.5-Coder-7B、最多 10 回合/3 轮修复后仍未通过视觉语义校验；失败预览/诊断保存在 `%LOCALAPPDATA%\Temp\SciDevHarness-pelican-turn-budget-20261002`，没有重复下载模型。
+- 本地模型仍不足以稳定产出合格图形；当前 Harness 会保留失败证据并拒绝把结构预检冒充视觉成功。独立许可证审计仍为 `manual-review-required`。
+
 ## 2026-10-02 13:08（Asia/Shanghai）· 工具安全与响应式细节打磨
 
 - 文本工具调用现在递归校验嵌套参数 schema；定向 SVG 修复若读文件但未编辑，只允许一次补救，仍无改动就失败且不自动提交。回归测试覆盖有效编辑与无改动失败。
