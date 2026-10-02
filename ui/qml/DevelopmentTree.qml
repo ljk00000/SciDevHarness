@@ -559,7 +559,7 @@ Item {
                     text: root.badgeFor(card.node)
                     color: card.accent
                     font.family: "Microsoft YaHei UI"
-                    font.pixelSize: Math.max(9, 9.5 * root.zoom)
+                    font.pixelSize: Math.max(10, 9.5 * root.zoom)
                 }
             }
             Text {
@@ -571,7 +571,7 @@ Item {
                 color: "#f0f5fa"
                 font.family: "Microsoft YaHei UI"
                 font.bold: true
-                font.pixelSize: Math.max(10, 11 * root.zoom)
+                font.pixelSize: Math.max(11, 11 * root.zoom)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
@@ -579,11 +579,11 @@ Item {
                 x: 13 * root.zoom
                 y: 31 * root.zoom
                 width: Math.max(40 * root.zoom, parent.width - 28 * root.zoom)
-                height: 16 * root.zoom
+                height: Math.max(10, 16 * root.zoom)
                 text: root.statusFor(card.node)
                 color: card.accent
                 font.family: "Microsoft YaHei UI"
-                font.pixelSize: Math.max(9, 9.5 * root.zoom)
+                font.pixelSize: Math.max(10, 9.5 * root.zoom)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
@@ -591,11 +591,11 @@ Item {
                 x: 13 * root.zoom
                 y: 49 * root.zoom
                 width: Math.max(40 * root.zoom, parent.width - 28 * root.zoom)
-                height: 14 * root.zoom
+                height: Math.max(10, 14 * root.zoom)
                 text: String(card.node.meta || "")
                 color: "#b0bdc9"
                 font.family: "Microsoft YaHei UI"
-                font.pixelSize: Math.max(9, 9 * root.zoom)
+                font.pixelSize: Math.max(10, 9 * root.zoom)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
