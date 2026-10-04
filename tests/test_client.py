@@ -562,6 +562,80 @@ class EditorTabBehaviorTests(unittest.TestCase):
                 self.app.processEvents()
 
 
+class FindReplaceUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_ctrl_f_and_ctrl_h_open_the_expected_find_modes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-find-shortcuts-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            source.write_text("needle\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                window.activateWindow()
+                editor.setFocus()
+                self.app.processEvents()
+
+                QTest.keyClick(editor, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
+                self.app.processEvents()
+                self.assertTrue(window.find_bar.isVisible())
+                self.assertFalse(window.replace_input.isVisible())
+
+                window.find_input.setText("needle")
+                QTest.keyClick(window.find_input, Qt.Key.Key_H, Qt.KeyboardModifier.ControlModifier)
+                self.app.processEvents()
+                self.assertTrue(window.replace_input.isVisible())
+                self.assertTrue(window.replace_button.isVisible())
+                self.assertTrue(window.replace_all_button.isVisible())
+                self.assertEqual(window.find_input.text(), "needle")
+
+                modifiers = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+                QTest.keyClick(window.find_input, Qt.Key.Key_F, modifiers)
+                self.app.processEvents()
+                self.assertTrue(window.bottom_tabs.isVisible())
+                self.assertIs(window.workspace_stack.currentWidget(), window.workspace_page)
+                self.assertTrue(window.workspace_search_input.hasFocus())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_whole_word_navigation_and_replace_buttons_update_the_document(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-find-replace-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            source.write_text("cat scatter CAT catapult\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                window._show_find_bar(replace=True)
+                window.find_word_checkbox.setChecked(True)
+                window.find_input.setText("cat")
+                self.assertEqual(editor.textCursor().selectedText(), "cat")
+
+                QTest.keyClick(window.find_input, Qt.Key.Key_Return)
+                self.assertEqual(editor.textCursor().selectedText(), "CAT")
+
+                window.replace_input.setText("dog")
+                QTest.mouseClick(window.replace_button, Qt.MouseButton.LeftButton)
+                self.assertIn("scatter dog catapult", editor.toPlainText())
+
+                cursor = editor.textCursor()
+                cursor.movePosition(cursor.MoveOperation.Start)
+                editor.setTextCursor(cursor)
+                QTest.mouseClick(window.replace_all_button, Qt.MouseButton.LeftButton)
+                self.assertEqual(editor.toPlainText(), "dog scatter dog catapult\n")
+                editor.document().setModified(False)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
 class ExplorerInlineEntryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
