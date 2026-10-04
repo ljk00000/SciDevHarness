@@ -204,6 +204,29 @@ class UIProfileTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_keyboard_focus_ring_tracks_the_active_theme(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-focus-ring-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.resize(1100, 700)
+                window.show()
+                for profile_key, focus_color in (
+                    ("studio", "#8bc1ff"),
+                    ("paper", "#286bcf"),
+                    ("focus", "#b9a8ff"),
+                ):
+                    with self.subTest(profile=profile_key):
+                        window.set_ui_profile(profile_key, persist=False)
+                        window.title_git_button.setFocus()
+                        self.app.processEvents()
+                        self.assertTrue(window.title_git_button.hasFocus())
+                        self.assertIn("QPushButton#GitPrimary:focus", window.styleSheet())
+                        self.assertIn(f"border: 1px solid {focus_color}", window.styleSheet())
+                        self.assertIn("QToolButton#ActivityButton:focus", window.styleSheet())
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_theme_menu_persists_the_choice_and_restores_it_on_startup(self) -> None:
         settings = QSettings("SciDevHarness", "SciDevHarness")
         had_previous = settings.contains("uiProfile")

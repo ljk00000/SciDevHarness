@@ -19,7 +19,7 @@ if os.name == "nt":
 
 from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QTimer, Qt
-from PySide6.QtGui import QFont, QImage, QMouseEvent, QWheelEvent
+from PySide6.QtGui import QColor, QFont, QImage, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QSizePolicy
 
 from scidev_client import ClientWindow, DevelopmentTreeView
@@ -156,6 +156,39 @@ def verify_attempt_accent_pixel(
             f"attempt node accent is not painted at its expected zoomed position for {name}: "
             f"pixel={(pixel_x, pixel_y)} nearest={closest_color} expected={expected.name()} "
             f"hue-delta={closest_hue_difference} zoom={zoom:.3f} dpr={device_scale:.2f}"
+        )
+
+
+def verify_keyboard_focus_ring(window: ClientWindow, image: QImage, name: str) -> None:
+    button = window.title_git_button
+    if not button.hasFocus():
+        raise RuntimeError(f"keyboard-focus target did not receive focus for {name}")
+
+    point = button.mapTo(window, QPoint(button.width() // 2, 1))
+    scale = image.devicePixelRatio()
+    pixel_x = round(point.x() * scale)
+    pixel_y = round(point.y() * scale)
+    expected = QColor(UI_PROFILES[window.ui_profile].activity_icon_colors[1]).toRgb()
+    closest_difference = 256
+    closest_color = None
+    for offset_x in range(-2, 3):
+        for offset_y in range(-2, 3):
+            x = pixel_x + offset_x
+            y = pixel_y + offset_y
+            if not (0 <= x < image.width() and 0 <= y < image.height()):
+                continue
+            actual = image.pixelColor(x, y).toRgb()
+            difference = max(
+                abs(left - right)
+                for left, right in zip(actual.getRgb()[:3], expected.getRgb()[:3])
+            )
+            if difference < closest_difference:
+                closest_difference = difference
+                closest_color = actual.name()
+    if closest_difference > 18:
+        raise RuntimeError(
+            f"theme focus ring is not painted for {name}: pixel={(pixel_x, pixel_y)} "
+            f"nearest={closest_color} expected={expected.name()} delta={closest_difference}"
         )
 
 
@@ -590,6 +623,11 @@ def main(argv: list[str] | None = None) -> int:
             window.set_ui_profile(profile_key, persist=False)
             verify_ui_profile(window, profile_key, f"responsive-{profile_key}")
             window.show_workspace()
+            window.title_git_button.setFocus()
+            app.processEvents()
+            focus_name = f"keyboard-focus-{profile_key}"
+            focus_image = capture(window, app, output_dir, focus_name, (1500, 920))
+            verify_keyboard_focus_ring(window, focus_image, focus_name)
             for suffix, size in responsive_viewports:
                 name = f"responsive-{profile_key}-{suffix}"
                 capture(window, app, output_dir, name, size)

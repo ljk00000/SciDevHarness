@@ -269,9 +269,28 @@ def ui_profile_for_key(key: object) -> UIProfile:
     return UI_PROFILES.get(str(key or ""), UI_PROFILES[DEFAULT_UI_PROFILE])
 
 
+def _focus_ring_stylesheet(color: str) -> str:
+    return f"""
+QPushButton:focus, QToolButton:focus, QTabBar::tab:focus {{ border-color: {color}; }}
+QPushButton#Primary:focus, QPushButton#GitPrimary:focus,
+QPushButton#GitEntryButton:focus, QPushButton#Quiet:focus,
+QToolButton#Quiet:focus, QToolButton#ActivityButton:focus,
+QToolButton#IconButton:focus, QToolButton#ThemeSelector:focus,
+QToolButton#TabCloseButton:focus, QToolButton#WindowButton:focus,
+QToolButton#WindowClose:focus {{ border: 1px solid {color}; }}
+QTreeView::item:focus {{ border: 1px solid {color}; }}
+"""
+
+
 def stylesheet_for_profile(base_stylesheet: str, profile: UIProfile | str) -> str:
-    """Compose the shared widget rules with the selected profile's overrides."""
+    """Compose shared, profile-specific, and keyboard-focus visual rules."""
     selected = ui_profile_for_key(profile if isinstance(profile, str) else profile.key)
-    if not selected.stylesheet_overrides:
-        return base_stylesheet
-    return f"{base_stylesheet}\n{selected.stylesheet_overrides}"
+    return "\n".join(
+        part
+        for part in (
+            base_stylesheet,
+            selected.stylesheet_overrides,
+            _focus_ring_stylesheet(selected.activity_icon_colors[1]),
+        )
+        if part
+    )
