@@ -367,7 +367,7 @@ Item {
             var main = root.mainNodes()
             if (!main.length) {
                 ctx.fillStyle = root.lightMode ? "#718096" : "#9da5aa"
-                ctx.font = "14px Microsoft YaHei UI"
+                ctx.font = "14px Segoe UI"
                 ctx.fillText("还没有开发记录", width / 2 - 48, height / 2)
                 return
             }
@@ -606,8 +606,8 @@ Item {
                     anchors.centerIn: parent
                     text: root.badgeFor(card.node)
                     color: card.accent
-                    font.family: "Microsoft YaHei UI"
-                    font.pixelSize: Math.max(10, 9.5 * root.zoom)
+                    font.family: "Segoe UI"
+                    font.pixelSize: Math.max(10, 10.5 * root.zoom)
                 }
             }
             Text {
@@ -617,9 +617,9 @@ Item {
                 height: 19 * root.zoom
                 text: String(card.node.title || "")
                 color: root.lightMode ? "#25364a" : (root.focusMode ? "#f1edff" : "#f0f5fa")
-                font.family: "Microsoft YaHei UI"
+                font.family: "Segoe UI"
                 font.bold: true
-                font.pixelSize: Math.max(11, 11 * root.zoom)
+                font.pixelSize: Math.max(11, 12 * root.zoom)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
@@ -630,8 +630,8 @@ Item {
                 height: Math.max(10, 16 * root.zoom)
                 text: root.statusFor(card.node)
                 color: card.accent
-                font.family: "Microsoft YaHei UI"
-                font.pixelSize: Math.max(10, 9.5 * root.zoom)
+                font.family: "Segoe UI"
+                font.pixelSize: Math.max(10, 10.5 * root.zoom)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
@@ -642,8 +642,8 @@ Item {
                 height: Math.max(10, 14 * root.zoom)
                 text: String(card.node.meta || "")
                 color: root.lightMode ? "#65758a" : "#b0bdc9"
-                font.family: "Microsoft YaHei UI"
-                font.pixelSize: Math.max(10, 9 * root.zoom)
+                font.family: "Segoe UI"
+                font.pixelSize: Math.max(10, 10 * root.zoom)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
@@ -707,9 +707,9 @@ Item {
         y: 10
         text: "开发尝试树"
         color: root.lightMode ? "#31596a" : (root.focusMode ? "#e7ddff" : "#e2f3ef")
-        font.family: "Microsoft YaHei UI"
+        font.family: "Segoe UI"
         font.bold: true
-        font.pixelSize: 14
+        font.pixelSize: 15
     }
     Text {
         z: 5
@@ -720,7 +720,7 @@ Item {
               ? Math.round(root.zoom * 100) + "% · Ctrl+滚轮"
               : Math.round(root.zoom * 100) + "%  ·  Ctrl+滚轮缩放 · 拖动分支 / 平移画布"
         color: root.lightMode ? "#65758a" : "#a2afbd"
-        font.family: "Microsoft YaHei UI"
+        font.family: "Segoe UI"
         font.pixelSize: root.compactHeader ? 11 : 13
     }
     Text {
@@ -731,7 +731,7 @@ Item {
         width: Math.max(100, parent.width - 36)
         text: "主干 = 当前编码主线  ·  分支 = 已取消、失败或等待中的尝试方向"
         color: root.lightMode ? "#65758a" : "#a2afbd"
-        font.family: "Microsoft YaHei UI"
+        font.family: "Segoe UI"
         font.pixelSize: 12
         elide: Text.ElideRight
     }

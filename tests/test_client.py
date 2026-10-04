@@ -9,8 +9,13 @@ from unittest.mock import patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_QUICK_BACKEND"] = "software"
+if os.name == "nt":
+    windows_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    if windows_fonts.is_dir():
+        os.environ["QT_QPA_FONTDIR"] = str(windows_fonts)
 
 from PySide6.QtCore import QPointF, QSettings, QTimer  # noqa: E402
+from PySide6.QtGui import QFontInfo  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from scidev_client import CodeEditor, ClientWindow, MAX_TREE_LAYOUT_BYTES, DevelopmentTreeView  # noqa: E402
@@ -108,6 +113,9 @@ class UIProfileTests(unittest.TestCase):
                 self.assertTrue(window.ui_theme_actions["paper"].isChecked())
                 self.assertEqual(window.git_tree.rootObject().property("visualTheme"), "paper")
                 self.assertEqual(window.welcome_editor.ui_profile, "paper")
+                editor_font = QFontInfo(window.welcome_editor.font())
+                self.assertTrue(editor_font.fixedPitch())
+                self.assertEqual(editor_font.pointSize(), 12)
                 keyword_color = (
                     window._editor_highlighters[window.welcome_editor]
                     .rules[0][1]

@@ -92,7 +92,7 @@ from scidev_ui import DEFAULT_UI_PROFILE, UI_PROFILES, stylesheet_for_profile, u
 
 THEME = """
 * {
-    font-family: "Segoe UI Variable", "Microsoft YaHei UI", "Segoe UI", "Microsoft YaHei";
+    font-family: "Segoe UI", "Noto Sans SC", "DengXian", "Microsoft YaHei", sans-serif;
     font-size: 11pt;
 }
 QMainWindow, QWidget#Root {
@@ -264,6 +264,8 @@ QPlainTextEdit#CodeEditor {
     border: none;
     border-radius: 0px;
     padding: 14px 18px;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12pt;
 }
 QFrame#FindBar {
     background: #17212b;
@@ -290,7 +292,7 @@ QPlainTextEdit#TerminalOutput, QPlainTextEdit#ProblemsOutput {
     border: none;
     border-radius: 0px;
     padding: 9px 12px;
-    font-family: "Cascadia Mono", "Cascadia Code", "Consolas", monospace;
+    font-family: "Consolas", "Courier New", monospace;
     font-size: 9pt;
 }
 QLineEdit#TerminalInput {
@@ -299,7 +301,7 @@ QLineEdit#TerminalInput {
     border-top: 1px solid #2b3947;
     border-radius: 0px;
     padding: 7px 10px;
-    font-family: "Cascadia Mono", "Cascadia Code", "Consolas", monospace;
+    font-family: "Consolas", "Courier New", monospace;
 }
 QMenu {
     background: #17212b;
@@ -367,7 +369,7 @@ QToolButton#ActivityButton {
     color: #8492a1;
     border: 1px solid transparent;
     border-radius: 9px;
-    font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol";
+    font-family: "Segoe UI Symbol";
     font-size: 18pt;
     padding: 5px 0px;
 }
@@ -487,7 +489,7 @@ QLabel#BubbleRole { color: #91a0af; font-size: 9pt; font-weight: 600; }
 QLabel#BubbleText { color: #e2e9f0; font-size: 11pt; }
 QFrame#SummaryBubble QLabel#BubbleRole { color: #77cbed; }
 QFrame#SummaryBubble QLabel#BubbleText { color: #e5f7ff; }
-QLabel#ToolText { color: #b9d4c3; font-family: "Cascadia Mono", "Consolas", monospace; font-size: 9pt; }
+QLabel#ToolText { color: #b9d4c3; font-family: "Consolas", "Courier New", monospace; font-size: 9pt; }
 QLabel#Chip { color: #a9d4ff; background: #19232e; border: 1px solid #2d3c4b; border-radius: 6px; padding: 4px 8px; }
 QLabel#MetricValue { color: #eef4fa; font-size: 16pt; font-weight: 600; }
 QLabel#GitDetailTitle { color: #eef4fa; font-size: 14pt; font-weight: 600; }
@@ -647,7 +649,7 @@ class CodeEditor(QPlainTextEdit):
         super().__init__()
         self.setObjectName("CodeEditor")
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        editor_font = QFont("Cascadia Code", 12)
+        editor_font = QFont("Consolas", 12)
         editor_font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(editor_font)
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
@@ -1215,7 +1217,7 @@ class _LegacyDevelopmentTreeView(QFrame):
                 "retry": "重试",
                 "active": "进行中",
             }.get(node.get("status"), "尝试")
-            badge_font = QFont("Microsoft YaHei UI", 8)
+            badge_font = QFont("Segoe UI", 9)
             painter.setFont(badge_font)
             badge_width = max(34, painter.fontMetrics().horizontalAdvance(status_label) + 14)
             badge_rect = QRect(rect.right() - badge_width - 10, rect.top() + 8, badge_width, 18)
@@ -1227,13 +1229,13 @@ class _LegacyDevelopmentTreeView(QFrame):
 
             text_rect = QRect(rect.left() + 13, rect.top() + 7, max(40, badge_rect.left() - rect.left() - 20), rect.height() - 14)
             painter.setPen(QColor("#f2f2f2"))
-            title_font = QFont("Microsoft YaHei UI", 9)
+            title_font = QFont("Segoe UI", 10)
             title_font.setWeight(QFont.Weight.DemiBold)
             painter.setFont(title_font)
             title = painter.fontMetrics().elidedText(str(node.get("title", "")), Qt.TextElideMode.ElideRight, text_rect.width())
             painter.drawText(text_rect.left(), text_rect.top() + 14, title)
             painter.setPen(accent)
-            status_font = QFont("Microsoft YaHei UI", 8)
+            status_font = QFont("Segoe UI", 9)
             painter.setFont(status_font)
             painter.drawText(text_rect.left(), text_rect.top() + 33, self._status_text(node))
             painter.setPen(QColor("#aab5ba"))
@@ -1248,12 +1250,12 @@ class _LegacyDevelopmentTreeView(QFrame):
 
         painter.restore()
         painter.setPen(QColor("#d8f5ed"))
-        header_font = QFont("Microsoft YaHei UI", 10)
+        header_font = QFont("Segoe UI", 11)
         header_font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(header_font)
         painter.drawText(18, 24, "开发尝试树")
         painter.setPen(QColor("#858585"))
-        painter.setFont(QFont("Microsoft YaHei UI", 9))
+        painter.setFont(QFont("Segoe UI", 10))
         helper_rect = QRect(18, 10, max(100, self.width() - 36), 20)
         painter.drawText(
             helper_rect,
@@ -4941,7 +4943,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName("SciDevHarness")
     app.setOrganizationDomain("scidevharness.local")
     app.setApplicationDisplayName("SciDevHarness")
-    ui_font = QFont("Microsoft YaHei UI", 11)
+    ui_font = QFont("Segoe UI", 11)
     ui_font.setStyleHint(QFont.StyleHint.SansSerif)
     app.setFont(ui_font)
 
