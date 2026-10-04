@@ -1,5 +1,10 @@
 # 历史与结果
 
+## 2026-10-04 17:26 (Asia/Shanghai) - 远端三版本 CI 全绿
+- [Windows CI #37191976618](https://github.com/ljk00000/SciDevHarness/actions/runs/37191976618) 在代码提交 `127020e` 上 Python 3.12/3.13/3.14 全部成功；依赖安装/运行 smoke、Python compile、两种 DPI 截图、QML lint 均通过。
+- Git 面板新增 UI 级暂存/取消暂存/全暂存/提交回归；完整本地套件 197/197。提交过程中发现并修正 Windows 长/短路径断言，最终远端复核通过。
+- 截图为 CI/本机离屏渲染证据；当前 CUA 未暴露原生窗口，故没有把离屏图冒充实机交互验收。
+
 ## 2026-10-04 17:22 (Asia/Shanghai) - Git 面板端到端与搜索路径断言
 - 新增 Git UI 工作流回归：初始化仓库、选择变更并暂存/取消暂存、暂存全部、从面板提交，最终确认 HEAD 和干净状态。
 - GitHub Actions 上一轮三版本唯一失败为搜索测试把 Windows `runneradmin` 与 `RUNNER~1` 路径字符串直接比较；改为 resolve 后比较，本机定向 2/2 通过。
