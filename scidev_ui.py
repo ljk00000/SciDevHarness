@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+import re
 
 
 @dataclass(frozen=True)
@@ -275,6 +277,47 @@ UI_PROFILES: dict[str, UIProfile] = {
 
 DEFAULT_UI_PROFILE = "studio"
 
+_SCALABLE_STYLE_DECLARATION = re.compile(
+    r"(?<![\w-])(?:font-size|padding(?:-(?:left|right|top|bottom))?|"
+    r"margin(?:-(?:left|right|top|bottom))?|spacing|min-width|max-width|"
+    r"min-height|max-height|width|height|border-radius|icon-size)\s*:\s*[^;{}]+"
+)
+_STYLE_DIMENSION = re.compile(r"(?P<number>-?\d+(?:\.\d+)?)(?P<unit>px|pt)\b")
+
+
+def ui_scale_for_resolution(width: int, height: int) -> float:
+    """Return a modest logical-UI scale based on the screen's logical size."""
+    if width <= 0 or height <= 0:
+        return 1.0
+    size_factor = math.sqrt((width / 1280) * (height / 720))
+    progress = min(1.0, max(0.0, (size_factor - 1.0) / 2.0))
+    return round(1.0 + 0.30 * progress**1.1, 3)
+
+
+def _scale_stylesheet_metrics(stylesheet: str, ui_scale: float) -> str:
+    scale = min(1.5, max(1.0, float(ui_scale)))
+    if scale <= 1.001:
+        return stylesheet
+
+    def scale_declaration(match: re.Match[str]) -> str:
+        def scale_dimension(dimension: re.Match[str]) -> str:
+            value = float(dimension.group("number"))
+            unit = dimension.group("unit")
+            scaled = value * scale
+            if unit == "px":
+                rounded = math.floor(scaled + 0.5) if scaled >= 0 else math.ceil(scaled - 0.5)
+                if value > 0:
+                    rounded = max(1, rounded)
+                elif value < 0:
+                    rounded = min(-1, rounded)
+                return f"{rounded}{unit}"
+            formatted = f"{scaled:.1f}".rstrip("0").rstrip(".")
+            return f"{formatted}{unit}"
+
+        return _STYLE_DIMENSION.sub(scale_dimension, match.group(0))
+
+    return _SCALABLE_STYLE_DECLARATION.sub(scale_declaration, stylesheet)
+
 
 def ui_profile_for_key(key: object) -> UIProfile:
     """Return a valid appearance profile, falling back to the standard workbench."""
@@ -294,10 +337,14 @@ QTreeView::item:focus {{ border: 1px solid {color}; }}
 """
 
 
-def stylesheet_for_profile(base_stylesheet: str, profile: UIProfile | str) -> str:
-    """Compose shared, profile-specific, and keyboard-focus visual rules."""
+def stylesheet_for_profile(
+    base_stylesheet: str,
+    profile: UIProfile | str,
+    ui_scale: float = 1.0,
+) -> str:
+    """Compose shared/profile rules and scale readable UI metrics for the screen."""
     selected = ui_profile_for_key(profile if isinstance(profile, str) else profile.key)
-    return "\n".join(
+    stylesheet = "\n".join(
         part
         for part in (
             base_stylesheet,
@@ -306,3 +353,4 @@ def stylesheet_for_profile(base_stylesheet: str, profile: UIProfile | str) -> st
         )
         if part
     )
+    return _scale_stylesheet_metrics(stylesheet, ui_scale)

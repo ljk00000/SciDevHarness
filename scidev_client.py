@@ -92,7 +92,13 @@ from scidev_core import (
     new_id,
 )
 from scidev_icons import activity_icon
-from scidev_ui import DEFAULT_UI_PROFILE, UI_PROFILES, stylesheet_for_profile, ui_profile_for_key
+from scidev_ui import (
+    DEFAULT_UI_PROFILE,
+    UI_PROFILES,
+    stylesheet_for_profile,
+    ui_profile_for_key,
+    ui_scale_for_resolution,
+)
 
 
 _EXCLUDED_PROJECT_NAMES_CASEFOLD = frozenset(
@@ -707,6 +713,7 @@ class CodeEditor(QPlainTextEdit):
         super().__init__()
         self.setObjectName("CodeEditor")
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._ui_scale = 1.0
         editor_font = QFont("Consolas", 12)
         editor_font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(editor_font)
@@ -728,6 +735,15 @@ class CodeEditor(QPlainTextEdit):
         self.cursorPositionChanged.connect(self.highlight_current_line)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
+
+    def set_ui_scale(self, ui_scale: float) -> None:
+        """Scale the fixed-pitch editor font with the rest of the workbench."""
+        self._ui_scale = min(1.5, max(1.0, float(ui_scale)))
+        editor_font = QFont("Consolas")
+        editor_font.setStyleHint(QFont.StyleHint.Monospace)
+        editor_font.setPointSizeF(12 * self._ui_scale)
+        self.setFont(editor_font)
+        self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Space and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -1537,6 +1553,7 @@ class DevelopmentTreeView(QQuickWidget):
         self.setMinimumHeight(420)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._visual_theme = ui_profile_for_key(visual_theme).tree_mode
+        self._ui_scale = 1.0
         self.setClearColor(QColor("#101419"))
         self.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         self.nodes: list[dict[str, Any]] = []
@@ -1555,6 +1572,13 @@ class DevelopmentTreeView(QQuickWidget):
             root.nodeMoved.connect(self._on_qml_node_moved)
             root.setProperty("layoutOffsets", self._qml_offsets())
             root.setProperty("visualTheme", self._visual_theme)
+            root.setProperty("uiScale", self._ui_scale)
+
+    def set_ui_scale(self, ui_scale: float) -> None:
+        """Keep version-tree labels and cards aligned with screen UI scaling."""
+        self._ui_scale = min(1.5, max(1.0, float(ui_scale)))
+        if self._root_item is not None:
+            self._root_item.setProperty("uiScale", self._ui_scale)
 
     def set_visual_theme(self, profile_key: str) -> None:
         """Keep the QML canvas aligned with the selected workbench profile."""
@@ -1578,16 +1602,17 @@ class DevelopmentTreeView(QQuickWidget):
                 event.ignore()
                 return
             old_zoom = float(self._root_item.property("zoom"))
+            ui_scale = float(self._root_item.property("uiScale"))
             factor = 1.12 if delta > 0 else 1 / 1.12
             new_zoom = max(0.65, min(1.8, old_zoom * factor))
             position = event.position()
             pan_x = float(self._root_item.property("panX"))
             pan_y = float(self._root_item.property("panY"))
-            logical_x = (position.x() - pan_x) / old_zoom
-            logical_y = (position.y() - pan_y) / old_zoom
+            logical_x = (position.x() - pan_x) / (old_zoom * ui_scale)
+            logical_y = (position.y() - pan_y) / (old_zoom * ui_scale)
             self._root_item.setProperty("zoom", new_zoom)
-            self._root_item.setProperty("panX", position.x() - logical_x * new_zoom)
-            self._root_item.setProperty("panY", position.y() - logical_y * new_zoom)
+            self._root_item.setProperty("panX", position.x() - logical_x * new_zoom * ui_scale)
+            self._root_item.setProperty("panY", position.y() - logical_y * new_zoom * ui_scale)
             event.accept()
             return
 
@@ -1862,13 +1887,37 @@ class ClientWindow(QMainWindow):
         self.project_root = Path(project_root).resolve()
         self.setWindowTitle("SciDevHarness — Coding Workspace")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        self.resize(1500, 920)
         self.setMinimumSize(780, 480)
+        self._ui_scale = 1.0
+        self._base_ui_font = QFont(self.font())
+        self._screen_window_handle = None
+        initial_screen = self.screen()
+        offscreen_platform = QApplication.platformName().casefold() == "offscreen"
+        if initial_screen is not None and not offscreen_platform:
+            initial_geometry = initial_screen.geometry()
+            available_geometry = initial_screen.availableGeometry()
+            self._ui_scale = ui_scale_for_resolution(
+                initial_geometry.width(), initial_geometry.height()
+            )
+            initial_width = min(
+                round(1500 * self._ui_scale),
+                max(780, round(available_geometry.width() * 0.96)),
+            )
+            initial_height = min(
+                round(920 * self._ui_scale),
+                max(480, round(available_geometry.height() * 0.92)),
+            )
+            self.resize(initial_width, initial_height)
+        else:
+            # Qt's offscreen test backend reports a tiny synthetic screen
+            # (often 800x600); using it as a real display would force normal
+            # workbench tests into the compact layout and hide the explorer.
+            self.resize(1500, 920)
         self.ui_settings = QSettings("SciDevHarness", "SciDevHarness")
         self.ui_profile = ui_profile_for_key(
             self.ui_settings.value("uiProfile", DEFAULT_UI_PROFILE)
         ).key
-        self.setStyleSheet(stylesheet_for_profile(THEME, self.ui_profile))
+        self.setStyleSheet(stylesheet_for_profile(THEME, self.ui_profile, self._ui_scale))
         self.ledger = EventLedger(self.project_root)
         self.git = GitManager(self.project_root)
         self.toolbox = CodingToolbox(self.project_root, self.ledger)
@@ -2184,7 +2233,7 @@ class ClientWindow(QMainWindow):
         profile = ui_profile_for_key(profile_key)
         changed = profile.key != self.ui_profile
         self.ui_profile = profile.key
-        self.setStyleSheet(stylesheet_for_profile(THEME, profile))
+        self.setStyleSheet(stylesheet_for_profile(THEME, profile, self._ui_scale))
 
         if persist:
             self.ui_settings.setValue("uiProfile", profile.key)
@@ -2220,6 +2269,35 @@ class ClientWindow(QMainWindow):
             for sibling in sibling_windows:
                 if sibling is not self:
                     sibling.set_ui_profile(profile.key, persist=False)
+
+    def showEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        super().showEvent(event)
+        handle = self.windowHandle()
+        if handle is not None and handle is not self._screen_window_handle:
+            self._screen_window_handle = handle
+            handle.screenChanged.connect(self._on_screen_changed)
+        screen = handle.screen() if handle is not None else self.screen()
+        self._on_screen_changed(screen)
+
+    def _on_screen_changed(self, screen) -> None:  # noqa: ANN001 - QScreen is binding-defined.
+        if screen is None:
+            return
+        geometry = screen.geometry()
+        self._apply_screen_resolution(geometry.width(), geometry.height())
+
+    def _apply_screen_resolution(self, width: int, height: int) -> None:
+        scale = ui_scale_for_resolution(width, height)
+        self._ui_scale = scale
+        self.setStyleSheet(stylesheet_for_profile(THEME, self.ui_profile, scale))
+        scaled_font = QFont(self._base_ui_font)
+        if scaled_font.pointSizeF() > 0:
+            scaled_font.setPointSizeF(scaled_font.pointSizeF() * scale)
+            self.setFont(scaled_font)
+        for editor in self.findChildren(CodeEditor):
+            editor.set_ui_scale(scale)
+        if hasattr(self, "git_tree"):
+            self.git_tree.set_ui_scale(scale)
+        self.updateGeometry()
 
     def _choose_workspace(self) -> None:
         selected = _choose_workspace_directory(self.project_root, self)
@@ -2958,7 +3036,11 @@ class ClientWindow(QMainWindow):
             return
         base_zoom, pan_x, pan_y = self._git_tree_compact_restore
         available_height = max(1, viewport_height - 8 - pan_y)
-        fit_zoom = min(base_zoom, available_height / max(1, first_attempt[2].bottom()))
+        ui_scale = float(root.property("uiScale"))
+        fit_zoom = min(
+            base_zoom,
+            available_height / max(1, first_attempt[2].bottom() * ui_scale),
+        )
         fit_zoom = max(0.65, fit_zoom)
         root.setProperty("zoom", fit_zoom)
         root.setProperty("panX", pan_x)
@@ -4005,6 +4087,7 @@ class ClientWindow(QMainWindow):
 
     def _configure_editor(self, editor: CodeEditor) -> None:
         editor.set_ui_profile(self.ui_profile)
+        editor.set_ui_scale(self._ui_scale)
         self._editor_highlighters[editor] = PythonHighlighter(editor.document(), self.ui_profile)
         editor.document().modificationChanged.connect(
             lambda _changed, target=editor: self._update_editor_tab_for(target)

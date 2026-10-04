@@ -19,8 +19,8 @@ if os.name == "nt":
     if windows_fonts.is_dir():
         os.environ["QT_QPA_FONTDIR"] = str(windows_fonts)
 
-from PySide6.QtCore import QPointF, QSize, QSettings, QTimer, Qt  # noqa: E402
-from PySide6.QtGui import QFontInfo, QIcon  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, QSize, QSettings, QTimer, Qt  # noqa: E402
+from PySide6.QtGui import QFontInfo, QIcon, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
@@ -35,6 +35,97 @@ from scidev_client import (  # noqa: E402
     _is_link_or_junction,
 )
 from scidev_core import CodingToolbox, SummarySettings  # noqa: E402
+from scidev_ui import _scale_stylesheet_metrics, ui_scale_for_resolution  # noqa: E402
+
+
+class UIResolutionScalingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_ui_scale_grows_monotonically_with_resolution_and_is_bounded(self) -> None:
+        sizes = (
+            (1280, 720),
+            (1366, 768),
+            (1920, 1080),
+            (2560, 1440),
+            (3840, 2160),
+            (3872, 2178),
+        )
+        scales = [ui_scale_for_resolution(*size) for size in sizes]
+        self.assertEqual(scales[0], 1.0)
+        self.assertEqual(scales, sorted(scales))
+        self.assertGreater(scales[3], scales[2])
+        self.assertEqual(scales[-1], scales[-2])
+        self.assertLessEqual(scales[-1], 1.3)
+        self.assertEqual(ui_scale_for_resolution(0, 2160), 1.0)
+
+    def test_stylesheet_metrics_scale_font_padding_and_control_sizes(self) -> None:
+        stylesheet = "QPushButton { font-size: 12pt; padding: 8px 10px; min-height: 30px; border: 1px solid; }"
+        scaled = _scale_stylesheet_metrics(stylesheet, 1.25)
+        self.assertIn("font-size: 15pt", scaled)
+        self.assertIn("padding: 10px 13px", scaled)
+        self.assertIn("min-height: 38px", scaled)
+        self.assertIn("border: 1px solid", scaled)
+
+    def test_resolution_scale_reaches_editor_and_qml_version_tree(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-ui-resolution-scale-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                tree = window.git_tree
+                root = tree.rootObject()
+                self.assertIsNotNone(root)
+                window._apply_screen_resolution(3840, 2160)
+                self.app.processEvents()
+                self.assertAlmostEqual(window._ui_scale, 1.3, places=3)
+                self.assertAlmostEqual(float(root.property("uiScale")), 1.3, places=3)
+                self.assertAlmostEqual(window.welcome_editor.font().pointSizeF(), 15.6, places=1)
+                self.assertIn("font-size: 14.3pt", window.styleSheet())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_scaled_version_tree_zoom_keeps_the_cursor_anchor_fixed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-scaled-tree-zoom-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                window.show_git()
+                self.app.processEvents()
+                tree = window.git_tree
+                tree.set_ui_scale(1.3)
+                root = tree.rootObject()
+                root.setProperty("zoom", 1.0)
+                root.setProperty("panX", 17.0)
+                root.setProperty("panY", 23.0)
+                position = QPointF(80.0, 100.0)
+                before_scale = float(root.property("zoom")) * float(root.property("uiScale"))
+                world_before = (
+                    (position.x() - float(root.property("panX"))) / before_scale,
+                    (position.y() - float(root.property("panY"))) / before_scale,
+                )
+                event = QWheelEvent(
+                    position,
+                    QPointF(tree.mapToGlobal(position.toPoint())),
+                    QPoint(0, 0),
+                    QPoint(0, 120),
+                    Qt.MouseButton.NoButton,
+                    Qt.KeyboardModifier.ControlModifier,
+                    Qt.ScrollPhase.NoScrollPhase,
+                    False,
+                )
+                QApplication.sendEvent(tree, event)
+                after_scale = float(root.property("zoom")) * float(root.property("uiScale"))
+                world_after = (
+                    (position.x() - float(root.property("panX"))) / after_scale,
+                    (position.y() - float(root.property("panY"))) / after_scale,
+                )
+                self.assertGreater(float(root.property("zoom")), 1.0)
+                for before, after in zip(world_before, world_after):
+                    self.assertAlmostEqual(before, after, places=5)
+            finally:
+                window.close()
+                self.app.processEvents()
 
 
 class DevelopmentTreeLayoutTests(unittest.TestCase):

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
+import secrets
 import sys
 import tempfile
 import time
@@ -37,6 +39,7 @@ def capture(
 ) -> QImage:
     scale = float(window.devicePixelRatioF()) if physical_size else 1.0
     logical_size = (round(size[0] / scale), round(size[1] / scale))
+    window._apply_screen_resolution(*logical_size)
     window.resize(*logical_size)
     window.show()
     deadline = time.monotonic() + 8
@@ -135,8 +138,9 @@ def verify_attempt_accent_pixel(
     pan_y = float(root.property("panY"))
     origin = window.git_tree.mapTo(window, QPoint(0, 0))
     device_scale = image.devicePixelRatio()
-    logical_x = origin.x() + pan_x + (card[2].left() + 2.0) * zoom
-    logical_y = origin.y() + pan_y + (card[2].top() + card[2].height() / 2.0) * zoom
+    render_scale = zoom * float(root.property("uiScale"))
+    logical_x = origin.x() + pan_x + (card[2].left() + 2.0) * render_scale
+    logical_y = origin.y() + pan_y + (card[2].top() + card[2].height() / 2.0) * render_scale
     pixel_x = round(logical_x * device_scale)
     pixel_y = round(logical_y * device_scale)
     if not (0 <= pixel_x < image.width() and 0 <= pixel_y < image.height()):
@@ -615,7 +619,15 @@ def drag_attempt_node(window: ClientWindow, app: QApplication, output_dir: Path,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, help="directory for PNG files (defaults to a temporary folder)")
+    parser.add_argument(
+        "--resolution-seed",
+        type=int,
+        help="optional seed for reproducible nearby-resolution screenshots",
+    )
     args = parser.parse_args(argv)
+    resolution_seed = args.resolution_seed if args.resolution_seed is not None else secrets.randbits(32)
+    resolution_rng = random.Random(resolution_seed)
+    print(f"Nearby-resolution screenshot seed: {resolution_seed}")
 
     temporary_output = None
     if args.output_dir is None:
@@ -794,8 +806,9 @@ def main(argv: list[str] | None = None) -> int:
         verify_attempt_accent_pixel(window, minimum_tree_image, "tree-minimum", "fast-warmup")
         branch_card = window.git_tree._positions()[0]["fast-warmup"][2]
         root = window.git_tree.rootObject()
+        render_scale = float(root.property("zoom")) * float(root.property("uiScale"))
         visible_branch_bottom = (
-            branch_card.bottom() * float(root.property("zoom")) + float(root.property("panY"))
+            branch_card.bottom() * render_scale + float(root.property("panY"))
         )
         print(
             "tree-narrow fit "
@@ -814,7 +827,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"zoom={float(root.property('zoom')):.3f}"
             )
         logical_card = window.git_tree._positions()[0]["fast-warmup"][2]
-        if logical_card.width() * float(root.property("zoom")) < 130:
+        if logical_card.width() * render_scale < 130:
             raise RuntimeError("compact version-tree branch cards are too narrow for readable labels")
         scroll_bar = window.git_tree_scroll.verticalScrollBar()
         if scroll_bar.maximum() <= 0:
@@ -868,6 +881,15 @@ def main(argv: list[str] | None = None) -> int:
             verify_workbench_layout(window, name)
             orientation = Qt.Orientation.Vertical if resolution == "720p" else Qt.Orientation.Horizontal
             verify_git_splitter_layout(window, name, orientation)
+            jittered_size = (
+                size[0] + resolution_rng.choice((-32, -16, 16, 32)),
+                size[1] + resolution_rng.choice((-18, -9, 9, 18)),
+            )
+            jittered_name = f"tree-resolution-studio-{resolution}-nearby"
+            print(f"Nearby resolution {resolution}: {jittered_size[0]}x{jittered_size[1]}")
+            capture(window, app, output_dir, jittered_name, jittered_size, physical_size=True)
+            verify_workbench_layout(window, jittered_name)
+            verify_git_splitter_layout(window, jittered_name, orientation)
         window.show_workspace()
         for name, size in (
             ("editor-narrow", (940, 620)),

@@ -15,6 +15,8 @@ Item {
     property real panX: 0
     property real panY: 0
     property real zoom: 1.0
+    property real uiScale: 1.0
+    readonly property real renderScale: zoom * uiScale
     property real pulse: 0.0
     property int layoutVersion: 0
     property real cardHeight: 68
@@ -367,14 +369,14 @@ Item {
             var main = root.mainNodes()
             if (!main.length) {
                 ctx.fillStyle = root.lightMode ? "#718096" : "#9da5aa"
-                ctx.font = "14px Segoe UI"
+                ctx.font = (14 * root.uiScale) + "px Segoe UI"
                 ctx.fillText("还没有开发记录", width / 2 - 48, height / 2)
                 return
             }
 
             ctx.save()
             ctx.translate(root.panX, root.panY)
-            ctx.scale(root.zoom, root.zoom)
+            ctx.scale(root.renderScale, root.renderScale)
             var firstY = root.dotYFor(main[0])
             var lastY = root.dotYFor(main[main.length - 1])
             var trunk = {"x": root.trunkX, "y": firstY}
@@ -515,10 +517,10 @@ Item {
                                           : Math.min(root.width - root.cardWidth - 12, root.trunkX + 78 + root.offsetFor(card.nodeId, "x") + 24))
                                        : 0
             property real logicalCardY: root.layoutVersion >= 0 ? root.cardYFor(node) : 0
-            x: root.panX + logicalCardX * root.zoom
-            y: root.panY + logicalCardY * root.zoom
-            width: root.cardWidth * root.zoom
-            height: root.cardHeight * root.zoom
+            x: root.panX + logicalCardX * root.renderScale
+            y: root.panY + logicalCardY * root.renderScale
+            width: root.cardWidth * root.renderScale
+            height: root.cardHeight * root.renderScale
             z: dragging || nodeId === root.selectedId ? 4 : 2
             scale: mouseArea.containsMouse ? 1.025 : 1.0
             transformOrigin: Item.Center
@@ -526,27 +528,27 @@ Item {
             Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
             Rectangle {
-                x: 7 * root.zoom
-                y: 9 * root.zoom
+                x: 7 * root.renderScale
+                y: 9 * root.renderScale
                 width: parent.width
                 height: parent.height
-                radius: 9 * root.zoom
+                radius: 9 * root.renderScale
                 color: root.lightMode ? "#566579" : "#020507"
                 opacity: root.lightMode ? 0.13 : 0.64
             }
             Rectangle {
-                x: 5 * root.zoom
-                y: 7 * root.zoom
+                x: 5 * root.renderScale
+                y: 7 * root.renderScale
                 width: parent.width
                 height: parent.height
-                radius: 9 * root.zoom
+                radius: 9 * root.renderScale
                 color: card.accent
                 opacity: 0.18
             }
             Rectangle {
                 anchors.fill: parent
-                radius: 9 * root.zoom
-                border.width: (card.nodeId === root.selectedId || mouseArea.containsMouse) ? 1.5 * root.zoom : root.zoom
+                radius: 9 * root.renderScale
+                border.width: (card.nodeId === root.selectedId || mouseArea.containsMouse) ? 1.5 * root.renderScale : root.renderScale
                 border.color: card.nodeId === root.selectedId
                               ? card.accent
                               : (mouseArea.containsMouse
@@ -578,27 +580,27 @@ Item {
             Rectangle {
                 x: 0
                 y: 0
-                width: 4 * root.zoom
+                width: 4 * root.renderScale
                 height: parent.height
-                radius: 2 * root.zoom
+                radius: 2 * root.renderScale
                 color: card.accent
             }
             Rectangle {
-                x: 10 * root.zoom
-                y: 1 * root.zoom
-                width: Math.max(10, parent.width - 20 * root.zoom)
-                height: 1 * root.zoom
+                x: 10 * root.renderScale
+                y: 1 * root.renderScale
+                width: Math.max(10 * root.renderScale, parent.width - 20 * root.renderScale)
+                height: 1 * root.renderScale
                 color: Qt.rgba(1, 1, 1, root.lightMode ? 0.75 : 0.16)
             }
             Rectangle {
                 id: badge
-                x: parent.width - width - 10 * root.zoom
-                y: 8 * root.zoom
-                width: Math.max(34 * root.zoom, badgeText.implicitWidth + 14 * root.zoom)
-                height: 18 * root.zoom
-                radius: 9 * root.zoom
+                x: parent.width - width - 10 * root.renderScale
+                y: 8 * root.renderScale
+                width: Math.max(34 * root.renderScale, badgeText.implicitWidth + 14 * root.renderScale)
+                height: 18 * root.renderScale
+                radius: 9 * root.renderScale
                 color: Qt.rgba(card.accent.r, card.accent.g, card.accent.b, card.nodeId === root.selectedId ? 0.24 : 0.14)
-                border.width: root.zoom
+                border.width: root.renderScale
                 border.color: Qt.rgba(card.accent.r, card.accent.g, card.accent.b, 0.70)
 
                 Text {
@@ -607,57 +609,57 @@ Item {
                     text: root.badgeFor(card.node)
                     color: card.accent
                     font.family: "Segoe UI"
-                    font.pixelSize: Math.max(10, 10.5 * root.zoom)
+                    font.pixelSize: Math.max(10 * root.uiScale, 10.5 * root.renderScale)
                 }
             }
             Text {
-                x: 13 * root.zoom
-                y: 7 * root.zoom
-                width: Math.max(40 * root.zoom, badge.x - 20 * root.zoom)
-                height: 19 * root.zoom
+                x: 13 * root.renderScale
+                y: 7 * root.renderScale
+                width: Math.max(40 * root.renderScale, badge.x - 20 * root.renderScale)
+                height: 19 * root.renderScale
                 text: String(card.node.title || "")
                 color: root.lightMode ? "#25364a" : (root.focusMode ? "#f1edff" : "#f0f5fa")
                 font.family: "Segoe UI"
                 font.bold: true
-                font.pixelSize: Math.max(11, 12 * root.zoom)
+                font.pixelSize: Math.max(11 * root.uiScale, 12 * root.renderScale)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
             Text {
-                x: 13 * root.zoom
-                y: 31 * root.zoom
-                width: Math.max(40 * root.zoom, parent.width - 28 * root.zoom)
-                height: Math.max(10, 16 * root.zoom)
+                x: 13 * root.renderScale
+                y: 31 * root.renderScale
+                width: Math.max(40 * root.renderScale, parent.width - 28 * root.renderScale)
+                height: Math.max(10 * root.uiScale, 16 * root.renderScale)
                 text: root.statusFor(card.node)
                 color: card.accent
                 font.family: "Segoe UI"
-                font.pixelSize: Math.max(10, 10.5 * root.zoom)
+                font.pixelSize: Math.max(10 * root.uiScale, 10.5 * root.renderScale)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
             Text {
-                x: 13 * root.zoom
-                y: 49 * root.zoom
-                width: Math.max(40 * root.zoom, parent.width - 28 * root.zoom)
-                height: Math.max(10, 14 * root.zoom)
+                x: 13 * root.renderScale
+                y: 49 * root.renderScale
+                width: Math.max(40 * root.renderScale, parent.width - 28 * root.renderScale)
+                height: Math.max(10 * root.uiScale, 14 * root.renderScale)
                 text: String(card.node.meta || "")
                 color: root.lightMode ? "#65758a" : "#b0bdc9"
                 font.family: "Segoe UI"
-                font.pixelSize: Math.max(10, 10 * root.zoom)
+                font.pixelSize: Math.max(10 * root.uiScale, 10 * root.renderScale)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
             Row {
                 visible: !card.isMain
-                x: parent.width - 17 * root.zoom
-                y: 23 * root.zoom
-                spacing: 3 * root.zoom
+                x: parent.width - 17 * root.renderScale
+                y: 23 * root.renderScale
+                spacing: 3 * root.renderScale
                 Repeater {
                     model: 3
                     delegate: Rectangle {
-                        width: 3 * root.zoom
-                        height: 3 * root.zoom
-                        radius: 2 * root.zoom
+                        width: 3 * root.renderScale
+                        height: 3 * root.renderScale
+                        radius: 2 * root.renderScale
                         color: Qt.rgba(0.82, 0.88, 0.90, 0.62)
                     }
                 }
@@ -682,8 +684,8 @@ Item {
                     if (card.dragging && (mouse.buttons & Qt.LeftButton)) {
                         root.setPreviewOffset(
                             card.nodeId,
-                            card.startOffsetX + (mouse.x - card.startMouseX) / root.zoom,
-                            card.startOffsetY + (mouse.y - card.startMouseY) / root.zoom
+                            card.startOffsetX + (mouse.x - card.startMouseX) / root.renderScale,
+                            card.startOffsetY + (mouse.y - card.startMouseY) / root.renderScale
                         )
                     }
                 }
@@ -703,36 +705,36 @@ Item {
     Text {
         z: 5
         visible: !root.compactHeader
-        x: 18
-        y: 10
+        x: 18 * root.uiScale
+        y: 10 * root.uiScale
         text: "开发尝试树"
         color: root.lightMode ? "#31596a" : (root.focusMode ? "#e7ddff" : "#e2f3ef")
         font.family: "Segoe UI"
         font.bold: true
-        font.pixelSize: 15
+        font.pixelSize: 15 * root.uiScale
     }
     Text {
         z: 5
         anchors.right: parent.right
-        anchors.rightMargin: 18
-        y: 11
+        anchors.rightMargin: 18 * root.uiScale
+        y: 11 * root.uiScale
         text: root.compactHeader
               ? Math.round(root.zoom * 100) + "% · Ctrl+滚轮"
               : Math.round(root.zoom * 100) + "%  ·  Ctrl+滚轮缩放 · 拖动分支 / 平移画布"
         color: root.lightMode ? "#65758a" : "#a2afbd"
         font.family: "Segoe UI"
-        font.pixelSize: root.compactHeader ? 11 : 13
+        font.pixelSize: (root.compactHeader ? 11 : 13) * root.uiScale
     }
     Text {
         z: 5
         visible: !root.compactHeader
-        x: 18
-        y: 32
-        width: Math.max(100, parent.width - 36)
+        x: 18 * root.uiScale
+        y: 32 * root.uiScale
+        width: Math.max(100 * root.uiScale, parent.width - 36 * root.uiScale)
         text: "主干 = 当前编码主线  ·  分支 = 已取消、失败或等待中的尝试方向"
         color: root.lightMode ? "#65758a" : "#a2afbd"
         font.family: "Segoe UI"
-        font.pixelSize: 12
+        font.pixelSize: 12 * root.uiScale
         elide: Text.ElideRight
     }
 }
