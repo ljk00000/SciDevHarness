@@ -4221,6 +4221,11 @@ class ClientWindow(QMainWindow):
             self.command_search.clear()
             return
         file_term, line_number, column_number = self._parse_quick_open_location(term)
+        if not file_term and line_number is not None:
+            if self.current_file is None:
+                self._append_log("请先打开文件，再跳转到指定行列")
+                return
+            file_term = self.current_file.relative_to(self.project_root).as_posix()
         query = file_term.casefold()
         candidates = self._project_files()
         ranked: list[tuple[tuple[int, int, str], Path]] = []

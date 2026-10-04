@@ -636,6 +636,59 @@ class FindReplaceUiTests(unittest.TestCase):
                 self.app.processEvents()
 
 
+class QuickOpenUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_line_and_column_only_navigation_uses_the_active_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-quick-open-location-") as temp:
+            root = Path(temp)
+            active_file = root / "src" / "long_module.py"
+            active_file.parent.mkdir()
+            active_file.write_text("first\nsecond\nthird line\n", encoding="utf-8")
+            (root / "a.py").write_text("short file\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window._open_file(active_file, preview=False)
+                editor = window._active_editor()
+                window.activateWindow()
+                editor.setFocus()
+                self.app.processEvents()
+
+                QTest.keyClick(editor, Qt.Key.Key_P, Qt.KeyboardModifier.ControlModifier)
+                self.assertTrue(window.command_search.hasFocus())
+                window.command_search.setText(":3:2")
+                QTest.keyClick(window.command_search, Qt.Key.Key_Return)
+                self.app.processEvents()
+
+                self.assertEqual(window.current_file.resolve(), active_file.resolve())
+                self.assertEqual(window._active_editor().textCursor().blockNumber(), 2)
+                self.assertEqual(window._active_editor().textCursor().columnNumber(), 1)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_line_navigation_without_an_active_file_does_not_open_an_arbitrary_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-quick-open-no-current-") as temp:
+            root = Path(temp)
+            unrelated = root / "a.py"
+            unrelated.write_text("unrelated\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.command_search.setText(":3")
+                window._open_quick_search()
+
+                self.assertIsNone(window.current_file)
+                self.assertEqual(window.command_search.text(), ":3")
+                self.assertEqual(unrelated.read_text(encoding="utf-8"), "unrelated\n")
+                self.assertIn("先打开文件", window.statusBar().currentMessage())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
 class ExplorerInlineEntryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -793,8 +846,9 @@ class WorkspaceSearchTests(unittest.TestCase):
                 self.app.processEvents()
 
                 project_files = window._project_files()
-                self.assertIn(visible, project_files)
-                self.assertNotIn(secret, project_files)
+                resolved_project_files = {path.resolve() for path in project_files}
+                self.assertIn(visible.resolve(), resolved_project_files)
+                self.assertNotIn(secret.resolve(), resolved_project_files)
 
                 source_index = window.file_model.index(str(internal_dir))
                 self.assertTrue(source_index.isValid())
