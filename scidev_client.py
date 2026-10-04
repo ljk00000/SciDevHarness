@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+import io
 import json
+import keyword
 import math
 import os
 import re
@@ -18,6 +20,7 @@ import shutil
 import sys
 import threading
 import time
+import tokenize
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +98,10 @@ from scidev_ui import DEFAULT_UI_PROFILE, UI_PROFILES, stylesheet_for_profile, u
 _EXCLUDED_PROJECT_NAMES_CASEFOLD = frozenset(
     name.casefold() for name in CodingToolbox.EXCLUDED_NAMES
 )
+
+
+def _is_link_or_junction(path: Path) -> bool:
+    return path.is_symlink() or path.is_junction()
 
 
 THEME = """
@@ -891,7 +898,7 @@ class ProjectFilterProxy(QSortFilterProxyModel):
         index = model.index(source_row, 0, source_parent)
         name = model.fileName(index)
         path = Path(model.filePath(index))
-        if path.is_symlink() or path.is_junction():
+        if _is_link_or_junction(path):
             return False
         if name.casefold() in _EXCLUDED_PROJECT_NAMES_CASEFOLD:
             return False
@@ -1791,6 +1798,7 @@ class ClientWindow(QMainWindow):
         self._navigation_back: list[tuple[Path, int, int]] = []
         self._navigation_forward: list[tuple[Path, int, int]] = []
         self._workspace_search_whole_word = False
+        self._workspace_search_case_sensitive = False
         self._workbench_user_ratios: tuple[float, float] | None = UI_PROFILES[
             self.ui_profile
         ].layout_ratios
@@ -2129,15 +2137,16 @@ class ClientWindow(QMainWindow):
             windows.append(self)
         app._scidev_windows = windows
 
+        settings = QSettings("SciDevHarness", "SciDevHarness")
         for window in windows:
             if window.project_root == target:
+                settings.setValue("lastWorkspace", str(target))
                 if window.isMinimized():
                     window.showNormal()
                 window.raise_()
                 window.activateWindow()
                 return window
 
-        settings = QSettings("SciDevHarness", "SciDevHarness")
         settings.setValue("lastWorkspace", str(target))
         new_window = ClientWindow(target)
         windows.append(new_window)
@@ -4043,7 +4052,7 @@ class ClientWindow(QMainWindow):
             return None
         line = editor.textCursor().block().text()
         position = editor.textCursor().positionInBlock()
-        for match in re.finditer(r"\b[A-Za-z_]\w*\b", line):
+        for match in re.finditer(r"\b[^\W\d]\w*\b", line):
             if match.start() <= position <= match.end():
                 return match.group(0)
         return None
@@ -4113,10 +4122,17 @@ class ClientWindow(QMainWindow):
         if not symbol:
             self._append_log("光标处没有可搜索的符号")
             return
+        self._show_workspace_search()
         self._workspace_search_whole_word = True
+        self._workspace_search_case_sensitive = True
         self.workspace_search_input.setText(symbol)
         self._search_workspace()
-        self._append_log(f"已找到 {symbol} 的引用")
+        count = self.workspace_search_results.topLevelItemCount()
+        self._append_log(
+            f"已找到 {symbol} 的引用：{count} 条"
+            if count
+            else f"没有找到 {symbol} 的引用"
+        )
 
     def _navigate_back(self) -> None:
         if not self._navigation_back:
@@ -4140,6 +4156,10 @@ class ClientWindow(QMainWindow):
 
     def _rename_current_symbol(self) -> None:
         editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if path is None or path.suffix.casefold() not in {".py", ".pyi", ".pyw"}:
+            self._append_log("安全重命名目前仅支持已打开的 Python 文件")
+            return
         symbol = self._symbol_at_cursor(editor)
         if editor is None or symbol is None:
             self._append_log("光标处没有可重命名的符号")
@@ -4148,15 +4168,54 @@ class ClientWindow(QMainWindow):
         replacement = replacement.strip()
         if not accepted or replacement == symbol:
             return
-        if not re.fullmatch(r"[A-Za-z_]\w*", replacement):
+        if not replacement.isidentifier() or keyword.iskeyword(replacement):
             self._append_log("符号名称必须是合法的 Python 标识符")
             return
-        cursor = editor.textCursor()
-        position = cursor.position()
-        updated = re.sub(rf"\b{re.escape(symbol)}\b", replacement, editor.toPlainText())
+        original = editor.toPlainText()
+        try:
+            tokens = list(tokenize.generate_tokens(io.StringIO(original).readline))
+        except (IndentationError, SyntaxError, tokenize.TokenError) as exc:
+            self._append_log(f"当前 Python 文件无法安全分词，未执行重命名：{exc}")
+            return
+
+        line_starts = [0]
+        for line in original.splitlines(keepends=True):
+            line_starts.append(line_starts[-1] + len(line))
+        replacements = [
+            (
+                line_starts[token.start[0] - 1] + token.start[1],
+                line_starts[token.end[0] - 1] + token.end[1],
+            )
+            for token in tokens
+            if token.type == tokenize.NAME and token.string == symbol
+        ]
+        if not replacements:
+            self._append_log(f"当前 Python 文件中没有可重命名的代码标识符：{symbol}")
+            return
+
+        cursor_position = editor.textCursor().position()
+        updated = original
+        for start, end in reversed(replacements):
+            updated = updated[:start] + replacement + updated[end:]
+
+        updated_cursor_position = cursor_position
+        prior_shift = 0
+        for start, end in replacements:
+            if cursor_position >= end:
+                prior_shift += len(replacement) - (end - start)
+            elif cursor_position >= start:
+                updated_cursor_position = (
+                    start + prior_shift + min(cursor_position - start, len(replacement))
+                )
+                break
+            else:
+                break
+        else:
+            updated_cursor_position += prior_shift
+
         editor.setPlainText(updated)
         cursor = editor.textCursor()
-        cursor.setPosition(min(position, len(updated)))
+        cursor.setPosition(max(0, min(updated_cursor_position, len(updated))))
         editor.setTextCursor(cursor)
         self._append_log(f"已在当前文件中重命名 {symbol} → {replacement}，请保存")
 
@@ -4343,11 +4402,11 @@ class ClientWindow(QMainWindow):
             directories[:] = [
                 name for name in directories
                 if name.casefold() not in _EXCLUDED_PROJECT_NAMES_CASEFOLD
-                and not (Path(root) / name).is_symlink()
+                and not _is_link_or_junction(Path(root) / name)
             ]
             for name in names:
                 path = Path(root) / name
-                if not path.is_symlink():
+                if not _is_link_or_junction(path):
                     files.append(path)
         return files
 
@@ -4542,11 +4601,13 @@ class ClientWindow(QMainWindow):
     def _search_workspace(self) -> None:
         query = self.workspace_search_input.text().strip()
         self.workspace_search_results.clear()
+        whole_word = self._workspace_search_whole_word
+        case_sensitive = self._workspace_search_case_sensitive
+        self._workspace_search_whole_word = False
+        self._workspace_search_case_sensitive = False
         if not query:
             self._append_log("请输入工作区搜索内容")
             return
-        whole_word = self._workspace_search_whole_word
-        self._workspace_search_whole_word = False
         query_folded = query.casefold()
         count = 0
         for path in self._project_files():
@@ -4565,7 +4626,8 @@ class ClientWindow(QMainWindow):
             relative = path.relative_to(self.project_root).as_posix()
             for line_number, line in enumerate(lines, start=1):
                 if whole_word:
-                    matched = re.search(rf"\b{re.escape(query)}\b", line, re.IGNORECASE) is not None
+                    flags = 0 if case_sensitive else re.IGNORECASE
+                    matched = re.search(rf"\b{re.escape(query)}\b", line, flags) is not None
                 else:
                     matched = query_folded in line.casefold()
                 if not matched:
@@ -5021,7 +5083,7 @@ class ClientWindow(QMainWindow):
         if target is None:
             return
         target = Path(target)
-        if target.is_symlink() or target.is_junction():
+        if _is_link_or_junction(target):
             self._append_log("删除失败：不能将链接当作普通项目文件夹删除")
             return
         target = target.resolve()

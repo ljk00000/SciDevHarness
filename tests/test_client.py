@@ -109,6 +109,53 @@ class DevelopmentTreeLayoutTests(unittest.TestCase):
                     self.app.processEvents()
 
 
+class DevelopmentTreeInteractionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_clicking_attempt_node_updates_details_and_retry_availability(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-tree-node-selection-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.resize(1500, 920)
+                window.show()
+                window.show_git()
+                window.git_tree.set_nodes(
+                    [
+                        {"id": "root", "lane": "main", "status": "main", "title": "主线"},
+                        {
+                            "id": "cancelled-direction",
+                            "lane": "attempt",
+                            "status": "failed",
+                            "parent_id": "root",
+                            "title": "失败的优化方向",
+                            "description": "验证结果未改善。",
+                            "meta": "失败 · 2 次尝试",
+                        },
+                    ]
+                )
+                self.app.processEvents()
+                QTest.qWait(40)
+
+                branch_rect = window.git_tree._positions()[0]["cancelled-direction"][2]
+                QTest.mouseClick(
+                    window.git_tree,
+                    Qt.MouseButton.LeftButton,
+                    pos=branch_rect.center(),
+                )
+                self.app.processEvents()
+
+                self.assertEqual(window.git_tree.selected_id, "cancelled-direction")
+                self.assertEqual(window.git_detail_title.text(), "失败的优化方向")
+                self.assertEqual(window.git_detail_description.text(), "验证结果未改善。")
+                self.assertEqual(window.git_retry_button.property("task_id"), "cancelled-direction")
+                self.assertTrue(window.git_retry_button.isEnabled())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
 class UIProfileTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -642,6 +689,131 @@ class FindReplaceUiTests(unittest.TestCase):
                 self.app.processEvents()
 
 
+class SymbolNavigationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_shift_f12_shows_case_sensitive_python_references(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-symbol-references-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            content = "value = 1\nprint(value)\nprint(VALUE)\n"
+            source.write_text(content, encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                editor.setFocus()
+                cursor = editor.textCursor()
+                cursor.setPosition(content.index("value", content.index("print")))
+                editor.setTextCursor(cursor)
+                window.show_git()
+                window.bottom_tabs.hide()
+                self.app.processEvents()
+
+                QTest.keyClick(
+                    editor,
+                    Qt.Key.Key_F12,
+                    Qt.KeyboardModifier.ShiftModifier,
+                )
+                self.app.processEvents()
+
+                self.assertIs(window.workspace_stack.currentWidget(), window.workspace_page)
+                self.assertTrue(window.bottom_tabs.isVisible())
+                self.assertEqual(window.bottom_tabs.currentIndex(), 0)
+                self.assertEqual(window.workspace_search_results.topLevelItemCount(), 2)
+                result_text = "\n".join(
+                    window.workspace_search_results.topLevelItem(index).text(0)
+                    for index in range(window.workspace_search_results.topLevelItemCount())
+                )
+                self.assertNotIn("VALUE", result_text)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_f2_renames_python_name_tokens_without_changing_strings_or_comments(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-symbol-rename-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            original = 'value = 1\ncopy = value\nlabel = f"{value}"\nmessage = "value"\n# value comment\n'
+            source.write_text(original, encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                cursor = editor.textCursor()
+                cursor.setPosition(original.index("value"))
+                editor.setTextCursor(cursor)
+
+                with patch("scidev_client.QInputDialog.getText", return_value=("count", True)):
+                    window._rename_current_symbol()
+
+                self.assertEqual(
+                    editor.toPlainText(),
+                    'count = 1\ncopy = count\nlabel = f"{count}"\nmessage = "value"\n# value comment\n',
+                )
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_f2_accepts_unicode_identifiers_and_rejects_python_keywords(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-unicode-symbol-rename-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            original = "变量 = 1\nprint(变量)\n文本 = '变量'\n"
+            source.write_text(original, encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                cursor = editor.textCursor()
+                cursor.setPosition(original.index("变量"))
+                editor.setTextCursor(cursor)
+
+                with patch("scidev_client.QInputDialog.getText", return_value=("计数", True)):
+                    window._rename_current_symbol()
+
+                renamed = "计数 = 1\nprint(计数)\n文本 = '变量'\n"
+                self.assertEqual(editor.toPlainText(), renamed)
+                editor.document().setModified(False)
+                cursor = editor.textCursor()
+                cursor.setPosition(renamed.index("计数"))
+                editor.setTextCursor(cursor)
+
+                with patch("scidev_client.QInputDialog.getText", return_value=("class", True)):
+                    window._rename_current_symbol()
+
+                self.assertEqual(editor.toPlainText(), renamed)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_f2_refuses_an_incomplete_python_string_without_partial_edits(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-incomplete-symbol-rename-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            original = 'value = 1\ntext = """unfinished\nvalue\n'
+            source.write_text(original, encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                cursor = editor.textCursor()
+                cursor.setPosition(original.index("value"))
+                editor.setTextCursor(cursor)
+
+                with patch("scidev_client.QInputDialog.getText", return_value=("count", True)):
+                    window._rename_current_symbol()
+
+                self.assertEqual(editor.toPlainText(), original)
+                self.assertIn("无法安全分词", window.statusBar().currentMessage())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
 class QuickOpenUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -771,7 +943,7 @@ class ExplorerInlineEntryTests(unittest.TestCase):
             actual = root / "actual_data"
             actual.mkdir(parents=True)
             protected = actual / "keep.txt"
-            protected.write_text("keep this target\n", encoding="utf-8")
+            protected.write_text("junction-only-search-sentinel\n", encoding="utf-8")
             junction = root / "linked_data"
             result = subprocess.run(
                 ["cmd.exe", "/c", "mklink", "/J", str(junction), str(actual)],
@@ -794,13 +966,31 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                     source_index = window.file_model.index(str(junction))
                 self.assertTrue(source_index.isValid())
 
+                listed_paths = {
+                    path.relative_to(root).as_posix()
+                    for path in window._project_files()
+                }
+                self.assertIn("actual_data/keep.txt", listed_paths)
+                self.assertNotIn("linked_data/keep.txt", listed_paths)
+                window.workspace_search_input.setText("junction-only-search-sentinel")
+                window._search_workspace()
+                self.assertEqual(window.workspace_search_results.topLevelItemCount(), 1)
+                search_result = window.workspace_search_results.topLevelItem(0)
+                self.assertEqual(
+                    Path(str(search_result.data(0, Qt.ItemDataRole.UserRole))).relative_to(root).as_posix(),
+                    "actual_data/keep.txt",
+                )
+
                 # The link must not be navigable as a normal project folder.
                 self.assertFalse(window.file_proxy.mapFromSource(source_index).isValid())
                 with patch.object(QMessageBox, "question") as confirm_delete:
                     window.delete_explorer_path(junction)
                 confirm_delete.assert_not_called()
                 self.assertTrue(junction.is_junction())
-                self.assertEqual(protected.read_text(encoding="utf-8"), "keep this target\n")
+                self.assertEqual(
+                    protected.read_text(encoding="utf-8"),
+                    "junction-only-search-sentinel\n",
+                )
             finally:
                 window.close()
                 self.app.processEvents()
@@ -962,6 +1152,50 @@ class WorkspaceSearchTests(unittest.TestCase):
             finally:
                 window.close()
                 self.app.processEvents()
+
+
+class WorkspaceLifecycleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_reselecting_an_open_workspace_updates_startup_restore_path(self) -> None:
+        settings = QSettings("SciDevHarness", "SciDevHarness")
+        had_previous = settings.contains("lastWorkspace")
+        previous = settings.value("lastWorkspace") if had_previous else None
+        had_windows = hasattr(self.app, "_scidev_windows")
+        previous_windows = getattr(self.app, "_scidev_windows", None)
+        with tempfile.TemporaryDirectory(prefix="scidev-workspace-lifecycle-") as temp:
+            root = Path(temp)
+            workspace_a = root / "workspace-a"
+            workspace_b = root / "workspace-b"
+            workspace_a.mkdir()
+            workspace_b.mkdir()
+            first = ClientWindow(workspace_a)
+            second = ClientWindow(workspace_b)
+            try:
+                self.app._scidev_windows = [first, second]
+                settings.setValue("lastWorkspace", str(workspace_b.resolve()))
+                selected = first._open_workspace_root(workspace_a)
+
+                self.assertIs(selected, first)
+                self.assertEqual(
+                    Path(str(settings.value("lastWorkspace"))).resolve(),
+                    workspace_a.resolve(),
+                )
+            finally:
+                first.close()
+                second.close()
+                self.app.processEvents()
+                if had_windows:
+                    self.app._scidev_windows = previous_windows
+                elif hasattr(self.app, "_scidev_windows"):
+                    del self.app._scidev_windows
+                if had_previous:
+                    settings.setValue("lastWorkspace", previous)
+                else:
+                    settings.remove("lastWorkspace")
+                settings.sync()
 
 
 class UnsavedCloseTests(unittest.TestCase):
