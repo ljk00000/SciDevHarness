@@ -965,6 +965,284 @@ class EditorSplitInteractionTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_same_file_opened_in_both_editor_groups_shares_live_document(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-editor-split-shared-document-") as temp:
+            root = Path(temp)
+            source = root / "shared.py"
+            source.write_bytes(b"value = 1\r\n")
+            window = ClientWindow(root)
+            primary = secondary = None
+            try:
+                window._open_file(source, preview=False)
+                primary = window._active_editor()
+                primary.selectAll()
+                primary.insertPlainText("value = 2\n")
+                window._open_editor_to_side(source)
+                secondary = window._active_editor()
+
+                self.assertIsNot(primary, secondary)
+                self.assertIs(primary.document(), secondary.document())
+                self.assertIs(
+                    window._editor_highlighters[primary],
+                    window._editor_highlighters[secondary],
+                )
+                self.assertEqual(secondary.toPlainText(), "value = 2\n")
+                self.assertTrue(secondary.document().isModified())
+
+                secondary.moveCursor(secondary.textCursor().MoveOperation.End)
+                secondary.insertPlainText("value += 1\n")
+                self.app.processEvents()
+                self.assertEqual(primary.toPlainText(), "value = 2\nvalue += 1\n")
+                self.assertTrue(primary.document().isModified())
+                self.assertTrue(secondary.document().isModified())
+                self.assertTrue(
+                    window.editor_tabs.tabText(window.editor_tabs.indexOf(primary)).startswith("● ")
+                )
+                self.assertTrue(
+                    window.secondary_editor_tabs.tabText(
+                        window.secondary_editor_tabs.indexOf(secondary)
+                    ).startswith("● ")
+                )
+
+                window._save_editor(primary)
+                self.assertEqual(source.read_bytes(), b"value = 2\r\nvalue += 1\r\n")
+                self.assertFalse(primary.document().isModified())
+                self.assertFalse(secondary.document().isModified())
+                self.assertFalse(
+                    window.editor_tabs.tabText(window.editor_tabs.indexOf(primary)).startswith("● ")
+                )
+                self.assertFalse(
+                    window.secondary_editor_tabs.tabText(
+                        window.secondary_editor_tabs.indexOf(secondary)
+                    ).startswith("● ")
+                )
+
+                closed_document = secondary.document()
+                window._close_editor_tab(
+                    window.secondary_editor_tabs.indexOf(secondary),
+                    window.secondary_editor_tabs,
+                )
+                self.app.processEvents()
+                QTest.qWait(20)
+                self.assertIn(source, window._shared_editor_documents)
+
+                window._close_editor_tab(window.editor_tabs.indexOf(primary), window.editor_tabs)
+                self.app.processEvents()
+                QTest.qWait(20)
+                self.assertNotIn(source, window._shared_editor_documents)
+
+                window._open_file(source, preview=False, group=window.editor_tabs)
+                reopened = window._active_editor()
+                self.assertIsNot(reopened.document(), closed_document)
+                self.assertEqual(reopened.toPlainText(), "value = 2\nvalue += 1\n")
+            finally:
+                for editor in (primary, secondary):
+                    if editor is not None:
+                        try:
+                            editor.document().setModified(False)
+                        except RuntimeError:
+                            pass
+                window.close()
+                self.app.processEvents()
+
+    def test_closing_original_editor_keeps_shared_document_alive_in_other_group(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-editor-split-document-lifetime-") as temp:
+            root = Path(temp)
+            source = root / "shared.py"
+            source.write_text("value = 1\n", encoding="utf-8")
+            window = ClientWindow(root)
+            primary = secondary = None
+            try:
+                window._open_file(source, preview=False)
+                primary = window._active_editor()
+                window._open_editor_to_side(source)
+                secondary = window._active_editor()
+                shared_document = primary.document()
+                self.assertIs(shared_document, secondary.document())
+
+                window._close_editor_tab(window.editor_tabs.indexOf(primary), window.editor_tabs)
+                self.app.processEvents()
+                QTest.qWait(20)
+
+                self.assertEqual(secondary.toPlainText(), "value = 1\n")
+                secondary.moveCursor(secondary.textCursor().MoveOperation.End)
+                secondary.insertPlainText("value += 1\n")
+                window._save_editor(secondary)
+                self.assertEqual(source.read_text(encoding="utf-8"), "value = 1\nvalue += 1\n")
+            finally:
+                if secondary is not None:
+                    try:
+                        secondary.document().setModified(False)
+                    except RuntimeError:
+                        pass
+                window.close()
+                self.app.processEvents()
+
+    def test_replacing_preview_does_not_mutate_a_shared_document(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-editor-split-shared-preview-") as temp:
+            root = Path(temp)
+            shared_path = root / "shared.py"
+            previous_preview_path = root / "previous-preview.py"
+            other_path = root / "other.py"
+            shared_path.write_text("shared_value = 1\n", encoding="utf-8")
+            previous_preview_path.write_text("previous_preview = True\n", encoding="utf-8")
+            other_path.write_text("other_value = 2\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(shared_path, preview=False)
+                primary = window._active_editor()
+                window._split_current_editor()
+                secondary_group = window.secondary_editor_tabs
+                secondary_file = secondary_group.currentWidget()
+                window._close_editor_tab(
+                    secondary_group.indexOf(secondary_file),
+                    secondary_group,
+                )
+                window._open_file(previous_preview_path, preview=True, group=secondary_group)
+                previous_preview = window._active_editor()
+                window._open_file(shared_path, preview=True, group=secondary_group)
+                shared_preview = window._active_editor()
+                shared_document = primary.document()
+                self.assertIs(shared_document, shared_preview.document())
+                self.assertIn(previous_preview, window._pinned_editors)
+
+                window._open_file(other_path, preview=True, group=secondary_group)
+                other_preview = window._active_editor()
+
+                self.assertIsNot(other_preview.document(), shared_document)
+                self.assertEqual(primary.toPlainText(), "shared_value = 1\n")
+                self.assertEqual(shared_preview.toPlainText(), "shared_value = 1\n")
+                self.assertIn(shared_preview, window._pinned_editors)
+                self.assertEqual(previous_preview.toPlainText(), "previous_preview = True\n")
+                self.assertEqual(other_preview.toPlainText(), "other_value = 2\n")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_renaming_a_shared_file_keeps_both_views_and_document_tracking(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-editor-split-shared-rename-") as temp:
+            root = Path(temp)
+            source = root / "before.py"
+            target = root / "after.py"
+            source.write_text("value = 1\n", encoding="utf-8")
+            window = ClientWindow(root)
+            primary = secondary = None
+            try:
+                window._open_file(source, preview=False)
+                primary = window._active_editor()
+                window._open_editor_to_side(source)
+                secondary = window._active_editor()
+                shared_document = primary.document()
+
+                source.rename(target)
+                window._update_open_paths_after_rename(source, target)
+
+                self.assertIs(shared_document, secondary.document())
+                self.assertEqual(window._editor_paths[primary], target)
+                self.assertEqual(window._editor_paths[secondary], target)
+                self.assertNotIn(source, window._shared_editor_documents)
+                self.assertIs(window._shared_editor_documents[target], shared_document)
+
+                secondary.selectAll()
+                secondary.insertPlainText("value = 2\n")
+                window._save_editor(primary)
+                self.assertEqual(target.read_text(encoding="utf-8"), "value = 2\n")
+                self.assertFalse(source.exists())
+            finally:
+                for editor in (primary, secondary):
+                    if editor is not None:
+                        try:
+                            editor.document().setModified(False)
+                        except RuntimeError:
+                            pass
+                window.close()
+                self.app.processEvents()
+
+    def test_agent_refresh_updates_a_shared_document_only_once(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-editor-split-agent-refresh-") as temp:
+            root = Path(temp)
+            source = root / "shared.py"
+            source.write_text("value = 1\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                primary = window._active_editor()
+                window._open_editor_to_side(source)
+                secondary = window._active_editor()
+                source.write_text("value = 2\n", encoding="utf-8")
+
+                original_read_bytes = Path.read_bytes
+                reads: list[Path] = []
+
+                def count_project_file_read(path: Path) -> bytes:
+                    if path == source:
+                        reads.append(path)
+                    return original_read_bytes(path)
+
+                with patch.object(Path, "read_bytes", count_project_file_read):
+                    window._refresh_open_file_after_task()
+
+                self.assertEqual(reads, [source])
+                self.assertEqual(primary.toPlainText(), "value = 2\n")
+                self.assertEqual(secondary.toPlainText(), "value = 2\n")
+                self.assertFalse(primary.document().isModified())
+                self.assertFalse(secondary.document().isModified())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_closing_window_counts_and_saves_a_shared_file_once(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-editor-split-close-save-once-") as temp:
+            root = Path(temp)
+            source = root / "shared.py"
+            source.write_text("value = 1\n", encoding="utf-8")
+            window = ClientWindow(root)
+            primary = secondary = None
+            try:
+                window._open_file(source, preview=False)
+                primary = window._active_editor()
+                window._open_editor_to_side(source)
+                secondary = window._active_editor()
+                primary.selectAll()
+                primary.insertPlainText("value = 2\n")
+
+                dialog_text: list[str] = []
+                deadline = time.monotonic() + 3
+
+                def save_all() -> None:
+                    for widget in self.app.topLevelWidgets():
+                        if isinstance(widget, QMessageBox) and widget.isVisible():
+                            dialog_text.append(widget.text())
+                            button = next(
+                                (item for item in widget.buttons() if item.text() == "保存全部"),
+                                None,
+                            )
+                            if button is not None:
+                                button.click()
+                            return
+                    if window.isVisible() and time.monotonic() < deadline:
+                        QTimer.singleShot(10, save_all)
+
+                QTimer.singleShot(0, save_all)
+                with patch.object(window.toolbox, "write_file", wraps=window.toolbox.write_file) as write_file:
+                    self.assertTrue(window.close())
+
+                self.assertEqual(dialog_text, ["有 1 个文件尚未保存。"])
+                self.assertEqual(write_file.call_count, 1)
+                self.assertEqual(source.read_text(encoding="utf-8"), "value = 2\n")
+                self.assertFalse(primary.document().isModified())
+                self.assertFalse(secondary.document().isModified())
+            finally:
+                if not window._closing:
+                    for editor in (primary, secondary):
+                        if editor is not None:
+                            try:
+                                editor.document().setModified(False)
+                            except RuntimeError:
+                                pass
+                    window.close()
+                self.app.processEvents()
+
     def test_closing_split_restores_primary_file_context_focus_and_save_target(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-editor-split-focus-") as temp:
             root = Path(temp)

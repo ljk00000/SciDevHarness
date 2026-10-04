@@ -1968,8 +1968,10 @@ class ClientWindow(QMainWindow):
         self._editor_paths: dict[QWidget, Path] = {}
         # QTextDocument normalizes newline encodings; retain each file's EOL for save.
         self._editor_line_endings: dict[QWidget, str] = {}
+        self._shared_editor_documents: dict[Path, QTextDocument] = {}
         self._editor_titles: dict[QWidget, str] = {}
         self._editor_highlighters: dict[QWidget, PythonHighlighter] = {}
+        self._editor_document_change_connections: dict[QWidget, object] = {}
         self._pinned_editors: set[QWidget] = set()
         self._preview_editor: QWidget | None = None
         self.welcome_editor: CodeEditor | None = None
@@ -2295,7 +2297,11 @@ class ClientWindow(QMainWindow):
 
         for editor in self.findChildren(CodeEditor):
             editor.set_ui_profile(profile.key)
-        for highlighter in self._editor_highlighters.values():
+        unique_highlighters = {
+            id(highlighter): highlighter
+            for highlighter in self._editor_highlighters.values()
+        }
+        for highlighter in unique_highlighters.values():
             highlighter.set_ui_profile(profile.key)
         if hasattr(self, "git_tree"):
             self.git_tree.set_visual_theme(profile.key)
@@ -4188,10 +4194,22 @@ class ClientWindow(QMainWindow):
     def _configure_editor(self, editor: CodeEditor) -> None:
         editor.set_ui_profile(self.ui_profile)
         editor.set_ui_scale(self._ui_scale)
-        self._editor_highlighters[editor] = PythonHighlighter(editor.document(), self.ui_profile)
-        editor.document().modificationChanged.connect(
+        document = editor.document()
+        highlighter = next(
+            (
+                existing
+                for existing in self._editor_highlighters.values()
+                if existing.document() is document
+            ),
+            None,
+        )
+        if highlighter is None:
+            highlighter = PythonHighlighter(document, self.ui_profile)
+        self._editor_highlighters[editor] = highlighter
+        connection = editor.document().modificationChanged.connect(
             lambda _changed, target=editor: self._update_editor_tab_for(target)
         )
+        self._editor_document_change_connections[editor] = connection
         editor.cursorPositionChanged.connect(
             lambda target=editor: self._update_cursor_status(target)
         )
@@ -4549,12 +4567,40 @@ class ClientWindow(QMainWindow):
             return
         if widget is self._preview_editor:
             self._preview_editor = None
+        shared_document = self._shared_editor_documents.get(path) if path is not None else None
+        editor_highlighter = self._editor_highlighters.pop(widget, None)
+        document_change_connection = self._editor_document_change_connections.pop(widget, None)
+        if document_change_connection is not None:
+            QObject.disconnect(document_change_connection)
         self._editor_paths.pop(widget, None)
         self._editor_line_endings.pop(widget, None)
         self._editor_titles.pop(widget, None)
-        self._editor_highlighters.pop(widget, None)
         self._pinned_editors.discard(widget)
         group.removeTab(index)
+        if shared_document is not None and widget.document() is shared_document:
+            # A shared document must outlive its first editor view.
+            widget.setDocument(QTextDocument(widget))
+            has_remaining_view = any(
+                other_path == path
+                and isinstance(other, CodeEditor)
+                and other.document() is shared_document
+                for other, other_path in self._editor_paths.items()
+            )
+            if not has_remaining_view:
+                self._shared_editor_documents.pop(path, None)
+                highlighters = {}
+                if (
+                    editor_highlighter is not None
+                    and editor_highlighter.document() is shared_document
+                ):
+                    highlighters[id(editor_highlighter)] = editor_highlighter
+                for other, highlighter in list(self._editor_highlighters.items()):
+                    if highlighter.document() is shared_document:
+                        self._editor_highlighters.pop(other, None)
+                        highlighters[id(highlighter)] = highlighter
+                for highlighter in highlighters.values():
+                    highlighter.setDocument(None)
+                shared_document.deleteLater()
         widget.deleteLater()
 
     def _on_file_preview(self, index: QModelIndex) -> None:
@@ -4583,33 +4629,67 @@ class ClientWindow(QMainWindow):
             if not path.is_relative_to(self.project_root):
                 self._append_log("拒绝打开项目目录之外的文件")
                 return
-            raw = path.read_bytes()
-            if len(raw) > CodingToolbox.MAX_READ_BYTES or b"\x00" in raw:
-                self._append_log(f"无法打开 {path.name}：文件过大或为二进制文件")
-                return
-            text = raw.decode("utf-8", errors="replace")
             editor = self._find_editor(path, group)
+            existing_editor = self._find_editor(path) if editor is None else None
+            shared_document = None
+            text = None
+            if isinstance(existing_editor, CodeEditor):
+                shared_document = self._shared_editor_documents.get(path)
+                if shared_document is None:
+                    shared_document = existing_editor.document()
+                    shared_document.setParent(self)
+                    self._shared_editor_documents[path] = shared_document
+            elif editor is None:
+                raw = path.read_bytes()
+                if len(raw) > CodingToolbox.MAX_READ_BYTES or b"\x00" in raw:
+                    self._append_log(f"无法打开 {path.name}：文件过大或为二进制文件")
+                    return
+                text = raw.decode("utf-8", errors="replace")
+
             if editor is None:
                 if preview and self._preview_editor is not None:
                     candidate = self._preview_editor
                     candidate_group = self._editor_group_for(candidate)
-                    if candidate_group is group and isinstance(candidate, CodeEditor) and not candidate.document().isModified():
+                    candidate_is_shared = False
+                    if isinstance(candidate, CodeEditor):
+                        candidate_document = candidate.document()
+                        candidate_is_shared = any(
+                            document is candidate_document
+                            for document in self._shared_editor_documents.values()
+                        )
+                    can_reuse_preview = (
+                        shared_document is None
+                        and candidate_group is group
+                        and isinstance(candidate, CodeEditor)
+                        and not candidate.document().isModified()
+                        and not candidate_is_shared
+                    )
+                    if can_reuse_preview:
+                        assert isinstance(candidate, CodeEditor)
                         self._editor_paths.pop(candidate, None)
                         editor = candidate
                         self._editor_paths[editor] = path
                         group.setTabToolTip(group.indexOf(editor), path.as_posix())
-                    else:
-                        editor = None
+                    elif isinstance(candidate, CodeEditor):
+                        self._pinned_editors.add(candidate)
                 if editor is None:
                     editor = CodeEditor()
+                    if shared_document is not None:
+                        editor.setDocument(shared_document)
                     self._configure_editor(editor)
                     self._editor_paths[editor] = path
                     tab_index = group.addTab(editor, path.name)
                     self._install_tab_close_button(group, tab_index, editor)
                     group.setTabToolTip(tab_index, path.as_posix())
-                self._editor_line_endings[editor] = self._detect_line_ending(text)
-                editor.setPlainText(text)
-                editor.document().setModified(False)
+                if text is not None:
+                    self._editor_line_endings[editor] = self._detect_line_ending(text)
+                    editor.setPlainText(text)
+                    editor.document().setModified(False)
+                elif isinstance(existing_editor, CodeEditor):
+                    self._editor_line_endings[editor] = self._editor_line_endings.get(
+                        existing_editor,
+                        "\n",
+                    )
             self._active_editor_group = group
             index = group.indexOf(editor)
             group.setCurrentIndex(index)
@@ -5427,6 +5507,11 @@ class ClientWindow(QMainWindow):
                 if group is not None and index >= 0:
                     group.setTabToolTip(index, updated.as_posix())
                     self._update_editor_tab_for(editor)
+        for path, document in list(self._shared_editor_documents.items()):
+            if path == old_target or old_target in path.parents:
+                updated = new_target / path.relative_to(old_target) if path != old_target else new_target
+                self._shared_editor_documents.pop(path, None)
+                self._shared_editor_documents[updated] = document
         if self.current_file == old_target or (self.current_file is not None and old_target in self.current_file.parents):
             self.current_file = new_target / self.current_file.relative_to(old_target) if self.current_file != old_target else new_target
 
@@ -5549,11 +5634,18 @@ class ClientWindow(QMainWindow):
         return prompt + context
 
     def _refresh_open_file_after_task(self) -> None:
-        for editor, path in list(self._editor_paths.items()):
+        active_editor = self._active_editor()
+        editors = list(self._editor_paths.items())
+        editors.sort(key=lambda item: item[0] is not active_editor)
+        refreshed_paths: set[Path] = set()
+        for editor, path in editors:
             if not isinstance(editor, CodeEditor):
                 continue
+            if path in refreshed_paths:
+                continue
+            refreshed_paths.add(path)
             if editor.document().isModified():
-                if editor is self._active_editor():
+                if editor is active_editor:
                     self._append_log(f"Agent 已修改 {path.name}，当前标签有本地未保存内容，未自动覆盖")
                 continue
             try:
@@ -5709,11 +5801,16 @@ class ClientWindow(QMainWindow):
         if self._closing:
             event.accept()
             return
-        dirty_editors = [
-            (editor, path)
-            for editor, path in self._editor_paths.items()
-            if isinstance(editor, CodeEditor) and editor.document().isModified()
-        ]
+        dirty_editors = []
+        dirty_paths: set[Path] = set()
+        for editor, path in self._editor_paths.items():
+            if (
+                isinstance(editor, CodeEditor)
+                and editor.document().isModified()
+                and path not in dirty_paths
+            ):
+                dirty_paths.add(path)
+                dirty_editors.append((editor, path))
         if dirty_editors:
             dialog = QMessageBox(self)
             dialog.setIcon(QMessageBox.Icon.Warning)
