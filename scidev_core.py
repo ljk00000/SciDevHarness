@@ -2783,7 +2783,9 @@ class CodingAgent:
                 message = summary_provider.chat(
                     summary_messages,
                     max_tokens=settings.max_tokens,
-                    request_id=f"{session_id}-summary",
+                    # Keep retries of one summary idempotent, but never reuse
+                    # that key for a different checkpoint/final payload.
+                    request_id=f"{session_id}-summary-{phase}-turn-{turn if turn is not None else 'final'}",
                 )
                 text = self._text_content(message.get("content")).strip()
                 if not text:

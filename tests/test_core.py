@@ -51,6 +51,19 @@ class FakeCodingProvider:
         return {"role": "assistant", "content": "代码已完成并检查了修改。", "tool_calls": []}
 
 
+class RetryOncePerSummaryProvider(FakeCodingProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.summary_request_ids: list[str] = []
+
+    def chat(self, messages, tools=None, max_tokens=12000, request_id=""):
+        if "summary" in request_id:
+            self.summary_request_ids.append(request_id)
+            if self.summary_request_ids.count(request_id) == 1:
+                raise RetryableError("temporary summary transport failure")
+        return super().chat(messages, tools, max_tokens, request_id)
+
+
 class MissingSvgThenWriteProvider:
     def __init__(self) -> None:
         self.calls = 0
@@ -1863,13 +1876,23 @@ class CoreTests(unittest.TestCase):
             (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
             ledger = EventLedger(root)
             git = GitManager(root)
-            settings = SummarySettings(interval_turns=1)
+            settings = SummarySettings(interval_turns=1, retries=1)
             agent = CodingAgent(root, ledger, git, summary_settings=settings)
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=FakeCodingProvider()):
+            provider = RetryOncePerSummaryProvider()
+            with (
+                patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
+                patch("scidev_core.time.sleep"),
+            ):
                 agent.run({"payload": {"session_id": "session_checkpoint", "prompt": "创建 hello.py"}})
             records = [json.loads(path.read_text(encoding="utf-8")) for path in (root / ".research" / "summaries").glob("*.json")]
             self.assertEqual(len(records), 2)
             self.assertEqual({record["phase"] for record in records}, {"checkpoint", "final"})
+            self.assertEqual(len(provider.summary_request_ids), 4)
+            checkpoint_retry_ids = provider.summary_request_ids[:2]
+            final_retry_ids = provider.summary_request_ids[2:]
+            self.assertEqual(checkpoint_retry_ids[0], checkpoint_retry_ids[1])
+            self.assertEqual(final_retry_ids[0], final_retry_ids[1])
+            self.assertNotEqual(checkpoint_retry_ids[0], final_retry_ids[0])
 
     def test_git_diff_includes_tracked_and_untracked_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
