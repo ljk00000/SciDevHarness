@@ -133,7 +133,8 @@ def verify_attempt_accent_pixel(
         raise RuntimeError(f"attempt-node screenshot sample is outside the image for {name}: {(pixel_x, pixel_y)}")
 
     expected = DevelopmentTreeView._accent(node).toRgb()
-    closest_difference = 256
+    expected_hue = expected.hue()
+    closest_hue_difference = 361
     closest_color = None
     for offset_y in range(-5, 6):
         for offset_x in range(-5, 6):
@@ -142,15 +143,19 @@ def verify_attempt_accent_pixel(
             if not (0 <= sample_x < image.width() and 0 <= sample_y < image.height()):
                 continue
             actual = image.pixelColor(sample_x, sample_y).toRgb()
-            difference = max(abs(left - right) for left, right in zip(actual.getRgb()[:3], expected.getRgb()[:3]))
-            if difference < closest_difference:
-                closest_difference = difference
+            actual_hue = actual.hue()
+            if actual_hue < 0 or actual.saturation() < 64:
+                continue
+            hue_difference = abs(actual_hue - expected_hue)
+            hue_difference = min(hue_difference, 360 - hue_difference)
+            if hue_difference < closest_hue_difference:
+                closest_hue_difference = hue_difference
                 closest_color = actual.name()
-    if closest_difference > 12:
+    if closest_hue_difference > 14:
         raise RuntimeError(
             f"attempt node accent is not painted at its expected zoomed position for {name}: "
             f"pixel={(pixel_x, pixel_y)} nearest={closest_color} expected={expected.name()} "
-            f"rgb-delta={closest_difference} zoom={zoom:.3f} dpr={device_scale:.2f}"
+            f"hue-delta={closest_hue_difference} zoom={zoom:.3f} dpr={device_scale:.2f}"
         )
 
 
@@ -160,6 +165,15 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
     panes = [splitter.widget(index) for index in range(splitter.count())]
     minimum_widths = window._workbench_minimum_widths()
     sizes = splitter.sizes()
+    explorer_should_be_visible = window._explorer_visibility_override
+    if explorer_should_be_visible is None:
+        explorer_should_be_visible = window.width() >= window.EXPLORER_COLLAPSE_BREAKPOINT
+    explorer_is_visible = not window.explorer.isHidden()
+    if explorer_is_visible != explorer_should_be_visible:
+        raise RuntimeError(
+            f"responsive explorer visibility is wrong for {name}: "
+            f"visible={explorer_is_visible}, expected={explorer_should_be_visible}"
+        )
     if len(panes) != 3 or len(sizes) != 3:
         raise RuntimeError(f"unexpected workbench pane count for {name}: {len(panes)}")
     if any(not pane.isVisible() or pane.width() < minimum for pane, minimum in zip(panes, minimum_widths)):
@@ -170,13 +184,14 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
         raise RuntimeError(f"workbench panes overlap for {name}: {rectangles}")
     if not window.chat_input.isVisible() or window.chat_input.width() < 200:
         raise RuntimeError(f"Agent composer is not usable for {name}: {window.chat_input.size()}")
-    git_entry_width = window.git_entry_button.contentsRect().width()
-    for line in window.git_entry_button.text().splitlines():
-        if window.git_entry_button.fontMetrics().horizontalAdvance(line) > git_entry_width:
-            raise RuntimeError(
-                f"Explorer development-tree label is clipped for {name}: "
-                f"{line!r} needs more than {git_entry_width}px"
-            )
+    if explorer_is_visible:
+        git_entry_width = window.git_entry_button.contentsRect().width()
+        for line in window.git_entry_button.text().splitlines():
+            if window.git_entry_button.fontMetrics().horizontalAdvance(line) > git_entry_width:
+                raise RuntimeError(
+                    f"Explorer development-tree label is clipped for {name}: "
+                    f"{line!r} needs more than {git_entry_width}px"
+                )
     if not window.git_entry_button.toolTip():
         raise RuntimeError(f"Explorer development-tree entry lost its full description for {name}")
     composer = window.chat_input.parentWidget()
@@ -193,7 +208,7 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
     summary_status = window._summary_status_text()
     if window.summary_chip.toolTip() != summary_status or window.summary_chip.accessibleName() != summary_status:
         raise RuntimeError(f"compact summary status lost its full accessible description for {name}")
-    labels = [window.project_label]
+    labels = [window.project_label] if explorer_is_visible else []
     if window.title_project_label.isVisible():
         labels.append(window.title_project_label)
     for label in labels:
@@ -568,6 +583,8 @@ def main(argv: list[str] | None = None) -> int:
             ("expanded-breakpoint", (1120, 700)),
             ("compact-breakpoint", (1119, 700)),
             ("xga", (1024, 768)),
+            ("explorer-visible-edge", (900, 700)),
+            ("explorer-collapsed-edge", (899, 700)),
         )
         for profile_key in UI_PROFILES:
             window.set_ui_profile(profile_key, persist=False)

@@ -137,6 +137,48 @@ class UIProfileTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_narrow_layout_collapses_explorer_and_activity_button_toggles_it(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-responsive-explorer-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.resize(899, 620)
+                window.show()
+                self.app.processEvents()
+
+                self.assertTrue(window.explorer.isHidden())
+                self.assertEqual(window.workbench.sizes()[0], 58)
+                self.assertGreaterEqual(window.workbench.sizes()[1], 480)
+                self.assertEqual(window.activity_buttons[0].toolTip(), "显示资源管理器")
+                self.assertEqual(window.activity_buttons[0].accessibleName(), "显示资源管理器")
+
+                window.resize(900, 620)
+                self.app.processEvents()
+                self.assertFalse(window.explorer.isHidden())
+                self.assertGreaterEqual(window.workbench.sizes()[0], 200)
+
+                window.resize(899, 620)
+                self.app.processEvents()
+                self.assertTrue(window.explorer.isHidden())
+                window.activity_buttons[0].click()
+                self.app.processEvents()
+                self.assertFalse(window.explorer.isHidden())
+                self.assertTrue(window._explorer_visibility_override)
+                self.assertEqual(window.activity_buttons[0].toolTip(), "隐藏资源管理器")
+                self.assertEqual(window.activity_buttons[0].accessibleName(), "隐藏资源管理器")
+
+                window.resize(820, 600)
+                self.app.processEvents()
+                self.assertFalse(window.explorer.isHidden())
+                window.activity_buttons[0].click()
+                self.app.processEvents()
+                self.assertTrue(window.explorer.isHidden())
+                window.resize(1024, 768)
+                self.app.processEvents()
+                self.assertTrue(window.explorer.isHidden())
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_theme_menu_persists_the_choice_and_restores_it_on_startup(self) -> None:
         settings = QSettings("SciDevHarness", "SciDevHarness")
         had_previous = settings.contains("uiProfile")

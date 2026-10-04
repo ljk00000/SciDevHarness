@@ -1615,6 +1615,7 @@ class MessageBubble(QFrame):
 
 class ClientWindow(QMainWindow):
     WORKBENCH_COMPACT_BREAKPOINT = 1000
+    EXPLORER_COLLAPSE_BREAKPOINT = 900
     WORKBENCH_WIDE_MINIMUMS = (240, 360, 280)
     WORKBENCH_COMPACT_MINIMUMS = (200, 320, 232)
 
@@ -1663,6 +1664,7 @@ class ClientWindow(QMainWindow):
         ].layout_ratios
         self._workbench_adapting = False
         self._workbench_adapt_pending = False
+        self._explorer_visibility_override: bool | None = None
         self._titlebar_compact: bool | None = None
         self._git_tree_compact_restore: tuple[float, float, float] | None = None
         self._git_tree_compact_auto_view: tuple[float, float, float] | None = None
@@ -2060,7 +2062,7 @@ class ClientWindow(QMainWindow):
 
     def _build_left_panel(self) -> QWidget:
         shell = QWidget()
-        shell.setMinimumWidth(self.WORKBENCH_COMPACT_MINIMUMS[0])
+        shell.setMinimumWidth(58)
         shell.setMaximumWidth(480)
         shell.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout = QHBoxLayout(shell)
@@ -2083,6 +2085,7 @@ class ClientWindow(QMainWindow):
             button.setObjectName("ActivityButton")
             button.setText(symbol)
             button.setToolTip(tip)
+            button.setAccessibleName(tip)
             button.setCheckable(True)
             button.setAutoExclusive(True)
             button.setChecked(index == 0)
@@ -2186,6 +2189,7 @@ class ClientWindow(QMainWindow):
         explorer_layout.addWidget(hint)
         layout.addWidget(rail)
         layout.addWidget(explorer, 1)
+        self.left_panel = shell
         self.explorer = explorer
         return shell
 
@@ -2346,17 +2350,56 @@ class ClientWindow(QMainWindow):
             sizes = self.workbench.sizes()
             total = sum(sizes)
             if total > 0 and len(sizes) == 3:
-                self._workbench_user_ratios = (sizes[0] / total, sizes[2] / total)
+                if self.explorer.isHidden():
+                    left_ratio = (
+                        self._workbench_user_ratios[0]
+                        if self._workbench_user_ratios is not None
+                        else UI_PROFILES[self.ui_profile].layout_ratios[0]
+                    )
+                else:
+                    left_ratio = sizes[0] / total
+                self._workbench_user_ratios = (left_ratio, sizes[2] / total)
 
     def _workbench_minimum_widths(self) -> tuple[int, int, int]:
-        if self.width() < self.WORKBENCH_COMPACT_BREAKPOINT:
-            return self.WORKBENCH_COMPACT_MINIMUMS
-        return self.WORKBENCH_WIDE_MINIMUMS
+        minimums = (
+            self.WORKBENCH_COMPACT_MINIMUMS
+            if self.width() < self.WORKBENCH_COMPACT_BREAKPOINT
+            else self.WORKBENCH_WIDE_MINIMUMS
+        )
+        if hasattr(self, "explorer") and self.explorer.isHidden():
+            return (58, minimums[1], minimums[2])
+        return minimums
+
+    def _apply_responsive_explorer_visibility(self) -> bool:
+        if not hasattr(self, "explorer"):
+            return True
+        should_show = self._explorer_visibility_override
+        if should_show is None:
+            should_show = self.width() >= self.EXPLORER_COLLAPSE_BREAKPOINT
+        if (not self.explorer.isHidden()) != should_show:
+            self.explorer.setVisible(should_show)
+        if hasattr(self, "left_panel"):
+            if should_show:
+                minimum = (
+                    self.WORKBENCH_COMPACT_MINIMUMS[0]
+                    if self.width() < self.WORKBENCH_COMPACT_BREAKPOINT
+                    else self.WORKBENCH_WIDE_MINIMUMS[0]
+                )
+            else:
+                minimum = 58
+            self.left_panel.setMinimumWidth(minimum)
+        if getattr(self, "activity_buttons", None):
+            label = "隐藏资源管理器" if should_show else "显示资源管理器"
+            self.activity_buttons[0].setToolTip(label)
+            self.activity_buttons[0].setAccessibleName(label)
+            self.activity_buttons[0].setAccessibleDescription(label)
+        return should_show
 
     def _adapt_workbench_layout(self) -> None:
         self._workbench_adapt_pending = False
         if not hasattr(self, "workbench"):
             return
+        explorer_visible = self._apply_responsive_explorer_visibility()
         total = self.workbench.width() - self.workbench.handleWidth() * 2
         if total <= 0:
             return
@@ -2368,7 +2411,10 @@ class ClientWindow(QMainWindow):
             left = int(total * left_ratio)
             chat = int(total * chat_ratio)
         left_minimum, center_minimum, chat_minimum = self._workbench_minimum_widths()
-        left = min(440, max(left_minimum, left))
+        if explorer_visible:
+            left = min(440, max(left_minimum, left))
+        else:
+            left = 58
         chat = min(460, max(chat_minimum, chat))
         center = total - left - chat
         if center < center_minimum:
@@ -2376,7 +2422,8 @@ class ClientWindow(QMainWindow):
             chat_reduction = min(deficit, max(0, chat - chat_minimum))
             chat -= chat_reduction
             deficit -= chat_reduction
-            left -= min(deficit, max(0, left - left_minimum))
+            if explorer_visible:
+                left -= min(deficit, max(0, left - left_minimum))
             center = total - left - chat
         self._workbench_adapting = True
         try:
@@ -4827,8 +4874,18 @@ class ClientWindow(QMainWindow):
         self._append_log("已返回编码工作区")
 
     def focus_explorer(self) -> None:
+        workspace_is_active = self.workspace_stack.currentWidget() is self.workspace_page
+        should_show = self.explorer.isHidden() if workspace_is_active else True
+        self._explorer_visibility_override = should_show
+        self.explorer.setVisible(should_show)
         self.show_workspace()
-        self.file_tree.setFocus()
+        self._adapt_workbench_layout()
+        if should_show:
+            self.file_tree.setFocus()
+        else:
+            editor = self._active_editor()
+            if editor is not None:
+                editor.setFocus()
 
     def _handle_coding(self, task: dict[str, Any]) -> dict[str, Any]:
         return self.agent.run(task)
