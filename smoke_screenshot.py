@@ -474,6 +474,25 @@ def capture_ui_profile_menu(window: ClientWindow, app: QApplication, output_dir:
     print(f"{destination} ({image.width()}x{image.height()})")
 
 
+def capture_summary_settings_panel(window: ClientWindow, app: QApplication, output_dir: Path) -> None:
+    was_visible = window.summary_settings_panel.isVisible()
+    if not was_visible:
+        window.toggle_summary_settings()
+    try:
+        for suffix, size in (
+            ("wide", (1500, 920)),
+            ("medium", (1120, 700)),
+            ("compact", (820, 600)),
+        ):
+            name = f"summary-settings-{suffix}"
+            image = capture(window, app, output_dir, name, size)
+            verify_screenshot_content(window, name)
+            verify_workbench_layout(window, name)
+    finally:
+        if not was_visible and window.summary_settings_panel.isVisible():
+            window.toggle_summary_settings()
+
+
 def send_wheel(
     window: ClientWindow,
     modifiers: Qt.KeyboardModifier,
@@ -601,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
         capture(window, app, output_dir, "editor-wide", (1500, 920))
         verify_workbench_layout(window, "editor-wide")
         verify_ui_profile(window, "studio", "editor-wide")
+        capture_summary_settings_panel(window, app, output_dir)
         capture_ui_profile_menu(window, app, output_dir)
         window.show_git()
         fixture_nodes = [

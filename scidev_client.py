@@ -871,9 +871,20 @@ class ProjectFilterProxy(QSortFilterProxyModel):
         self._filter_text = ""
 
     def set_filter_text(self, text: str) -> None:
-        self.beginFilterChange()
+        begin_change = getattr(self, "beginFilterChange", None)
+        end_change = getattr(self, "endFilterChange", None)
+        if callable(begin_change) and callable(end_change):
+            begin_change()
+            self._filter_text = text.strip().casefold()
+            end_change(QSortFilterProxyModel.Direction.Rows)
+            return
+
         self._filter_text = text.strip().casefold()
-        self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
+        invalidate_rows = getattr(self, "invalidateRowsFilter", None)
+        if callable(invalidate_rows):
+            invalidate_rows()
+        else:
+            self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
         model = self.sourceModel()
@@ -1787,6 +1798,7 @@ class ClientWindow(QMainWindow):
         self._workbench_adapt_pending = False
         self._explorer_visibility_override: bool | None = None
         self._titlebar_compact: bool | None = None
+        self._summary_settings_compact: bool | None = None
         self._git_tree_compact_restore: tuple[float, float, float] | None = None
         self._git_tree_compact_auto_view: tuple[float, float, float] | None = None
         self._git_tree_short_layout: bool | None = None
@@ -2586,7 +2598,7 @@ class ClientWindow(QMainWindow):
         composer_top = getattr(self, "chat_composer_top", None)
         if composer_layout is None or composer_top is None:
             return
-        compact = self.width() < self.WORKBENCH_COMPACT_BREAKPOINT
+        compact = self._is_chat_compact()
         horizontal_margin = 8 if compact else 12
         composer_layout.setContentsMargins(horizontal_margin, 10, horizontal_margin, 10)
         composer_top.setSpacing(2 if compact else 6)
@@ -2594,6 +2606,104 @@ class ClientWindow(QMainWindow):
             self.summary_chip.setText(self._summary_chip_text())
             self.summary_chip.setToolTip(self._summary_status_text())
             self.summary_chip.setAccessibleName(self._summary_status_text())
+        self._adapt_summary_settings_layout()
+
+    def _adapt_summary_settings_layout(self) -> None:
+        layout = getattr(self, "summary_settings_layout", None)
+        if layout is None:
+            return
+        compact = self._is_chat_compact()
+        if self._summary_settings_compact == compact:
+            return
+        self._summary_settings_compact = compact
+
+        widgets = (
+            self.summary_settings_title,
+            self.summary_enabled_checkbox,
+            self.summary_state_label,
+            self.summary_model_label,
+            self.summary_model_edit,
+            self.summary_tokens_label,
+            self.summary_tokens_spin,
+            self.summary_context_label,
+            self.summary_context_spin,
+            self.summary_retry_label,
+            self.summary_retry_spin,
+            self.summary_failure_note,
+            self.summary_interval_label,
+            self.summary_interval_spin,
+            self.summary_frequency_note,
+            self.summary_instruction_label,
+            self.summary_instruction_edit,
+        )
+        for widget in widgets:
+            layout.removeWidget(widget)
+
+        if compact:
+            layout.setContentsMargins(9, 7, 9, 7)
+            layout.setHorizontalSpacing(6)
+            layout.setVerticalSpacing(4)
+            placements = (
+                (self.summary_settings_title, 0, 0, 1, 1),
+                (self.summary_state_label, 0, 1, 1, 1),
+                (self.summary_enabled_checkbox, 1, 0, 1, 2),
+                (self.summary_model_label, 2, 0, 1, 1),
+                (self.summary_model_edit, 2, 1, 1, 1),
+                (self.summary_tokens_label, 3, 0, 1, 1),
+                (self.summary_tokens_spin, 3, 1, 1, 1),
+                (self.summary_context_label, 4, 0, 1, 1),
+                (self.summary_context_spin, 4, 1, 1, 1),
+                (self.summary_retry_label, 5, 0, 1, 1),
+                (self.summary_retry_spin, 5, 1, 1, 1),
+                (self.summary_interval_label, 6, 0, 1, 1),
+                (self.summary_interval_spin, 6, 1, 1, 1),
+                (self.summary_instruction_label, 7, 0, 1, 1),
+                (self.summary_instruction_edit, 7, 1, 1, 1),
+            )
+            self.summary_enabled_checkbox.setText("对话结束自动总结")
+            self.summary_state_label.setText(self._summary_compact_status_text())
+            self.summary_failure_note.setVisible(False)
+            self.summary_frequency_note.setVisible(False)
+            state_alignment = Qt.AlignmentFlag.AlignLeft
+            column_stretches = (0, 1, 0, 0)
+        else:
+            layout.setContentsMargins(12, 9, 12, 9)
+            layout.setHorizontalSpacing(8)
+            layout.setVerticalSpacing(6)
+            placements = (
+                (self.summary_settings_title, 0, 0, 1, 4),
+                (self.summary_enabled_checkbox, 1, 0, 1, 2),
+                (self.summary_state_label, 1, 2, 1, 2),
+                (self.summary_model_label, 2, 0, 1, 1),
+                (self.summary_model_edit, 2, 1, 1, 3),
+                (self.summary_tokens_label, 3, 0, 1, 1),
+                (self.summary_tokens_spin, 3, 1, 1, 1),
+                (self.summary_context_label, 3, 2, 1, 1),
+                (self.summary_context_spin, 3, 3, 1, 1),
+                (self.summary_retry_label, 4, 0, 1, 1),
+                (self.summary_retry_spin, 4, 1, 1, 1),
+                (self.summary_failure_note, 4, 2, 1, 2),
+                (self.summary_interval_label, 5, 0, 1, 1),
+                (self.summary_interval_spin, 5, 1, 1, 1),
+                (self.summary_frequency_note, 5, 2, 1, 2),
+                (self.summary_instruction_label, 6, 0, 1, 1),
+                (self.summary_instruction_edit, 6, 1, 1, 3),
+            )
+            self.summary_enabled_checkbox.setText("每次编码对话结束自动总结")
+            self.summary_state_label.setText(self._summary_status_text())
+            self.summary_failure_note.setVisible(True)
+            self.summary_frequency_note.setVisible(True)
+            state_alignment = Qt.AlignmentFlag.AlignRight
+            column_stretches = (0, 1, 0, 1)
+
+        for column, stretch in enumerate(column_stretches):
+            layout.setColumnStretch(column, stretch)
+            layout.setColumnMinimumWidth(column, 56 if compact and column == 0 else 0)
+        for widget, row, column, row_span, column_span in placements:
+            if widget is self.summary_state_label:
+                layout.addWidget(widget, row, column, row_span, column_span, alignment=state_alignment)
+            else:
+                layout.addWidget(widget, row, column, row_span, column_span)
 
     def resizeEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         super().resizeEvent(event)
@@ -3174,6 +3284,7 @@ class ClientWindow(QMainWindow):
 
     def _build_chat_panel(self) -> QWidget:
         chat = QFrame()
+        self.chat_panel = chat
         chat.setObjectName("ChatPane")
         chat.setMinimumWidth(self.WORKBENCH_COMPACT_MINIMUMS[2])
         chat.setMaximumWidth(500)
@@ -3213,12 +3324,13 @@ class ClientWindow(QMainWindow):
         self.summary_settings_panel.setObjectName("SummarySettings")
         self.summary_settings_panel.setVisible(False)
         settings_layout = QGridLayout(self.summary_settings_panel)
+        self.summary_settings_layout = settings_layout
         settings_layout.setContentsMargins(12, 9, 12, 9)
         settings_layout.setHorizontalSpacing(8)
         settings_layout.setVerticalSpacing(6)
-        settings_title = QLabel("会话总结")
-        settings_title.setObjectName("SummarySettingsTitle")
-        settings_layout.addWidget(settings_title, 0, 0, 1, 4)
+        self.summary_settings_title = QLabel("会话总结")
+        self.summary_settings_title.setObjectName("SummarySettingsTitle")
+        settings_layout.addWidget(self.summary_settings_title, 0, 0, 1, 4)
         self.summary_enabled_checkbox = QCheckBox("每次编码对话结束自动总结")
         self.summary_enabled_checkbox.setChecked(self.summary_settings.enabled)
         self.summary_enabled_checkbox.toggled.connect(lambda _checked: self._persist_summary_settings())
@@ -3226,13 +3338,15 @@ class ClientWindow(QMainWindow):
         self.summary_state_label = QLabel(self._summary_status_text())
         self.summary_state_label.setObjectName("SummaryState")
         settings_layout.addWidget(self.summary_state_label, 1, 2, 1, 2, alignment=Qt.AlignmentFlag.AlignRight)
-        settings_layout.addWidget(QLabel("模型"), 2, 0)
+        self.summary_model_label = QLabel("模型")
+        settings_layout.addWidget(self.summary_model_label, 2, 0)
         self.summary_model_edit = QLineEdit(self.summary_settings.model)
         self.summary_model_edit.setPlaceholderText("跟随主模型")
         self.summary_model_edit.setToolTip("留空表示使用主 Agent 模型")
         self.summary_model_edit.editingFinished.connect(self._persist_summary_settings)
         settings_layout.addWidget(self.summary_model_edit, 2, 1, 1, 3)
-        settings_layout.addWidget(QLabel("最大输出"), 3, 0)
+        self.summary_tokens_label = QLabel("最大输出")
+        settings_layout.addWidget(self.summary_tokens_label, 3, 0)
         self.summary_tokens_spin = QSpinBox()
         self.summary_tokens_spin.setRange(200, 32000)
         self.summary_tokens_spin.setSingleStep(1000)
@@ -3240,7 +3354,8 @@ class ClientWindow(QMainWindow):
         self.summary_tokens_spin.setSuffix(" tokens")
         self.summary_tokens_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
         settings_layout.addWidget(self.summary_tokens_spin, 3, 1)
-        settings_layout.addWidget(QLabel("上下文"), 3, 2)
+        self.summary_context_label = QLabel("上下文")
+        settings_layout.addWidget(self.summary_context_label, 3, 2)
         self.summary_context_spin = QSpinBox()
         self.summary_context_spin.setRange(4000, 50000)
         self.summary_context_spin.setSingleStep(1000)
@@ -3248,17 +3363,19 @@ class ClientWindow(QMainWindow):
         self.summary_context_spin.setSuffix(" chars")
         self.summary_context_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
         settings_layout.addWidget(self.summary_context_spin, 3, 3)
-        settings_layout.addWidget(QLabel("失败重试"), 4, 0)
+        self.summary_retry_label = QLabel("失败重试")
+        settings_layout.addWidget(self.summary_retry_label, 4, 0)
         self.summary_retry_spin = QSpinBox()
         self.summary_retry_spin.setRange(0, 3)
         self.summary_retry_spin.setValue(self.summary_settings.retries)
         self.summary_retry_spin.setSuffix(" times")
         self.summary_retry_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
         settings_layout.addWidget(self.summary_retry_spin, 4, 1)
-        summary_note = QLabel("总结失败不会影响代码任务")
-        summary_note.setObjectName("Hint")
-        settings_layout.addWidget(summary_note, 4, 2, 1, 2)
-        settings_layout.addWidget(QLabel("阶段频率"), 5, 0)
+        self.summary_failure_note = QLabel("总结失败不会影响代码任务")
+        self.summary_failure_note.setObjectName("Hint")
+        settings_layout.addWidget(self.summary_failure_note, 4, 2, 1, 2)
+        self.summary_interval_label = QLabel("阶段频率")
+        settings_layout.addWidget(self.summary_interval_label, 5, 0)
         self.summary_interval_spin = QSpinBox()
         self.summary_interval_spin.setRange(0, 32)
         self.summary_interval_spin.setValue(self.summary_settings.interval_turns)
@@ -3267,10 +3384,11 @@ class ClientWindow(QMainWindow):
         self.summary_interval_spin.setToolTip("每 N 轮 Agent 调用生成一次阶段总结；0 表示只在对话结束时总结")
         self.summary_interval_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
         settings_layout.addWidget(self.summary_interval_spin, 5, 1)
-        frequency_note = QLabel("0 = 只在结束时总结")
-        frequency_note.setObjectName("Hint")
-        settings_layout.addWidget(frequency_note, 5, 2, 1, 2)
-        settings_layout.addWidget(QLabel("指令"), 6, 0)
+        self.summary_frequency_note = QLabel("0 = 只在结束时总结")
+        self.summary_frequency_note.setObjectName("Hint")
+        settings_layout.addWidget(self.summary_frequency_note, 5, 2, 1, 2)
+        self.summary_instruction_label = QLabel("指令")
+        settings_layout.addWidget(self.summary_instruction_label, 6, 0)
         self.summary_instruction_edit = QLineEdit(self.summary_settings.instruction)
         self.summary_instruction_edit.setPlaceholderText("要求总结包含哪些内容")
         self.summary_instruction_edit.editingFinished.connect(self._persist_summary_settings)
@@ -3345,9 +3463,20 @@ class ClientWindow(QMainWindow):
             return "总结已关闭"
         return f"总结已开启 · 每{settings.interval_turns}轮" if settings.interval_turns else "总结已开启 · 仅结束"
 
+    def _is_chat_compact(self) -> bool:
+        chat_panel = getattr(self, "chat_panel", None)
+        chat_width = chat_panel.width() if chat_panel is not None else self.width()
+        return self.width() < self.WORKBENCH_COMPACT_BREAKPOINT or chat_width < 390
+
+    def _summary_compact_status_text(self) -> str:
+        settings = getattr(self, "summary_settings", SummarySettings())
+        if not settings.enabled:
+            return "已关闭"
+        return f"已开 · {settings.interval_turns}轮" if settings.interval_turns else "已开 · 结束"
+
     def _summary_chip_text(self) -> str:
         settings = getattr(self, "summary_settings", SummarySettings())
-        compact = self.width() < self.WORKBENCH_COMPACT_BREAKPOINT
+        compact = self._is_chat_compact()
         if not settings.enabled:
             return "关" if compact else "总结关"
         if settings.interval_turns:
@@ -3374,7 +3503,13 @@ class ClientWindow(QMainWindow):
             self.summary_settings.save(self.project_root)
             self.agent.summary_settings = self.summary_settings
             state = self._summary_status_text()
-            self.summary_state_label.setText(state)
+            compact_state = (
+                self._summary_compact_status_text()
+                if self._summary_settings_compact
+                else state
+            )
+            self.summary_state_label.setText(compact_state)
+            self.summary_state_label.setToolTip(state)
             self.summary_chip.setText(self._summary_chip_text())
             self.summary_chip.setToolTip(state)
             self.summary_chip.setAccessibleName(state)

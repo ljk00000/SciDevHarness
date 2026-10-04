@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import os
 import subprocess
 import sys
@@ -29,9 +30,10 @@ from scidev_client import (  # noqa: E402
     DevelopmentTreeView,
     MAX_TREE_LAYOUT_BYTES,
     NotificationToast,
+    ProjectFilterProxy,
     TerminalOutputDecoder,
 )
-from scidev_core import CodingToolbox  # noqa: E402
+from scidev_core import CodingToolbox, SummarySettings  # noqa: E402
 
 
 class DevelopmentTreeLayoutTests(unittest.TestCase):
@@ -871,6 +873,18 @@ class WorkspaceSearchTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_quick_open_filter_falls_back_when_new_qt_api_is_unavailable(self) -> None:
+        proxy = ProjectFilterProxy()
+        with (
+            patch.object(proxy, "beginFilterChange", None),
+            patch.object(proxy, "endFilterChange", None),
+            patch.object(proxy, "invalidateRowsFilter") as invalidate_rows,
+        ):
+            proxy.set_filter_text("Ex")
+
+        self.assertEqual(proxy._filter_text, "ex")
+        invalidate_rows.assert_called_once_with()
+
     def test_search_skips_oversized_files_without_reading_them_and_opens_results(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-workspace-search-") as temp:
             root = Path(temp)
@@ -1078,6 +1092,69 @@ class UnsavedCloseTests(unittest.TestCase):
             finally:
                 if not window._closing:
                     window.close()
+                self.app.processEvents()
+
+
+class SummarySettingsUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_summary_frequency_and_enabled_state_persist_from_the_chat_controls(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-summary-settings-ui-") as temp:
+            root = Path(temp)
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window.toggle_summary_settings()
+                self.app.processEvents()
+                self.assertTrue(window.summary_settings_panel.isVisible())
+
+                interval = 7 if window.summary_interval_spin.value() != 7 else 8
+                window.summary_interval_spin.setValue(interval)
+                settings_path = SummarySettings.config_path(root)
+                saved = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["summary_interval_turns"], interval)
+                self.assertIs(window.agent.summary_settings, window.summary_settings)
+                self.assertIn(f"{interval}轮", window.summary_chip.text())
+
+                window.summary_enabled_checkbox.setChecked(False)
+                saved = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertFalse(saved["summary_enabled"])
+                self.assertEqual(window.summary_chip.text(), "总结关")
+
+                window.resize(820, 600)
+                self.app.processEvents()
+                QTest.qWait(30)
+                self.assertTrue(window._summary_settings_compact)
+                self.assertEqual(window.summary_enabled_checkbox.text(), "对话结束自动总结")
+                self.assertEqual(window.summary_state_label.text(), "已关闭")
+                self.assertFalse(window.summary_failure_note.isVisible())
+                self.assertFalse(window.summary_frequency_note.isVisible())
+                for label, control in (
+                    (window.summary_model_label, window.summary_model_edit),
+                    (window.summary_tokens_label, window.summary_tokens_spin),
+                    (window.summary_context_label, window.summary_context_spin),
+                    (window.summary_retry_label, window.summary_retry_spin),
+                    (window.summary_interval_label, window.summary_interval_spin),
+                    (window.summary_instruction_label, window.summary_instruction_edit),
+                ):
+                    self.assertLess(label.geometry().right(), control.geometry().left())
+                    self.assertLessEqual(control.geometry().right(), window.summary_settings_panel.rect().right())
+
+                window.resize(1120, 700)
+                self.app.processEvents()
+                QTest.qWait(30)
+                self.assertTrue(window._summary_settings_compact)
+                self.assertEqual(window.summary_chip.text(), "关")
+
+                window.resize(1500, 920)
+                self.app.processEvents()
+                QTest.qWait(30)
+                self.assertFalse(window._summary_settings_compact)
+                self.assertEqual(window.summary_chip.text(), "总结关")
+            finally:
+                window.close()
                 self.app.processEvents()
 
 
