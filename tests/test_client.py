@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import ctypes
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -758,6 +761,48 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    @unittest.skipUnless(os.name == "nt", "Windows junction behavior is platform-specific")
+    def test_junction_is_not_exposed_as_a_deletable_project_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-explorer-junction-") as temp:
+            root = Path(temp) / "project"
+            actual = root / "actual_data"
+            actual.mkdir(parents=True)
+            protected = actual / "keep.txt"
+            protected.write_text("keep this target\n", encoding="utf-8")
+            junction = root / "linked_data"
+            result = subprocess.run(
+                ["cmd.exe", "/c", "mklink", "/J", str(junction), str(actual)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            self.assertTrue(junction.is_junction())
+
+            window = ClientWindow(root)
+            try:
+                window.show()
+                deadline = time.monotonic() + 3
+                source_index = window.file_model.index(str(junction))
+                while time.monotonic() < deadline and not source_index.isValid():
+                    self.app.processEvents()
+                    QTest.qWait(10)
+                    source_index = window.file_model.index(str(junction))
+                self.assertTrue(source_index.isValid())
+
+                # The link must not be navigable as a normal project folder.
+                self.assertFalse(window.file_proxy.mapFromSource(source_index).isValid())
+                with patch.object(QMessageBox, "question") as confirm_delete:
+                    window.delete_explorer_path(junction)
+                confirm_delete.assert_not_called()
+                self.assertTrue(junction.is_junction())
+                self.assertEqual(protected.read_text(encoding="utf-8"), "keep this target\n")
+            finally:
+                window.close()
+                self.app.processEvents()
+                junction.rmdir()
+
     @unittest.skipUnless(os.name == "nt", "Windows short-path aliases are platform-specific")
     def test_rename_accepts_a_windows_short_path_alias(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-short-path-rename-") as temp:
@@ -794,6 +839,37 @@ class WorkspaceSearchTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_typing_quick_open_filters_project_files_without_qt_deprecation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-live-file-filter-") as temp:
+            root = Path(temp)
+            source_dir = root / "src"
+            source_dir.mkdir()
+            match = source_dir / "needle_module.py"
+            match.write_text("value = 1\n", encoding="utf-8")
+            miss = source_dir / "unrelated.py"
+            miss.write_text("value = 2\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window.command_search.setFocus()
+                self.app.processEvents()
+                with warnings.catch_warnings(record=True) as emitted:
+                    warnings.simplefilter("always", DeprecationWarning)
+                    QTest.keyClicks(window.command_search, "needle")
+                    self.app.processEvents()
+
+                self.assertEqual(window.file_proxy._filter_text, "needle")
+                match_index = window.file_model.index(str(match))
+                miss_index = window.file_model.index(str(miss))
+                self.assertTrue(window.file_proxy.mapFromSource(match_index).isValid())
+                self.assertFalse(window.file_proxy.mapFromSource(miss_index).isValid())
+                self.assertFalse(
+                    any("invalidateFilter" in str(warning.message) for warning in emitted)
+                )
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_search_skips_oversized_files_without_reading_them_and_opens_results(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-workspace-search-") as temp:
             root = Path(temp)
@@ -804,18 +880,20 @@ class WorkspaceSearchTests(unittest.TestCase):
             with oversized.open("wb") as stream:
                 stream.truncate(CodingToolbox.MAX_READ_BYTES + 1)
 
-            original_read_bytes = Path.read_bytes
+            original_open = Path.open
 
-            def reject_oversized_read(path: Path) -> bytes:
+            def reject_oversized_open(path: Path, *args, **kwargs):
                 if path == oversized:
-                    raise AssertionError("workspace search must not load an oversized file")
-                return original_read_bytes(path)
+                    raise AssertionError("workspace search must not open an oversized file")
+                return original_open(path, *args, **kwargs)
 
             window = ClientWindow(root)
             try:
-                window.workspace_search_input.setText("needle")
-                with patch.object(Path, "read_bytes", reject_oversized_read):
-                    window._search_workspace()
+                window.workspace_search_input.setFocus()
+                with patch.object(Path, "open", reject_oversized_open):
+                    QTest.keyClicks(window.workspace_search_input, "needle")
+                    QTest.keyClick(window.workspace_search_input, Qt.Key.Key_Return)
+                    self.app.processEvents()
 
                 self.assertEqual(window.workspace_search_results.topLevelItemCount(), 1)
                 result = window.workspace_search_results.topLevelItem(0)
@@ -1050,6 +1128,44 @@ class StreamingAgentUiTests(unittest.TestCase):
                 self.assertEqual(bubble.role_label.text(), "Agent · 网络中断，等待自动重试")
                 self.assertEqual(bubble.body_label.text(), "Partial answer")
                 self.assertEqual(window._streaming_bubbles, {})
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
+class TerminalUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_real_terminal_collects_quoted_command_output_and_nonzero_exit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-terminal-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                script = (
+                    "import sys; print('stdout-sentinel'); "
+                    "print('stderr-sentinel', file=sys.stderr); "
+                    "print('argument=' + sys.argv[1]); sys.exit(7)"
+                )
+                window.terminal_input.setText(
+                    subprocess.list2cmdline([sys.executable, "-c", script, "argument with spaces"])
+                )
+                window._run_terminal_command()
+
+                deadline = time.monotonic() + 10
+                while window.terminal_process is not None and time.monotonic() < deadline:
+                    self.app.processEvents()
+                    QTest.qWait(10)
+
+                self.assertIsNone(window.terminal_process, "terminal process did not finish")
+                terminal_text = window.terminal_output.toPlainText()
+                self.assertIn("stdout-sentinel", terminal_text)
+                self.assertIn("stderr-sentinel", terminal_text)
+                self.assertIn("argument=argument with spaces", terminal_text)
+                self.assertIn("[退出码 7]", terminal_text)
+                self.assertIn("stderr-sentinel", window.problems_output.toPlainText())
             finally:
                 window.close()
                 self.app.processEvents()

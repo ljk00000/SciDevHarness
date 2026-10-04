@@ -839,13 +839,17 @@ class ProjectFilterProxy(QSortFilterProxyModel):
         self._filter_text = ""
 
     def set_filter_text(self, text: str) -> None:
+        self.beginFilterChange()
         self._filter_text = text.strip().casefold()
-        self.invalidateFilter()
+        self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
         model = self.sourceModel()
         index = model.index(source_row, 0, source_parent)
         name = model.fileName(index)
+        path = Path(model.filePath(index))
+        if path.is_symlink() or path.is_junction():
+            return False
         if name.casefold() in _EXCLUDED_PROJECT_NAMES_CASEFOLD:
             return False
         return not self._filter_text or model.isDir(index) or self._filter_text in name.casefold()
@@ -4828,6 +4832,10 @@ class ClientWindow(QMainWindow):
 
     def delete_explorer_path(self, target: Path | None) -> None:
         if target is None:
+            return
+        target = Path(target)
+        if target.is_symlink() or target.is_junction():
+            self._append_log("删除失败：不能将链接当作普通项目文件夹删除")
             return
         target = target.resolve()
         if target == self.project_root or not target.is_relative_to(self.project_root):
