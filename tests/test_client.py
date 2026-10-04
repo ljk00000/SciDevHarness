@@ -615,6 +615,51 @@ class EditorTabBehaviorTests(unittest.TestCase):
                 self.app.processEvents()
 
 
+class ExplorerInteractionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_double_clicking_a_file_pins_it_and_shows_its_contents(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-explorer-double-click-") as temp:
+            root = Path(temp)
+            source = root / "src" / "hello.py"
+            source.parent.mkdir()
+            content = 'print("opened from explorer")\n'
+            source.write_text(content, encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.resize(1280, 820)
+                window.show()
+                self.app.processEvents()
+                QTest.qWait(100)
+
+                source_index = window.file_model.index(str(source))
+                index = window.file_proxy.mapFromSource(source_index)
+                self.assertTrue(index.isValid())
+                window.file_tree.expand(index.parent())
+                self.app.processEvents()
+                QTest.qWait(80)
+                rect = window.file_tree.visualRect(index)
+                self.assertTrue(rect.isValid())
+
+                QTest.mouseDClick(
+                    window.file_tree.viewport(),
+                    Qt.MouseButton.LeftButton,
+                    pos=rect.center(),
+                )
+                self.app.processEvents()
+
+                editor = window._active_editor()
+                self.assertEqual(window.current_file.resolve(), source.resolve())
+                self.assertEqual(editor.toPlainText(), content)
+                self.assertIn(editor, window._pinned_editors)
+                self.assertIsNot(window._preview_editor, editor)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
 class FindReplaceUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -729,6 +774,51 @@ class SymbolNavigationTests(unittest.TestCase):
                     for index in range(window.workspace_search_results.topLevelItemCount())
                 )
                 self.assertNotIn("VALUE", result_text)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_f12_definition_navigation_round_trips_with_alt_left_and_right(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-definition-history-") as temp:
+            root = Path(temp)
+            library = root / "library.py"
+            library.write_text("def target():\n    return 7\n", encoding="utf-8")
+            caller = root / "caller.py"
+            caller_text = "def run():\n    return target()\n"
+            caller.write_text(caller_text, encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window._open_file(caller, preview=False)
+                editor = window._active_editor()
+                cursor = editor.textCursor()
+                cursor.setPosition(caller_text.rindex("target"))
+                editor.setTextCursor(cursor)
+                editor.setFocus()
+                self.app.processEvents()
+
+                QTest.keyClick(editor, Qt.Key.Key_F12)
+                self.app.processEvents()
+                self.assertEqual(window.current_file.resolve(), library.resolve())
+                self.assertEqual(window._active_editor().textCursor().blockNumber(), 0)
+
+                QTest.keyClick(
+                    window._active_editor(),
+                    Qt.Key.Key_Left,
+                    Qt.KeyboardModifier.AltModifier,
+                )
+                self.app.processEvents()
+                self.assertEqual(window.current_file.resolve(), caller.resolve())
+                self.assertEqual(window._active_editor().textCursor().blockNumber(), 1)
+
+                QTest.keyClick(
+                    window._active_editor(),
+                    Qt.Key.Key_Right,
+                    Qt.KeyboardModifier.AltModifier,
+                )
+                self.app.processEvents()
+                self.assertEqual(window.current_file.resolve(), library.resolve())
+                self.assertEqual(window._active_editor().textCursor().blockNumber(), 0)
             finally:
                 window.close()
                 self.app.processEvents()
@@ -1063,6 +1153,58 @@ class WorkspaceSearchTests(unittest.TestCase):
                     any("invalidateFilter" in str(warning.message) for warning in emitted)
                 )
             finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_all_live_search_entries_accept_typing_without_qt_slot_errors(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-search-black-box-") as temp:
+            root = Path(temp)
+            source = root / "example.py"
+            source.write_text("def target():\n    return 1\nprint(target())\n", encoding="utf-8")
+            window = ClientWindow(root)
+            slot_errors: list[str] = []
+            original_excepthook = sys.excepthook
+            try:
+                window.show()
+                window._open_file(source, preview=False)
+                self.app.processEvents()
+                sys.excepthook = lambda kind, error, _traceback: slot_errors.append(
+                    f"{kind.__name__}: {error}"
+                )
+
+                editor = window._active_editor()
+                QTest.keyClick(editor, Qt.Key.Key_P, Qt.KeyboardModifier.ControlModifier)
+                QTest.keyClicks(window.command_search, "example")
+                self.app.processEvents()
+                self.assertEqual(window.file_proxy._filter_text, "example")
+
+                QTest.keyClick(
+                    window.command_search,
+                    Qt.Key.Key_P,
+                    Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+                )
+                QTest.keyClicks(window.command_search, "search")
+                self.app.processEvents()
+                self.assertEqual(window.command_completer.completionCount(), 1)
+
+                QTest.keyClick(window.command_search, Qt.Key.Key_Escape)
+                QTest.keyClick(
+                    window.command_search,
+                    Qt.Key.Key_F,
+                    Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+                )
+                QTest.keyClicks(window.workspace_search_input, "target")
+                QTest.keyClick(window.workspace_search_input, Qt.Key.Key_Return)
+                self.app.processEvents()
+                self.assertEqual(window.workspace_search_results.topLevelItemCount(), 2)
+
+                QTest.keyClick(window.workspace_search_input, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
+                QTest.keyClicks(window.find_input, "target")
+                self.app.processEvents()
+                self.assertEqual(window._active_editor().textCursor().selectedText(), "target")
+                self.assertEqual(slot_errors, [])
+            finally:
+                sys.excepthook = original_excepthook
                 window.close()
                 self.app.processEvents()
 
