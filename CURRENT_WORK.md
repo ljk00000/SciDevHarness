@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-10-04 22:15 (Asia/Shanghai) - 同屏显示变化信号修复
+- 修复上一轮确认的问题：订阅当前屏幕的 `geometryChanged` 与 `availableGeometryChanged`，同屏改变分辨率时重算 UI/普通窗口尺寸，工作区变化时重新夹取窗口；切屏会解绑旧屏幕信号，最大化/全屏状态保留系统几何。
+- 新增 3 项可触发 Qt 信号回归；专项 10 项、全量 233 项通过。100%/125% DPI 四档及随机邻近分辨率截图、QML lint、依赖 smoke、compileall 通过。原生桌面不可见，未声称实机迁屏验收。
+- 下一轮继续按约定先审查并统计新问题，再进入修复轮。
+
 ## 2026-10-04 22:03 (Asia/Shanghai) - 同屏显示模式变更审查
 - 本轮确认 1 个待修复问题：客户端只监听 `QWindow.screenChanged`，未监听当前 `QScreen.geometryChanged` / `availableGeometryChanged`；同一屏幕改分辨率或可用工作区变化时，UI 缩放和窗口边界不会自动更新。
 - 依据 Qt 官方信号说明核对；100%/125% DPI 四档及随机邻近尺寸截图通过，依赖 smoke 与全量 230 项通过。CUA 当前无可见原生窗口，截图为 Qt 离屏渲染。
