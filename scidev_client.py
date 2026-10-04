@@ -92,6 +92,11 @@ from scidev_icons import activity_icon
 from scidev_ui import DEFAULT_UI_PROFILE, UI_PROFILES, stylesheet_for_profile, ui_profile_for_key
 
 
+_EXCLUDED_PROJECT_NAMES_CASEFOLD = frozenset(
+    name.casefold() for name in CodingToolbox.EXCLUDED_NAMES
+)
+
+
 THEME = """
 * {
     font-family: "Segoe UI", "Noto Sans SC", "DengXian", "Microsoft YaHei", sans-serif;
@@ -841,7 +846,7 @@ class ProjectFilterProxy(QSortFilterProxyModel):
         model = self.sourceModel()
         index = model.index(source_row, 0, source_parent)
         name = model.fileName(index)
-        if name in CodingToolbox.EXCLUDED_NAMES:
+        if name.casefold() in _EXCLUDED_PROJECT_NAMES_CASEFOLD:
             return False
         return not self._filter_text or model.isDir(index) or self._filter_text in name.casefold()
 
@@ -4165,7 +4170,8 @@ class ClientWindow(QMainWindow):
         for root, directories, names in os.walk(self.project_root):
             directories[:] = [
                 name for name in directories
-                if name not in CodingToolbox.EXCLUDED_NAMES and not (Path(root) / name).is_symlink()
+                if name.casefold() not in _EXCLUDED_PROJECT_NAMES_CASEFOLD
+                and not (Path(root) / name).is_symlink()
             ]
             for name in names:
                 path = Path(root) / name
@@ -4743,8 +4749,9 @@ class ClientWindow(QMainWindow):
         except ValueError:
             self._append_log("资源操作失败：路径必须位于项目目录内")
             return
-        excluded_names = {name.casefold() for name in CodingToolbox.EXCLUDED_NAMES}
-        if not relative.parts or any(part.casefold() in excluded_names for part in relative.parts):
+        if not relative.parts or any(
+            part.casefold() in _EXCLUDED_PROJECT_NAMES_CASEFOLD for part in relative.parts
+        ):
             self._append_log("资源操作失败：不能操作内部目录")
             return
         try:
@@ -4820,7 +4827,8 @@ class ClientWindow(QMainWindow):
         target = target.resolve()
         if target == self.project_root or not target.is_relative_to(self.project_root):
             return
-        if target.name in CodingToolbox.EXCLUDED_NAMES:
+        relative = target.relative_to(self.project_root)
+        if any(part.casefold() in _EXCLUDED_PROJECT_NAMES_CASEFOLD for part in relative.parts):
             self._append_log("删除失败：不能操作内部目录")
             return
         dirty = [

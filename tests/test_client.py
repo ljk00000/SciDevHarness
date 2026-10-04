@@ -777,6 +777,45 @@ class WorkspaceSearchTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_case_variant_internal_directory_is_hidden_from_tree_search_and_delete(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-case-variant-internal-") as temp:
+            root = Path(temp)
+            internal_dir = root / ".RESEARCH"
+            internal_dir.mkdir()
+            secret = internal_dir / "private.txt"
+            secret.write_text("case-variant-search-sentinel\n", encoding="utf-8")
+            visible = root / "visible.py"
+            visible.write_text("ordinary project source\n", encoding="utf-8")
+
+            window = ClientWindow(root)
+            try:
+                window.show()
+                self.app.processEvents()
+
+                project_files = window._project_files()
+                self.assertIn(visible, project_files)
+                self.assertNotIn(secret, project_files)
+
+                source_index = window.file_model.index(str(internal_dir))
+                self.assertTrue(source_index.isValid())
+                self.assertFalse(window.file_proxy.mapFromSource(source_index).isValid())
+
+                window.workspace_search_input.setText("case-variant-search-sentinel")
+                window._search_workspace()
+                self.assertEqual(window.workspace_search_results.topLevelItemCount(), 0)
+
+                with patch.object(
+                    QMessageBox,
+                    "question",
+                    return_value=QMessageBox.StandardButton.No,
+                ) as confirm_delete:
+                    window.delete_explorer_path(internal_dir)
+                confirm_delete.assert_not_called()
+                self.assertTrue(secret.is_file())
+            finally:
+                window.close()
+                self.app.processEvents()
+
 
 class UnsavedCloseTests(unittest.TestCase):
     @classmethod
