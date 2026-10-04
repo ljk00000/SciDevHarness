@@ -967,7 +967,7 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                 self.assertTrue(source_index.isValid())
 
                 listed_paths = {
-                    path.relative_to(root).as_posix()
+                    path.resolve().relative_to(root.resolve()).as_posix()
                     for path in window._project_files()
                 }
                 self.assertIn("actual_data/keep.txt", listed_paths)
@@ -977,7 +977,10 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                 self.assertEqual(window.workspace_search_results.topLevelItemCount(), 1)
                 search_result = window.workspace_search_results.topLevelItem(0)
                 self.assertEqual(
-                    Path(str(search_result.data(0, Qt.ItemDataRole.UserRole))).relative_to(root).as_posix(),
+                    Path(str(search_result.data(0, Qt.ItemDataRole.UserRole)))
+                    .resolve()
+                    .relative_to(root.resolve())
+                    .as_posix(),
                     "actual_data/keep.txt",
                 )
 
