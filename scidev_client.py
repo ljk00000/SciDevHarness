@@ -988,6 +988,27 @@ class ProjectFilterProxy(QSortFilterProxyModel):
                 current = parent
         return visible
 
+    def matching_directory_paths(self) -> tuple[Path, ...]:
+        """Return parent folders of the current file matches, shallowest first."""
+        root = self._ensure_search_index()
+        if root is None or not self._filter_text or self._candidate_files is None:
+            return ()
+
+        directories: dict[str, Path] = {}
+        for raw_file_path, _relative_name in self._candidate_files:
+            current = Path(raw_file_path).parent
+            while current != root:
+                try:
+                    current.relative_to(root)
+                except ValueError:
+                    break
+                directories[self._path_key(current)] = current
+                current = current.parent
+
+        return tuple(
+            sorted(directories.values(), key=lambda path: (len(path.parts), os.fspath(path).casefold()))
+        )
+
     def set_filter_text(self, text: str) -> None:
         self._search_refresh_timer.stop()
         filter_text = text.strip().casefold()
@@ -2037,8 +2058,13 @@ class ClientWindow(QMainWindow):
         workbench.splitterMoved.connect(self._on_workbench_splitter_moved)
         root_layout.addWidget(workbench, 1)
         self.setCentralWidget(root)
+        self._quick_search_expand_timer = QTimer(self)
+        self._quick_search_expand_timer.setSingleShot(True)
+        self._quick_search_expand_timer.setInterval(80)
+        self._quick_search_expand_timer.timeout.connect(self._expand_filtered_file_branches_now)
         self.command_search.textChanged.connect(self.file_proxy.set_filter_text)
         self.command_search.textChanged.connect(self._update_command_suggestions)
+        self.command_search.textChanged.connect(self._expand_filtered_file_branches)
         self.command_search.returnPressed.connect(self._open_quick_search)
 
         status = QStatusBar()
@@ -4642,6 +4668,27 @@ class ClientWindow(QMainWindow):
         self.show_workspace()
         self.command_search.selectAll()
         self.command_search.setFocus()
+
+    def _expand_filtered_file_branches(self, text: str) -> None:
+        query = text.strip().casefold()
+        if len(query) < 2 or query.startswith(">"):
+            self._quick_search_expand_timer.stop()
+            return
+        self._quick_search_expand_timer.start()
+
+    def _expand_filtered_file_branches_now(self) -> None:
+        query = self.command_search.text().strip().casefold()
+        if self.file_proxy._filter_text != query:
+            return
+        directories = self.file_proxy.matching_directory_paths()
+        # Avoid expanding a very broad search into hundreds of branches.
+        if len(directories) > 150:
+            return
+        for directory in directories:
+            source_index = self.file_model.index(os.fspath(directory))
+            proxy_index = self.file_proxy.mapFromSource(source_index)
+            if proxy_index.isValid():
+                self.file_tree.expand(proxy_index)
 
     def _focus_command_palette(self) -> None:
         self.show_workspace()

@@ -1563,6 +1563,40 @@ class WorkspaceSearchTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_quick_open_expands_directories_containing_matching_files(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-search-expand-matches-") as temp:
+            root = Path(temp)
+            matching_directory = root / "src" / "nested"
+            matching_directory.mkdir(parents=True)
+            match = matching_directory / "needle_module.py"
+            match.write_text("value = 1\n", encoding="utf-8")
+            empty_directory = root / "src" / "needle-empty"
+            empty_directory.mkdir()
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window.command_search.setFocus()
+                QTest.qWait(80)
+                QTest.keyClicks(window.command_search, "needle")
+                QTest.qWait(180)
+                self.app.processEvents()
+
+                source_indexes = [
+                    window.file_proxy.mapFromSource(window.file_model.index(str(path)))
+                    for path in (root / "src", matching_directory)
+                ]
+                self.assertTrue(all(index.isValid() for index in source_indexes))
+                self.assertTrue(all(window.file_tree.isExpanded(index) for index in source_indexes))
+                self.assertTrue(
+                    window.file_proxy.mapFromSource(window.file_model.index(str(match))).isValid()
+                )
+                self.assertFalse(
+                    window.file_proxy.mapFromSource(window.file_model.index(str(empty_directory))).isValid()
+                )
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_quick_open_typing_survives_unreadable_link_metadata(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-search-metadata-") as temp:
             root = Path(temp)
