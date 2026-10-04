@@ -1718,6 +1718,8 @@ class ClientWindow(QMainWindow):
         self._active_notification: NotificationToast | None = None
         self.current_file: Path | None = None
         self._editor_paths: dict[QWidget, Path] = {}
+        # QTextDocument normalizes newline encodings; retain each file's EOL for save.
+        self._editor_line_endings: dict[QWidget, str] = {}
         self._editor_titles: dict[QWidget, str] = {}
         self._editor_highlighters: dict[QWidget, PythonHighlighter] = {}
         self._pinned_editors: set[QWidget] = set()
@@ -3661,9 +3663,14 @@ class ClientWindow(QMainWindow):
         if not diff_text:
             self._append_log(f"{path.name} 没有未提交的差异")
             return
-        title = f"差异 · {path.name}"
+        relative = path.relative_to(self.project_root).as_posix()
+        title = f"差异 · {relative}"
         diff_editor = next(
-            (candidate for candidate, label in self._editor_titles.items() if label == title),
+            (
+                candidate
+                for candidate in self._editor_titles
+                if candidate.property("diff_path") == str(path)
+            ),
             None,
         )
         if diff_editor is None:
@@ -3675,7 +3682,7 @@ class ClientWindow(QMainWindow):
             group = self._active_editor_group or self.editor_tabs
             index = group.addTab(diff_editor, title)
             self._install_tab_close_button(group, index, diff_editor)
-            group.setTabToolTip(index, f"Git diff · {path.as_posix()}")
+            group.setTabToolTip(index, f"Git diff · {relative}")
         diff_editor.setPlainText(diff_text)
         diff_editor.document().setModified(False)
         group = self._editor_group_for(diff_editor) or self._active_editor_group or self.editor_tabs
@@ -4013,6 +4020,7 @@ class ClientWindow(QMainWindow):
         if widget is self._preview_editor:
             self._preview_editor = None
         self._editor_paths.pop(widget, None)
+        self._editor_line_endings.pop(widget, None)
         self._editor_titles.pop(widget, None)
         self._editor_highlighters.pop(widget, None)
         self._pinned_editors.discard(widget)
@@ -4031,6 +4039,11 @@ class ClientWindow(QMainWindow):
         if path.is_file():
             self._open_file(path, preview=False)
 
+    @staticmethod
+    def _detect_line_ending(text: str) -> str:
+        match = re.search(r"\r\n|\r|\n", text)
+        return match.group(0) if match else "\n"
+
     def _open_file(self, path: Path, preview: bool = False, group: QTabWidget | None = None) -> None:
         try:
             path = path.resolve()
@@ -4044,6 +4057,7 @@ class ClientWindow(QMainWindow):
             if len(raw) > CodingToolbox.MAX_READ_BYTES or b"\x00" in raw:
                 self._append_log(f"无法打开 {path.name}：文件过大或为二进制文件")
                 return
+            text = raw.decode("utf-8", errors="replace")
             editor = self._find_editor(path, group)
             if editor is None:
                 if preview and self._preview_editor is not None:
@@ -4063,7 +4077,8 @@ class ClientWindow(QMainWindow):
                     tab_index = group.addTab(editor, path.name)
                     self._install_tab_close_button(group, tab_index, editor)
                     group.setTabToolTip(tab_index, path.as_posix())
-                editor.setPlainText(raw.decode("utf-8", errors="replace"))
+                self._editor_line_endings[editor] = self._detect_line_ending(text)
+                editor.setPlainText(text)
                 editor.document().setModified(False)
             self._active_editor_group = group
             index = group.indexOf(editor)
@@ -4645,7 +4660,11 @@ class ClientWindow(QMainWindow):
             return
         try:
             relative = path.relative_to(self.project_root).as_posix()
-            result = self.toolbox.write_file(relative, editor.toPlainText())
+            text = editor.toPlainText()
+            line_ending = self._editor_line_endings.get(editor, "\n")
+            if line_ending != "\n":
+                text = text.replace("\n", line_ending)
+            result = self.toolbox.write_file(relative, text)
             editor.document().setModified(False)
             self._update_editor_tab_for(editor)
             self._append_log(result)
@@ -4667,12 +4686,12 @@ class ClientWindow(QMainWindow):
         parent: Path | None = None,
         target: Path | None = None,
     ) -> None:
-        self._explorer_entry_mode = mode
-        self._rename_target = target
-        self._entry_parent = (parent or self.project_root).resolve()
         if self.new_file_entry.isVisible() and self._explorer_entry_mode == mode:
             self.new_file_entry.setVisible(False)
             return
+        self._explorer_entry_mode = mode
+        self._rename_target = target
+        self._entry_parent = (parent or self.project_root).resolve()
         self.new_file_entry.clear()
         if mode == "folder":
             self.new_file_entry.setPlaceholderText("输入文件夹名称，回车创建")
@@ -4713,7 +4732,8 @@ class ClientWindow(QMainWindow):
         except ValueError:
             self._append_log("资源操作失败：路径必须位于项目目录内")
             return
-        if not relative.parts or relative.parts[0] in CodingToolbox.EXCLUDED_NAMES:
+        excluded_names = {name.casefold() for name in CodingToolbox.EXCLUDED_NAMES}
+        if not relative.parts or any(part.casefold() in excluded_names for part in relative.parts):
             self._append_log("资源操作失败：不能操作内部目录")
             return
         try:
@@ -4880,7 +4900,9 @@ class ClientWindow(QMainWindow):
             try:
                 raw = path.read_bytes()
                 if b"\x00" not in raw and len(raw) <= CodingToolbox.MAX_READ_BYTES:
-                    editor.setPlainText(raw.decode("utf-8", errors="replace"))
+                    text = raw.decode("utf-8", errors="replace")
+                    self._editor_line_endings[editor] = self._detect_line_ending(text)
+                    editor.setPlainText(text)
                     editor.document().setModified(False)
                     self._update_editor_tab_for(editor)
             except OSError:

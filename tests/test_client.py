@@ -14,8 +14,9 @@ if os.name == "nt":
     if windows_fonts.is_dir():
         os.environ["QT_QPA_FONTDIR"] = str(windows_fonts)
 
-from PySide6.QtCore import QPointF, QSize, QSettings, QTimer  # noqa: E402
+from PySide6.QtCore import QPointF, QSize, QSettings, QTimer, Qt  # noqa: E402
 from PySide6.QtGui import QFontInfo, QIcon  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from scidev_client import (  # noqa: E402
@@ -189,6 +190,8 @@ class UIProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="scidev-activity-icons-") as temp:
             window = ClientWindow(Path(temp))
             try:
+                window.set_ui_profile("studio", persist=False)
+                self.app.processEvents()
                 icons = [button.icon().cacheKey() for button in window.activity_buttons]
                 self.assertEqual(len(set(icons)), 3)
                 for button in window.activity_buttons:
@@ -356,6 +359,194 @@ class AgentWorkspaceRefreshTests(unittest.TestCase):
                 for test_editor in window._editor_paths:
                     if isinstance(test_editor, CodeEditor):
                         test_editor.document().setModified(False)
+                window.close()
+                self.app.processEvents()
+
+
+class EditorPersistenceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_save_preserves_existing_line_ending_style(self) -> None:
+        for label, newline in (("CRLF", b"\r\n"), ("LF", b"\n"), ("CR", b"\r")):
+            with self.subTest(style=label), tempfile.TemporaryDirectory(
+                prefix="scidev-editor-eol-"
+            ) as temp:
+                root = Path(temp)
+                source = root / "module.py"
+                source.write_bytes(b"first = 1" + newline + b"second = 2" + newline)
+                window = ClientWindow(root)
+                try:
+                    window._open_file(source, preview=False)
+                    editor = window._active_editor()
+                    self.assertIsNotNone(editor)
+                    editor.setPlainText("first = 3\nsecond = 2\n")
+                    editor.document().setModified(True)
+
+                    window.save_current_file()
+
+                    self.assertEqual(
+                        source.read_bytes(),
+                        b"first = 3" + newline + b"second = 2" + newline,
+                    )
+                    self.assertFalse(editor.document().isModified())
+                finally:
+                    window.close()
+                    self.app.processEvents()
+
+    def test_clean_agent_refresh_updates_the_editor_eol_style(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-editor-refresh-eol-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            source.write_bytes(b"value = 1\r\n")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                self.assertIsNotNone(editor)
+                source.write_bytes(b"value = 2\n")
+                window._refresh_open_file_after_task()
+                editor.selectAll()
+                editor.insertPlainText("value = 3\n")
+                window.save_current_file()
+
+                self.assertEqual(source.read_bytes(), b"value = 3\n")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_ctrl_s_saves_the_active_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-editor-shortcut-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            source.write_bytes(b"value = 1\n")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                window.show()
+                self.app.processEvents()
+                editor = window._active_editor()
+                self.assertIsNotNone(editor)
+                editor.setPlainText("value = 2\n")
+                editor.document().setModified(True)
+                editor.setFocus()
+                self.app.processEvents()
+                self.assertTrue(editor.hasFocus())
+
+                QTest.keyClick(editor, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
+                self.app.processEvents()
+
+                self.assertEqual(source.read_bytes(), b"value = 2\n")
+                self.assertFalse(editor.document().isModified())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
+class GitDiffEditorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_same_named_files_keep_separate_git_diff_tabs_and_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-same-name-diff-") as temp:
+            root = Path(temp)
+            first_path = root / "src" / "module.py"
+            second_path = root / "tests" / "module.py"
+            first_path.parent.mkdir()
+            second_path.parent.mkdir()
+            first_path.write_text("value = 1\n", encoding="utf-8")
+            second_path.write_text("value = 2\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.git.init()
+                window.git.stage_all()
+                window.git.commit_changes("baseline")
+                first_path.write_text("value = 10\n", encoding="utf-8")
+                second_path.write_text("value = 20\n", encoding="utf-8")
+
+                window._show_diff_for_path(first_path)
+                first_editor = window._active_editor()
+                window._show_diff_for_path(second_path)
+                second_editor = window._active_editor()
+
+                self.assertIsNot(first_editor, second_editor)
+                self.assertEqual(Path(first_editor.property("diff_path")), first_path)
+                self.assertEqual(Path(second_editor.property("diff_path")), second_path)
+                self.assertIn("src/module.py", first_editor.toPlainText())
+                self.assertIn("tests/module.py", second_editor.toPlainText())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
+class ExplorerInlineEntryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_switching_create_mode_to_folder_keeps_entry_open_and_creates_folder(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-explorer-entry-") as temp:
+            root = Path(temp)
+            source_dir = root / "src"
+            source_dir.mkdir()
+            window = ClientWindow(root)
+            try:
+                window.show()
+                self.app.processEvents()
+
+                window.start_new_file_entry(source_dir)
+                self.assertTrue(window.new_file_entry.isVisible())
+                window.start_new_folder_entry(source_dir)
+
+                self.assertTrue(window.new_file_entry.isVisible())
+                self.assertEqual(window._explorer_entry_mode, "folder")
+                self.assertIn("文件夹", window.new_file_entry.placeholderText())
+                window.new_file_entry.setText("analysis")
+                window.create_new_file()
+
+                analysis_dir = source_dir / "analysis"
+                self.assertTrue(analysis_dir.is_dir())
+                self.assertFalse(window.new_file_entry.isVisible())
+
+                window.start_new_file_entry(analysis_dir)
+                self.assertTrue(window.new_file_entry.isVisible())
+                window.new_file_entry.setText("module.py")
+                window.create_new_file()
+                source = analysis_dir / "module.py"
+                self.assertTrue(source.is_file())
+
+                editor = window._active_editor()
+                self.assertIsNotNone(editor)
+                window.start_rename_entry(source)
+                window.new_file_entry.setText("renamed.py")
+                window.create_new_file()
+                renamed = analysis_dir / "renamed.py"
+                self.assertTrue(renamed.is_file())
+                self.assertFalse(source.exists())
+                self.assertEqual(window._editor_paths[editor], renamed)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_new_file_cannot_be_created_beneath_nested_internal_directories(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-explorer-internal-path-") as temp:
+            root = Path(temp)
+            source_dir = root / "src"
+            source_dir.mkdir()
+            window = ClientWindow(root)
+            try:
+                window.show()
+                self.app.processEvents()
+                window.start_new_file_entry(source_dir)
+                window.new_file_entry.setText(".research/hidden.py")
+                window.create_new_file()
+
+                self.assertFalse((source_dir / ".research").exists())
+                self.assertTrue(window.new_file_entry.isVisible())
+                self.assertIn("内部目录", window.statusBar().currentMessage())
+            finally:
                 window.close()
                 self.app.processEvents()
 
