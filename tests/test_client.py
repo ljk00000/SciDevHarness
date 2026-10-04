@@ -14,8 +14,8 @@ if os.name == "nt":
     if windows_fonts.is_dir():
         os.environ["QT_QPA_FONTDIR"] = str(windows_fonts)
 
-from PySide6.QtCore import QPointF, QSettings, QTimer  # noqa: E402
-from PySide6.QtGui import QFontInfo  # noqa: E402
+from PySide6.QtCore import QPointF, QSize, QSettings, QTimer  # noqa: E402
+from PySide6.QtGui import QFontInfo, QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from scidev_client import CodeEditor, ClientWindow, MAX_TREE_LAYOUT_BYTES, DevelopmentTreeView  # noqa: E402
@@ -175,6 +175,31 @@ class UIProfileTests(unittest.TestCase):
                 window.resize(1024, 768)
                 self.app.processEvents()
                 self.assertTrue(window.explorer.isHidden())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_activity_rail_icons_are_vector_based_accessible_and_theme_aware(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-activity-icons-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                icons = [button.icon().cacheKey() for button in window.activity_buttons]
+                self.assertEqual(len(set(icons)), 3)
+                for button in window.activity_buttons:
+                    self.assertFalse(button.icon().isNull())
+                    self.assertEqual(button.text(), "")
+                    self.assertGreaterEqual(button.iconSize().width(), 18)
+                    self.assertTrue(button.accessibleName())
+
+                window.set_ui_profile("paper", persist=False)
+                self.app.processEvents()
+                self.assertIn("#f4f6f9", window.styleSheet())
+                self.assertNotEqual(window.activity_buttons[0].icon().cacheKey(), icons[0])
+                icon = window.activity_buttons[0].icon()
+                self.assertFalse(icon.pixmap(QSize(24, 24)).isNull())
+                self.assertFalse(
+                    icon.pixmap(QSize(24, 24), QIcon.Mode.Normal, QIcon.State.On).isNull()
+                )
             finally:
                 window.close()
                 self.app.processEvents()

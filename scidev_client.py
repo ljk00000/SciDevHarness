@@ -32,6 +32,7 @@ from PySide6.QtCore import (
     QProcessEnvironment,
     QRect,
     QRegularExpression,
+    QSize,
     QSettings,
     QStringListModel,
     Qt,
@@ -87,6 +88,7 @@ from scidev_core import (
     SummarySettings,
     new_id,
 )
+from scidev_icons import activity_icon
 from scidev_ui import DEFAULT_UI_PROFILE, UI_PROFILES, stylesheet_for_profile, ui_profile_for_key
 
 
@@ -369,9 +371,7 @@ QToolButton#ActivityButton {
     color: #8492a1;
     border: 1px solid transparent;
     border-radius: 9px;
-    font-family: "Segoe UI Symbol";
-    font-size: 18pt;
-    padding: 5px 0px;
+    padding: 0px;
 }
 QToolButton#ActivityButton:hover {
     background: #1d2935;
@@ -1959,6 +1959,11 @@ class ClientWindow(QMainWindow):
         if hasattr(self, "ui_theme_button"):
             self.ui_theme_button.setToolTip(f"界面方案：{profile.label}\n{profile.description}")
             self.ui_theme_button.setAccessibleDescription(profile.description)
+        for button, icon_name in zip(
+            getattr(self, "activity_buttons", ()),
+            ("explorer", "search", "git"),
+        ):
+            button.setIcon(activity_icon(icon_name, *profile.activity_icon_colors))
 
         if changed:
             self._workbench_user_ratios = profile.layout_ratios
@@ -2076,14 +2081,19 @@ class ClientWindow(QMainWindow):
         rail_layout.setContentsMargins(0, 10, 0, 8)
         rail_layout.setSpacing(2)
         self.activity_buttons: list[QToolButton] = []
-        for index, (symbol, tip, command) in enumerate((
-            ("⌂", "资源管理器", self.focus_explorer),
-            ("⌕", "搜索项目", self._show_workspace_search),
-            ("⌁", "开发版本树", self.show_git),
+        for index, (icon_name, tip, command) in enumerate((
+            ("explorer", "资源管理器", self.focus_explorer),
+            ("search", "搜索项目", self._show_workspace_search),
+            ("git", "开发版本树", self.show_git),
         )):
             button = QToolButton()
             button.setObjectName("ActivityButton")
-            button.setText(symbol)
+            button.setIcon(
+                activity_icon(icon_name, *UI_PROFILES[self.ui_profile].activity_icon_colors)
+            )
+            button.setIconSize(QSize(20, 20))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            button.setText("")
             button.setToolTip(tip)
             button.setAccessibleName(tip)
             button.setCheckable(True)

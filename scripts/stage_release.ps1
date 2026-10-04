@@ -19,6 +19,7 @@ New-Item -ItemType Directory -Path $stageRoot | Out-Null
 $releaseFiles = @(
     "scidev_client.py",
     "scidev_core.py",
+    "scidev_icons.py",
     "scidev_ui.py",
     "scidev_visual.py",
     "README.md",

@@ -17,6 +17,7 @@ class UIProfile:
     line_number_foreground: str
     current_line_background: str
     stylesheet_overrides: str = ""
+    activity_icon_colors: tuple[str, str] = ("#8492a1", "#79b4ff")
 
 
 _PAPER_STYLESHEET = """
@@ -230,6 +231,7 @@ UI_PROFILES: dict[str, UIProfile] = {
         line_number_background="#1e1e1e",
         line_number_foreground="#858585",
         current_line_background="#252526",
+        activity_icon_colors=("#8995a3", "#8bc1ff"),
     ),
     "paper": UIProfile(
         key="paper",
@@ -242,6 +244,7 @@ UI_PROFILES: dict[str, UIProfile] = {
         line_number_foreground="#738096",
         current_line_background="#edf2f7",
         stylesheet_overrides=_PAPER_STYLESHEET,
+        activity_icon_colors=("#68788d", "#286bcf"),
     ),
     "focus": UIProfile(
         key="focus",
@@ -254,6 +257,7 @@ UI_PROFILES: dict[str, UIProfile] = {
         line_number_foreground="#858399",
         current_line_background="#1b1a28",
         stylesheet_overrides=_FOCUS_STYLESHEET,
+        activity_icon_colors=("#aaa8bc", "#b9a8ff"),
     ),
 }
 

@@ -12,6 +12,7 @@ dependencies = ["PySide6-Essentials>=6.11,<7"]
 files = [
     "scidev_client.py",
     "scidev_core.py",
+    "scidev_icons.py",
     "scidev_ui.py",
     "ui/qml/DevelopmentTree.qml",
 ]
