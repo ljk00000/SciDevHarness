@@ -1,5 +1,8 @@
 # 历史与结果
 
+## 2026-10-04 19:42 (Asia/Shanghai) - junction 回归测试兼容 Windows 短路径
+- 远端 CI 确认 3.12/3.13/3.14 均只因测试把短路径别名与长路径直接 `relative_to` 而失败；规范化两侧路径后本机用例通过。
+
 ## 2026-10-04 19:38 (Asia/Shanghai) - 搜索、工作区和符号导航回归修复
 - 项目扫描现在跳过 symlink/junction；选择已有窗口会同步更新启动恢复目录；Shift+F12 自动打开搜索结果并按 Python 大小写匹配。
 - F2 使用 Python tokenizer 只改标识符 token，保留注释/字符串，拒绝关键字和无法安全分词的文件；支持 Unicode 名称及 f-string 表达式。

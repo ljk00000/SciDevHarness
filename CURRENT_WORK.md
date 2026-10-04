@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-10-04 19:42 (Asia/Shanghai) - Windows CI 路径别名回归夹具修正
+- CI `37199469935` 三个 Python 版本都只失败在 junction 测试的 `relative_to`：runner 临时路径一处为 `RUNNER~1`、另一处为 `runneradmin`；产品代码与其余 215 项通过。
+- 测试改为比较规范化绝对路径；本机 Windows junction 用例通过，等待重新跑远端矩阵。
+
 ## 2026-10-04 19:38 (Asia/Shanghai) - IDE 搜索、重命名与工作区生命周期审查
 - 修复 junction 子目录被 Quick Open/全文搜索递归读取、切回已打开工作区不更新启动恢复路径、Shift+F12 结果面板不显示/大小写误匹配，以及 F2 把字符串和注释一起替换的问题。
 - F2 现按 Python NAME token 安全改名，覆盖中文标识符、关键字拒绝、f-string 和未完成字符串保护；版本树分支点击详情交互补回归。
