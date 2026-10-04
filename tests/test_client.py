@@ -32,6 +32,7 @@ from scidev_client import (  # noqa: E402
     NotificationToast,
     ProjectFilterProxy,
     TerminalOutputDecoder,
+    _is_link_or_junction,
 )
 from scidev_core import CodingToolbox, SummarySettings  # noqa: E402
 
@@ -660,6 +661,59 @@ class ExplorerInteractionTests(unittest.TestCase):
                 self.app.processEvents()
 
 
+class EditorSplitInteractionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_closing_split_restores_primary_file_context_focus_and_save_target(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-editor-split-focus-") as temp:
+            root = Path(temp)
+            primary_path = root / "primary.py"
+            secondary_path = root / "secondary.py"
+            primary_path.write_text("primary = 1\n", encoding="utf-8")
+            secondary_path.write_text("secondary = 2\n", encoding="utf-8")
+            window = ClientWindow(root)
+            primary_editor = None
+            secondary_editor = None
+            try:
+                window.resize(1280, 820)
+                window.show()
+                window._open_file(primary_path, preview=False)
+                primary_editor = window._active_editor()
+                window._open_editor_to_side(secondary_path)
+                secondary_editor = window._active_editor()
+                secondary_editor.moveCursor(secondary_editor.textCursor().MoveOperation.End)
+                secondary_editor.insertPlainText("# unsaved secondary\n")
+                self.app.processEvents()
+
+                window._toggle_editor_split()
+                self.app.processEvents()
+
+                self.assertFalse(window.secondary_editor_tabs.isVisible())
+                self.assertIs(window._active_editor(), primary_editor)
+                self.assertIs(window.code_editor, primary_editor)
+                self.assertEqual(window.current_file.resolve(), primary_path.resolve())
+                self.assertTrue(primary_editor.hasFocus())
+                self.assertTrue(secondary_editor.document().isModified())
+
+                QTest.keyClicks(primary_editor, "# saved primary")
+                QTest.keyClick(primary_editor, Qt.Key.Key_Return)
+                QTest.keyClick(primary_editor, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
+                self.app.processEvents()
+
+                self.assertIn("# saved primary", primary_path.read_text(encoding="utf-8"))
+                self.assertEqual(secondary_path.read_text(encoding="utf-8"), "secondary = 2\n")
+                self.assertTrue(secondary_editor.document().isModified())
+                secondary_editor.document().setModified(False)
+            finally:
+                for editor in (primary_editor, secondary_editor):
+                    if editor is not None:
+                        editor.document().setModified(False)
+                window.close()
+                self.app.processEvents()
+
+
 class FindReplaceUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1155,6 +1209,94 @@ class WorkspaceSearchTests(unittest.TestCase):
             finally:
                 window.close()
                 self.app.processEvents()
+
+    def test_quick_open_hides_empty_and_unmatched_directories(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-search-folder-filter-") as temp:
+            root = Path(temp)
+            empty_match = root / "needle-empty"
+            empty_match.mkdir()
+            unrelated_dir = root / "unrelated"
+            unrelated_dir.mkdir()
+            (unrelated_dir / "other.py").write_text("value = 1\n", encoding="utf-8")
+            source_dir = root / "src"
+            source_dir.mkdir()
+            match = source_dir / "needle_module.py"
+            match.write_text("value = 2\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window.command_search.setFocus()
+                QTest.qWait(80)
+                QTest.keyClicks(window.command_search, "needle")
+                self.app.processEvents()
+                QTest.qWait(30)
+
+                def is_visible(path: Path) -> bool:
+                    return window.file_proxy.mapFromSource(
+                        window.file_model.index(str(path))
+                    ).isValid()
+
+                source_proxy_index = window.file_proxy.mapFromSource(
+                    window.file_model.index(str(source_dir))
+                )
+                self.assertTrue(source_proxy_index.isValid())
+                window.file_tree.expand(source_proxy_index)
+                QTest.qWait(80)
+
+                self.assertTrue(is_visible(source_dir))
+                self.assertTrue(is_visible(match))
+                self.assertFalse(is_visible(empty_match))
+                self.assertFalse(is_visible(unrelated_dir))
+
+                new_match = root / "needle_after_refresh.py"
+                new_match.write_text("value = 3\n", encoding="utf-8")
+                window.refresh_file_tree()
+                QTest.qWait(100)
+                self.assertTrue(is_visible(new_match))
+
+                window.command_search.setFocus()
+                QTest.keyClick(window.command_search, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+                QTest.keyClick(window.command_search, Qt.Key.Key_Backspace)
+                self.app.processEvents()
+                self.assertTrue(is_visible(empty_match))
+                self.assertTrue(is_visible(unrelated_dir))
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_quick_open_typing_survives_unreadable_link_metadata(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-search-metadata-") as temp:
+            root = Path(temp)
+            (root / "example.py").write_text("value = 1\n", encoding="utf-8")
+            window = ClientWindow(root)
+            slot_errors: list[str] = []
+            original_excepthook = sys.excepthook
+            try:
+                window.show()
+                window.command_search.setFocus()
+                QTest.qWait(60)
+                sys.excepthook = lambda kind, error, _traceback: slot_errors.append(
+                    f"{kind.__name__}: {error}"
+                )
+
+                with patch.object(Path, "is_symlink", side_effect=PermissionError("access denied")):
+                    QTest.keyClicks(window.command_search, "exa")
+                    self.app.processEvents()
+                    QTest.qWait(30)
+
+                self.assertEqual(window.file_proxy._filter_text, "exa")
+                self.assertEqual(slot_errors, [])
+            finally:
+                sys.excepthook = original_excepthook
+                window.close()
+                self.app.processEvents()
+
+    def test_link_check_tolerates_python_without_junction_query(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-no-junction-api-") as temp:
+            path = Path(temp) / "regular.py"
+            path.write_text("value = 1\n", encoding="utf-8")
+            with patch.object(Path, "is_junction", None, create=True):
+                self.assertFalse(_is_link_or_junction(path))
 
     def test_all_live_search_entries_accept_typing_without_qt_slot_errors(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-search-black-box-") as temp:

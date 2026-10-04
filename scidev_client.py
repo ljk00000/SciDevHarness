@@ -101,7 +101,15 @@ _EXCLUDED_PROJECT_NAMES_CASEFOLD = frozenset(
 
 
 def _is_link_or_junction(path: Path) -> bool:
-    return path.is_symlink() or path.is_junction()
+    try:
+        if path.is_symlink():
+            return True
+        is_junction = getattr(path, "is_junction", None)
+        return bool(callable(is_junction) and is_junction())
+    except OSError:
+        # A path can disappear or become unreadable while QFileSystemModel is
+        # refreshing. Keep that filesystem error out of Qt's filter callback.
+        return True
 
 
 THEME = """
@@ -876,17 +884,110 @@ class ProjectFilterProxy(QSortFilterProxyModel):
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         self._filter_text = ""
+        self._indexed_root: str | None = None
+        self._indexed_files: tuple[tuple[str, str], ...] = ()
+        self._candidate_files: tuple[tuple[str, str], ...] | None = None
+        self._visible_path_keys: set[str] | None = None
+        self._search_refresh_timer = QTimer(self)
+        self._search_refresh_timer.setSingleShot(True)
+        self._search_refresh_timer.setInterval(150)
+        self._search_refresh_timer.timeout.connect(self._refresh_active_filter)
+
+    @staticmethod
+    def _path_key(path: Path) -> str:
+        return os.path.normcase(os.path.normpath(os.fspath(path)))
+
+    def invalidate_search_index(self) -> None:
+        self._indexed_root = None
+        self._indexed_files = ()
+        self._candidate_files = None
+
+    def source_paths_changed(self, *_args: object) -> None:
+        self.invalidate_search_index()
+        if self._filter_text:
+            self._search_refresh_timer.start()
+
+    def _refresh_active_filter(self) -> None:
+        self.set_filter_text(self._filter_text)
+
+    def _ensure_search_index(self) -> Path | None:
+        model = self.sourceModel()
+        root_path_method = getattr(model, "rootPath", None)
+        if not callable(root_path_method):
+            self._indexed_root = None
+            self._indexed_files = ()
+            return None
+
+        root = Path(root_path_method())
+        root_key = self._path_key(root)
+        if root_key != self._indexed_root:
+            indexed_files: list[tuple[str, str]] = []
+            for current, directories, filenames in os.walk(root, topdown=True):
+                current_path = Path(current)
+                directories[:] = [
+                    name
+                    for name in directories
+                    if name.casefold() not in _EXCLUDED_PROJECT_NAMES_CASEFOLD
+                    and not _is_link_or_junction(current_path / name)
+                ]
+                for name in filenames:
+                    path = current_path / name
+                    if _is_link_or_junction(path):
+                        continue
+                    try:
+                        relative_name = path.relative_to(root).as_posix().casefold()
+                    except ValueError:
+                        continue
+                    indexed_files.append((self._path_key(path), relative_name))
+            self._indexed_root = root_key
+            self._indexed_files = tuple(indexed_files)
+            self._candidate_files = None
+        return root
+
+    def _visible_paths_for_query(self, query: str) -> set[str]:
+        root = self._ensure_search_index()
+        if root is None:
+            self._candidate_files = ()
+            return set()
+        visible: set[str] = set()
+        if self._candidate_files is not None and query.startswith(self._filter_text):
+            candidates = self._candidate_files
+        else:
+            candidates = self._indexed_files
+        matching_files = tuple(
+            (raw_file_path, relative_name)
+            for raw_file_path, relative_name in candidates
+            if query in relative_name
+        )
+        self._candidate_files = matching_files
+        for raw_file_path, _relative_name in matching_files:
+            current = Path(raw_file_path)
+            while True:
+                current_key = self._path_key(current)
+                visible.add(current_key)
+                parent = current.parent
+                if parent == current:
+                    break
+                current = parent
+        return visible
 
     def set_filter_text(self, text: str) -> None:
+        self._search_refresh_timer.stop()
+        filter_text = text.strip().casefold()
+        visible_path_keys = self._visible_paths_for_query(filter_text) if filter_text else None
+        if not filter_text:
+            self._candidate_files = None
         begin_change = getattr(self, "beginFilterChange", None)
         end_change = getattr(self, "endFilterChange", None)
         if callable(begin_change) and callable(end_change):
             begin_change()
-            self._filter_text = text.strip().casefold()
+            self._filter_text = filter_text
+            self._visible_path_keys = visible_path_keys
             end_change(QSortFilterProxyModel.Direction.Rows)
             return
 
-        self._filter_text = text.strip().casefold()
+        self._filter_text = filter_text
+        self._visible_path_keys = visible_path_keys
         invalidate_rows = getattr(self, "invalidateRowsFilter", None)
         if callable(invalidate_rows):
             invalidate_rows()
@@ -902,7 +1003,9 @@ class ProjectFilterProxy(QSortFilterProxyModel):
             return False
         if name.casefold() in _EXCLUDED_PROJECT_NAMES_CASEFOLD:
             return False
-        return not self._filter_text or model.isDir(index) or self._filter_text in name.casefold()
+        if not self._filter_text:
+            return True
+        return self._path_key(path) in (self._visible_path_keys or set())
 
 
 class WindowTitleBar(QFrame):
@@ -2322,6 +2425,9 @@ class ClientWindow(QMainWindow):
         source_root = self.file_model.setRootPath(str(self.project_root))
         self.file_proxy = ProjectFilterProxy(self)
         self.file_proxy.setSourceModel(self.file_model)
+        self.file_model.rowsInserted.connect(self.file_proxy.source_paths_changed)
+        self.file_model.rowsRemoved.connect(self.file_proxy.source_paths_changed)
+        self.file_model.fileRenamed.connect(self.file_proxy.source_paths_changed)
         self.file_tree = QTreeView()
         self.file_tree.setObjectName("FileTree")
         self.file_tree.setModel(self.file_proxy)
@@ -2419,7 +2525,12 @@ class ClientWindow(QMainWindow):
         if self.secondary_editor_tabs is not None and self.secondary_editor_tabs.isVisible():
             self.secondary_editor_tabs.setVisible(False)
             self._active_editor_group = self.editor_tabs
-            self.editor_tabs.setFocus()
+            self._on_editor_tab_changed(self.editor_tabs.currentIndex(), self.editor_tabs)
+            editor = self._active_editor()
+            if editor is not None:
+                editor.setFocus()
+            else:
+                self.editor_tabs.setFocus()
             self._append_log("已关闭编辑器分栏")
             return
         self._split_current_editor()
@@ -5140,8 +5251,10 @@ class ClientWindow(QMainWindow):
         self.terminal_input.setFocus()
 
     def refresh_file_tree(self) -> None:
+        self.file_proxy.invalidate_search_index()
         root_index = self.file_model.setRootPath(str(self.project_root))
         self.file_tree.setRootIndex(self.file_proxy.mapFromSource(root_index))
+        self.file_proxy.set_filter_text(self.command_search.text())
         self._append_log("资源管理器已刷新")
 
     def _insert_current_file_context(self) -> None:
