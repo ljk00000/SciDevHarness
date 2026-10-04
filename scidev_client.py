@@ -21,7 +21,25 @@ import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QDir, QEvent, QModelIndex, QObject, QPoint, QPointF, QProcess, QProcessEnvironment, QRect, QRegularExpression, QSettings, QStringListModel, Qt, QSortFilterProxyModel, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QDir,
+    QEvent,
+    QModelIndex,
+    QObject,
+    QPoint,
+    QPointF,
+    QProcess,
+    QProcessEnvironment,
+    QRect,
+    QRegularExpression,
+    QSettings,
+    QStringListModel,
+    Qt,
+    QSortFilterProxyModel,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QBrush, QColor, QFont, QKeyEvent, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QShortcut, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
@@ -60,7 +78,16 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtQuickWidgets import QQuickWidget
 
-from scidev_core import CodingAgent, CodingToolbox, EventLedger, GitManager, RetryQueue, SummarySettings, new_id
+from scidev_core import (
+    CodingAgent,
+    CodingToolbox,
+    EventLedger,
+    GitManager,
+    RetryQueue,
+    SummarySettings,
+    new_id,
+)
+from scidev_ui import DEFAULT_UI_PROFILE, UI_PROFILES, stylesheet_for_profile, ui_profile_for_key
 
 
 THEME = """
@@ -360,6 +387,14 @@ QToolButton#IconButton {
     padding: 2px 5px;
 }
 QToolButton#IconButton:hover { background: #202a35; color: #ffffff; }
+QToolButton#ThemeSelector {
+    background: #19232e;
+    color: #b8d4f2;
+    border: 1px solid #2d3c4b;
+    font-weight: 600;
+    padding: 4px 8px;
+}
+QToolButton#ThemeSelector:hover { background: #243448; border-color: #405771; }
 QToolButton#TabCloseButton {
     background: transparent;
     color: #8492a1;
@@ -542,7 +577,8 @@ def _choose_workspace_directory(initial_directory: Path, parent: QWidget | None 
     dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
     dialog.setWindowTitle("打开文件夹")
     dialog.setDirectory(str(initial_directory))
-    dialog.setStyleSheet(THEME)
+    profile_key = getattr(parent, "ui_profile", DEFAULT_UI_PROFILE)
+    dialog.setStyleSheet(stylesheet_for_profile(THEME, profile_key))
     dialog.resize(860, 600)
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
@@ -623,6 +659,10 @@ class CodeEditor(QPlainTextEdit):
         self.completer.setWidget(self)
         self.completer.activated.connect(self._insert_completion)
         self.line_number_area = LineNumberArea(self)
+        self.ui_profile = DEFAULT_UI_PROFILE
+        self._line_number_background = QColor("#1e1e1e")
+        self._line_number_foreground = QColor("#858585")
+        self._current_line_background = QColor("#252526")
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
@@ -713,14 +753,14 @@ class CodeEditor(QPlainTextEdit):
 
     def line_number_area_paint_event(self, event) -> None:
         painter = QPainter(self.line_number_area)
-        painter.fillRect(event.rect(), QColor("#1e1e1e"))
+        painter.fillRect(event.rect(), self._line_number_background)
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
         top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
         bottom = top + int(self.blockBoundingRect(block).height())
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
-                painter.setPen(QColor("#858585"))
+                painter.setPen(self._line_number_foreground)
                 painter.drawText(0, top, self.line_number_area.width() - 8, self.fontMetrics().height(), Qt.AlignmentFlag.AlignRight, str(block_number + 1))
             block = block.next()
             top = bottom
@@ -729,29 +769,48 @@ class CodeEditor(QPlainTextEdit):
 
     def highlight_current_line(self) -> None:
         selection = QTextEdit.ExtraSelection()
-        selection.format.setBackground(QColor("#252526"))
+        selection.format.setBackground(self._current_line_background)
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         selection.cursor = self.textCursor()
         selection.cursor.clearSelection()
         self.setExtraSelections([selection])
 
+    def set_ui_profile(self, profile_key: str) -> None:
+        profile = ui_profile_for_key(profile_key)
+        self.ui_profile = profile.key
+        self._line_number_background = QColor(profile.line_number_background)
+        self._line_number_foreground = QColor(profile.line_number_foreground)
+        self._current_line_background = QColor(profile.current_line_background)
+        self.line_number_area.update()
+        self.highlight_current_line()
+
 
 class PythonHighlighter(QSyntaxHighlighter):
-    def __init__(self, document):  # noqa: ANN001 - document type varies by binding.
+    _PATTERNS = (
+        r"\b(and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|match|not|or|pass|raise|return|try|while|with|yield)\b",
+        r"\b(True|False|None|self)\b",
+        r"\b\d+(\.\d+)?\b",
+        r"#[^\n]*",
+        r'"[^"\n]*"|\'[^\'\n]*\'',
+    )
+
+    def __init__(self, document, profile_key: str = DEFAULT_UI_PROFILE):  # noqa: ANN001 - document type varies by binding.
         super().__init__(document)
         self.rules: list[tuple[QRegularExpression, QTextCharFormat]] = []
-        for pattern, color, bold in (
-            (r"\b(and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|match|not|or|pass|raise|return|try|while|with|yield)\b", "#c586c0", True),
-            (r"\b(True|False|None|self)\b", "#569cd6", False),
-            (r"\b\d+(\.\d+)?\b", "#b5cea8", False),
-            (r"#[^\n]*", "#6a9955", False),
-            (r"\"[^\"\n]*\"|'[^'\n]*'", "#ce9178", False),
-        ):
+        self.profile_key = DEFAULT_UI_PROFILE
+        self.set_ui_profile(profile_key)
+
+    def set_ui_profile(self, profile_key: str) -> None:
+        profile = ui_profile_for_key(profile_key)
+        self.profile_key = profile.key
+        self.rules.clear()
+        for index, (pattern, color) in enumerate(zip(self._PATTERNS, profile.syntax_colors, strict=True)):
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(color))
-            if bold:
+            if index == 0:
                 fmt.setFontWeight(QFont.Weight.Bold)
             self.rules.append((QRegularExpression(pattern), fmt))
+        self.rehighlight()
 
     def highlightBlock(self, text: str) -> None:
         for expression, fmt in self.rules:
@@ -1298,11 +1357,16 @@ class DevelopmentTreeView(QQuickWidget):
 
     node_selected = Signal(object)
 
-    def __init__(self, layout_path: Path | None = None):
+    def __init__(
+        self,
+        layout_path: Path | None = None,
+        visual_theme: str = DEFAULT_UI_PROFILE,
+    ):
         super().__init__()
         self.setObjectName("DevelopmentTree")
         self.setMinimumHeight(420)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._visual_theme = ui_profile_for_key(visual_theme).tree_mode
         self.setClearColor(QColor("#101419"))
         self.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         self.nodes: list[dict[str, Any]] = []
@@ -1320,6 +1384,19 @@ class DevelopmentTreeView(QQuickWidget):
             root.nodeSelected.connect(self._on_qml_node_selected)
             root.nodeMoved.connect(self._on_qml_node_moved)
             root.setProperty("layoutOffsets", self._qml_offsets())
+            root.setProperty("visualTheme", self._visual_theme)
+
+    def set_visual_theme(self, profile_key: str) -> None:
+        """Keep the QML canvas aligned with the selected workbench profile."""
+        self._visual_theme = ui_profile_for_key(profile_key).tree_mode
+        clear_color = {
+            "paper": "#f5f8fb",
+            "focus": "#11131b",
+            "studio": "#101419",
+        }[self._visual_theme]
+        self.setClearColor(QColor(clear_color))
+        if self._root_item is not None:
+            self._root_item.setProperty("visualTheme", self._visual_theme)
 
     def wheelEvent(self, event) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -1546,7 +1623,11 @@ class ClientWindow(QMainWindow):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.resize(1500, 920)
         self.setMinimumSize(780, 480)
-        self.setStyleSheet(THEME)
+        self.ui_settings = QSettings("SciDevHarness", "SciDevHarness")
+        self.ui_profile = ui_profile_for_key(
+            self.ui_settings.value("uiProfile", DEFAULT_UI_PROFILE)
+        ).key
+        self.setStyleSheet(stylesheet_for_profile(THEME, self.ui_profile))
         self.ledger = EventLedger(self.project_root)
         self.git = GitManager(self.project_root)
         self.toolbox = CodingToolbox(self.project_root, self.ledger)
@@ -1575,7 +1656,9 @@ class ClientWindow(QMainWindow):
         self._navigation_back: list[tuple[Path, int, int]] = []
         self._navigation_forward: list[tuple[Path, int, int]] = []
         self._workspace_search_whole_word = False
-        self._workbench_user_ratios: tuple[float, float] | None = None
+        self._workbench_user_ratios: tuple[float, float] | None = UI_PROFILES[
+            self.ui_profile
+        ].layout_ratios
         self._workbench_adapting = False
         self._workbench_adapt_pending = False
         self._titlebar_compact: bool | None = None
@@ -1601,6 +1684,7 @@ class ClientWindow(QMainWindow):
         self.signals.worker_event.connect(self._handle_worker_event)
         self.signals.command_approval_requested.connect(self._handle_command_approval_request)
         self._build_ui()
+        self.set_ui_profile(self.ui_profile, persist=False)
         self._install_shortcuts()
         self.worker.start()
         self.refresh_all()
@@ -1628,7 +1712,14 @@ class ClientWindow(QMainWindow):
         self.workspace_stack.addWidget(self.git_page)
         workbench.addWidget(self.workspace_stack)
         workbench.addWidget(self._build_chat_panel())
-        workbench.setSizes([370, 1, 430])
+        profile = UI_PROFILES[self.ui_profile]
+        workbench.setSizes(
+            [
+                round(profile.layout_ratios[0] * 1000),
+                1,
+                round(profile.layout_ratios[1] * 1000),
+            ]
+        )
         workbench.setStretchFactor(0, 0)
         workbench.setStretchFactor(1, 1)
         workbench.setStretchFactor(2, 0)
@@ -1763,6 +1854,7 @@ class ClientWindow(QMainWindow):
                     "> outline",
                     "> git",
                     "> explorer",
+                    "> appearance",
                 ],
                 self.command_completer,
             )
@@ -1786,9 +1878,31 @@ class ClientWindow(QMainWindow):
         for text, command in (("刷新", self.refresh_all),):
             button = QPushButton(text)
             button.setObjectName("Quiet")
+            button.setAccessibleName("刷新工作区")
             self.title_refresh_button = button
             button.clicked.connect(command)
             layout.addWidget(button)
+
+        self.ui_theme_button = QToolButton()
+        self.ui_theme_button.setObjectName("ThemeSelector")
+        self.ui_theme_button.setText("主题")
+        self.ui_theme_button.setAccessibleName("界面方案")
+        self.ui_theme_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.ui_theme_button.setFixedHeight(28)
+        self.ui_theme_menu = QMenu(self.ui_theme_button)
+        self.ui_theme_actions = {}
+        for profile_key, profile in UI_PROFILES.items():
+            action = self.ui_theme_menu.addAction(profile.label)
+            action.setCheckable(True)
+            action.setChecked(profile_key == self.ui_profile)
+            action.setToolTip(profile.description)
+            action.triggered.connect(
+                lambda _checked=False, selected=profile_key: self.set_ui_profile(selected)
+            )
+            self.ui_theme_actions[profile_key] = action
+        self.ui_theme_button.setMenu(self.ui_theme_menu)
+        layout.addWidget(self.ui_theme_button)
+
         self.connection_label = QLabel(self._provider_state())
         self.connection_label.setObjectName("StateReady")
         layout.addSpacing(4)
@@ -1816,6 +1930,43 @@ class ClientWindow(QMainWindow):
             self.showNormal()
         else:
             self.showMaximized()
+
+    def set_ui_profile(self, profile_key: str, *, persist: bool = True) -> None:
+        """Apply and optionally persist a complete, switchable workbench style."""
+        profile = ui_profile_for_key(profile_key)
+        changed = profile.key != self.ui_profile
+        self.ui_profile = profile.key
+        self.setStyleSheet(stylesheet_for_profile(THEME, profile))
+
+        if persist:
+            self.ui_settings.setValue("uiProfile", profile.key)
+            self.ui_settings.sync()
+
+        for editor in self.findChildren(CodeEditor):
+            editor.set_ui_profile(profile.key)
+        for highlighter in self._editor_highlighters.values():
+            highlighter.set_ui_profile(profile.key)
+        if hasattr(self, "git_tree"):
+            self.git_tree.set_visual_theme(profile.key)
+
+        if hasattr(self, "ui_theme_actions"):
+            for key, action in self.ui_theme_actions.items():
+                action.setChecked(key == profile.key)
+        if hasattr(self, "ui_theme_button"):
+            self.ui_theme_button.setToolTip(f"界面方案：{profile.label}\n{profile.description}")
+            self.ui_theme_button.setAccessibleDescription(profile.description)
+
+        if changed:
+            self._workbench_user_ratios = profile.layout_ratios
+            if hasattr(self, "workbench"):
+                QTimer.singleShot(0, self._adapt_workbench_layout)
+
+        if persist:
+            app = QApplication.instance()
+            sibling_windows = getattr(app, "_scidev_windows", []) if app is not None else ()
+            for sibling in sibling_windows:
+                if sibling is not self:
+                    sibling.set_ui_profile(profile.key, persist=False)
 
     def _choose_workspace(self) -> None:
         selected = _choose_workspace_directory(self.project_root, self)
@@ -2273,7 +2424,9 @@ class ClientWindow(QMainWindow):
         self.command_search.setMinimumWidth(120 if compact else 190)
         self.command_search.setPlaceholderText("Ctrl+P 搜索或跳转" if compact else "搜索文件、命令或跳转到…")
         self.title_new_button.setText("新建" if compact else "新会话")
-        self.title_refresh_button.setText("刷新")
+        self.title_refresh_button.setText("↻" if compact else "刷新")
+        self.ui_theme_button.setText("主题")
+        self.ui_theme_button.setMinimumWidth(50)
         self.title_new_button.setToolTip("新建编码会话")
         self.title_refresh_button.setToolTip("刷新项目、任务与 Git 状态")
         self.title_git_button.setToolTip("打开开发版本树")
@@ -2605,7 +2758,7 @@ class ClientWindow(QMainWindow):
         tree_splitter.setChildrenCollapsible(False)
         tree_splitter.setHandleWidth(1)
         tree_splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.git_tree = DevelopmentTreeView(self.project_root / ".research" / "tree_layout.json")
+        self.git_tree = DevelopmentTreeView(self.project_root / ".research" / "tree_layout.json", self.ui_profile)
         self.git_tree.node_selected.connect(self._handle_git_node_selected)
         tree_scroll = QScrollArea()
         tree_scroll.setObjectName("TreeScroll")
@@ -3399,7 +3552,8 @@ class ClientWindow(QMainWindow):
             self._append_log(f"Git 提交失败: {exc}")
 
     def _configure_editor(self, editor: CodeEditor) -> None:
-        self._editor_highlighters[editor] = PythonHighlighter(editor.document())
+        editor.set_ui_profile(self.ui_profile)
+        self._editor_highlighters[editor] = PythonHighlighter(editor.document(), self.ui_profile)
         editor.document().modificationChanged.connect(
             lambda _changed, target=editor: self._update_editor_tab_for(target)
         )
@@ -3881,6 +4035,8 @@ class ClientWindow(QMainWindow):
                 self._show_workspace_search()
             elif "replace" in command or "替换" in command:
                 self._show_find_bar(True)
+            elif any(keyword in command for keyword in ("appearance", "theme", "主题", "外观")):
+                self.ui_theme_button.showMenu()
             elif "outline" in command or "大纲" in command:
                 self._show_outline()
             elif command == "git" or "git" in command:

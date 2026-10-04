@@ -360,6 +360,35 @@ def verify_git_splitter_layout(window: ClientWindow, name: str, orientation: Qt.
         print(f"{name} version-tree heights=[{tree_height}, {details_height}]")
 
 
+def verify_ui_profile(window: ClientWindow, profile_key: str, name: str) -> None:
+    if window.ui_profile != profile_key:
+        raise RuntimeError(f"wrong appearance profile selected for {name}: {window.ui_profile}")
+    if len(window.ui_theme_actions) != 3:
+        raise RuntimeError(f"the UI profile menu is missing choices for {name}")
+    checked = [key for key, action in window.ui_theme_actions.items() if action.isChecked()]
+    if checked != [profile_key]:
+        raise RuntimeError(f"UI profile checkmark is inconsistent for {name}: {checked}")
+    if not window.ui_theme_button.isVisible() or window.ui_theme_button.accessibleName() != "界面方案":
+        raise RuntimeError(f"the responsive UI profile selector is missing for {name}")
+    root = window.git_tree.rootObject()
+    if root is None or root.property("visualTheme") != profile_key:
+        raise RuntimeError(f"the version-tree canvas did not receive profile {profile_key!r} for {name}")
+
+
+def capture_ui_profile_menu(window: ClientWindow, app: QApplication, output_dir: Path) -> None:
+    menu_position = window.ui_theme_button.mapToGlobal(QPoint(0, window.ui_theme_button.height()))
+    window.ui_theme_menu.popup(menu_position)
+    app.processEvents()
+    if not window.ui_theme_menu.isVisible() or len(window.ui_theme_menu.actions()) != 3:
+        raise RuntimeError("the UI profile selector did not expose all three choices")
+    image = window.ui_theme_menu.grab().toImage()
+    destination = output_dir / "ui-profile-menu.png"
+    if image.isNull() or not image.save(str(destination), "PNG"):
+        raise RuntimeError("could not capture the UI profile chooser")
+    window.ui_theme_menu.close()
+    print(f"{destination} ({image.width()}x{image.height()})")
+
+
 def send_wheel(
     window: ClientWindow,
     modifiers: Qt.KeyboardModifier,
@@ -481,11 +510,15 @@ def main(argv: list[str] | None = None) -> int:
     window = None
     try:
         window = ClientWindow(workspace)
+        original_saved_profile = window.ui_settings.value("uiProfile", "studio")
+        window.set_ui_profile("studio", persist=False)
         window._open_file(source_file, preview=False)
         capture(window, app, output_dir, "editor-wide", (1500, 920))
         verify_workbench_layout(window, "editor-wide")
+        verify_ui_profile(window, "studio", "editor-wide")
+        capture_ui_profile_menu(window, app, output_dir)
         window.show_git()
-        window.git_tree.set_nodes([
+        fixture_nodes = [
             {
                 "id": "root",
                 "lane": "main",
@@ -521,10 +554,39 @@ def main(argv: list[str] | None = None) -> int:
                 "description": "把配置默认值整理成 dataclass。",
                 "meta": "进行中 · 1 次尝试",
             },
-        ])
+        ]
+        window.git_tree.set_nodes(fixture_nodes)
         window.git_main_value.setText("1")
         window.git_attempt_value.setText("2")
         window.git_failed_value.setText("1")
+
+        for profile_key in ("paper", "focus"):
+            window.set_ui_profile(profile_key, persist=False)
+            verify_ui_profile(window, profile_key, f"editor-{profile_key}")
+            window.show_workspace()
+            for suffix, size in (
+                ("wide", (1500, 920)),
+                ("medium", (940, 620)),
+                ("minimum", (780, 480)),
+            ):
+                name = f"editor-{profile_key}-{suffix}"
+                capture(window, app, output_dir, name, size)
+                verify_workbench_layout(window, name)
+
+            window.workspace_stack.setCurrentWidget(window.git_page)
+            for suffix, size, orientation in (
+                ("wide", (1500, 920), Qt.Orientation.Horizontal),
+                ("minimum", (780, 480), Qt.Orientation.Vertical),
+            ):
+                name = f"tree-{profile_key}-{suffix}"
+                capture(window, app, output_dir, name, size)
+                verify_git_splitter_layout(window, name, orientation)
+
+        window.set_ui_profile("studio", persist=False)
+        window.git_tree.set_nodes(fixture_nodes)
+        if window.ui_settings.value("uiProfile", "studio") != original_saved_profile:
+            raise RuntimeError("offscreen theme review changed the user's saved UI choice")
+        window.workspace_stack.setCurrentWidget(window.git_page)
         capture(window, app, output_dir, "tree-wide", (1500, 920))
         verify_workbench_layout(window, "tree-wide")
         verify_git_splitter_layout(window, "tree-wide", Qt.Orientation.Horizontal)

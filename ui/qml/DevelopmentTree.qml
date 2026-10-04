@@ -9,6 +9,9 @@ Item {
     property var layoutOffsets: ({})
     property string selectedId: ""
     property string hoverNodeId: ""
+    property string visualTheme: "studio"
+    property bool lightMode: visualTheme === "paper"
+    property bool focusMode: visualTheme === "focus"
     property real panX: 0
     property real panY: 0
     property real zoom: 1.0
@@ -282,7 +285,7 @@ Item {
         ctx.beginPath()
         ctx.arc(point.x + 4, point.y + 6, 12, 0, Math.PI * 2)
         ctx.fill()
-        ctx.fillStyle = "#10171a"
+        ctx.fillStyle = root.lightMode ? "#f4f7fa" : (root.focusMode ? "#191824" : "#10171a")
         ctx.strokeStyle = accent
         ctx.lineWidth = 3
         ctx.beginPath()
@@ -298,10 +301,22 @@ Item {
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#1b2732" }
-            GradientStop { position: 0.18; color: "#17212a" }
-            GradientStop { position: 0.55; color: "#121a21" }
-            GradientStop { position: 1.0; color: "#0f151b" }
+            GradientStop {
+                position: 0.0
+                color: root.lightMode ? "#f9fbfd" : (root.focusMode ? "#191725" : "#1b2732")
+            }
+            GradientStop {
+                position: 0.18
+                color: root.lightMode ? "#f5f8fb" : (root.focusMode ? "#151420" : "#17212a")
+            }
+            GradientStop {
+                position: 0.55
+                color: root.lightMode ? "#f1f5f9" : (root.focusMode ? "#11121b" : "#121a21")
+            }
+            GradientStop {
+                position: 1.0
+                color: root.lightMode ? "#edf2f7" : (root.focusMode ? "#0e1018" : "#0f151b")
+            }
         }
     }
 
@@ -320,7 +335,9 @@ Item {
             var vanishingX = width * 0.52
             for (var gridX = -width; gridX <= width * 2; gridX += 36) {
                 var endX = vanishingX + (gridX - vanishingX) * 0.42
-                ctx.strokeStyle = Qt.rgba(0.55, 0.70, 0.74, 0.06)
+                ctx.strokeStyle = root.lightMode
+                        ? Qt.rgba(0.27, 0.39, 0.53, 0.09)
+                        : Qt.rgba(0.55, 0.70, 0.74, 0.06)
                 ctx.lineWidth = 1
                 ctx.beginPath()
                 ctx.moveTo(gridX, horizon)
@@ -330,13 +347,18 @@ Item {
             for (var gridIndex = 0; gridIndex < 13; gridIndex++) {
                 var ratio = Math.pow(gridIndex / 12.0, 1.7)
                 var gridY = horizon + (height - horizon) * ratio
-                ctx.strokeStyle = Qt.rgba(0.55, 0.70, 0.74, 0.035 + gridIndex * 0.003)
+                ctx.strokeStyle = root.lightMode
+                        ? Qt.rgba(0.27, 0.39, 0.53, 0.035 + gridIndex * 0.004)
+                        : Qt.rgba(0.55, 0.70, 0.74, 0.035 + gridIndex * 0.003)
                 ctx.beginPath()
                 ctx.moveTo(0, gridY)
                 ctx.lineTo(width, gridY)
                 ctx.stroke()
             }
-            ctx.strokeStyle = Qt.rgba(0.36, 0.86, 0.75, 0.16)
+            var horizonColor = root.lightMode
+                    ? Qt.rgba(0.12, 0.51, 0.55, 0.22)
+                    : Qt.rgba(0.36, 0.86, 0.75, 0.22)
+            ctx.strokeStyle = horizonColor
             ctx.beginPath()
             ctx.moveTo(0, horizon)
             ctx.lineTo(width, horizon)
@@ -344,7 +366,7 @@ Item {
 
             var main = root.mainNodes()
             if (!main.length) {
-                ctx.fillStyle = "#9da5aa"
+                ctx.fillStyle = root.lightMode ? "#718096" : "#9da5aa"
                 ctx.font = "14px Microsoft YaHei UI"
                 ctx.fillText("还没有开发记录", width / 2 - 48, height / 2)
                 return
@@ -365,19 +387,19 @@ Item {
             ctx.moveTo(trunk.x + 5, trunk.y + 8)
             ctx.lineTo(trunkEnd.x + 5, trunkEnd.y + 8)
             ctx.stroke()
-            ctx.strokeStyle = "#0b1115"
+            ctx.strokeStyle = root.lightMode ? "#d6e0e8" : (root.focusMode ? "#171523" : "#0b1115")
             ctx.lineWidth = 11
             ctx.beginPath()
             ctx.moveTo(trunk.x, trunk.y)
             ctx.lineTo(trunkEnd.x, trunkEnd.y)
             ctx.stroke()
-            ctx.strokeStyle = "#284a45"
+            ctx.strokeStyle = root.lightMode ? "#73ad9f" : (root.focusMode ? "#3f3b5b" : "#284a45")
             ctx.lineWidth = 7
             ctx.beginPath()
             ctx.moveTo(trunk.x, trunk.y)
             ctx.lineTo(trunkEnd.x, trunkEnd.y)
             ctx.stroke()
-            ctx.strokeStyle = "#5bd9bd"
+            ctx.strokeStyle = root.lightMode ? "#178774" : (root.focusMode ? "#b39aff" : "#5bd9bd")
             ctx.lineWidth = 2.4
             ctx.beginPath()
             ctx.moveTo(trunk.x, trunk.y)
@@ -414,7 +436,7 @@ Item {
             root.drawPulse(ctx, {
                 "x": root.trunkX,
                 "y": firstY + (lastY - firstY) * trunkProgress
-            }, "#75f2d2", 2.8)
+            }, root.lightMode ? "#178774" : (root.focusMode ? "#b39aff" : "#75f2d2"), 2.8)
             ctx.restore()
         }
 
@@ -425,6 +447,7 @@ Item {
             function onLayoutOffsetsChanged() { root.layoutVersion += 1; graph.requestPaint() }
             function onSelectedIdChanged() { graph.requestPaint() }
             function onHoverNodeIdChanged() { graph.requestPaint() }
+            function onVisualThemeChanged() { graph.requestPaint() }
             function onPanXChanged() { graph.requestPaint() }
             function onPanYChanged() { graph.requestPaint() }
             function onZoomChanged() { graph.requestPaint() }
@@ -508,8 +531,8 @@ Item {
                 width: parent.width
                 height: parent.height
                 radius: 9 * root.zoom
-                color: "#020507"
-                opacity: 0.64
+                color: root.lightMode ? "#566579" : "#020507"
+                opacity: root.lightMode ? 0.13 : 0.64
             }
             Rectangle {
                 x: 5 * root.zoom
@@ -524,11 +547,32 @@ Item {
                 anchors.fill: parent
                 radius: 9 * root.zoom
                 border.width: (card.nodeId === root.selectedId || mouseArea.containsMouse) ? 1.5 * root.zoom : root.zoom
-                border.color: card.nodeId === root.selectedId ? card.accent : (mouseArea.containsMouse ? "#8bd8d0" : "#53606a")
+                border.color: card.nodeId === root.selectedId
+                              ? card.accent
+                              : (mouseArea.containsMouse
+                                 ? (root.lightMode ? "#5aa99a" : (root.focusMode ? "#b6a3ff" : "#8bd8d0"))
+                                 : (root.lightMode ? "#cbd5df" : (root.focusMode ? "#514d68" : "#53606a")))
                 gradient: Gradient {
-                    GradientStop { position: 0.0; color: card.nodeId === root.selectedId ? "#243d42" : (mouseArea.containsMouse ? "#293844" : "#222e39") }
-                    GradientStop { position: 0.48; color: card.nodeId === root.selectedId ? "#20343a" : "#1e2933" }
-                    GradientStop { position: 1.0; color: card.nodeId === root.selectedId ? "#18262d" : "#151e26" }
+                    GradientStop {
+                        position: 0.0
+                        color: root.lightMode
+                               ? (card.nodeId === root.selectedId ? "#e3f2ee" : (mouseArea.containsMouse ? "#f1f7fa" : "#ffffff"))
+                               : (root.focusMode
+                                  ? (card.nodeId === root.selectedId ? "#302b46" : (mouseArea.containsMouse ? "#2c293e" : "#252334"))
+                                  : (card.nodeId === root.selectedId ? "#243d42" : (mouseArea.containsMouse ? "#293844" : "#222e39")))
+                    }
+                    GradientStop {
+                        position: 0.48
+                        color: root.lightMode
+                               ? (card.nodeId === root.selectedId ? "#eff7f4" : "#f8fafc")
+                               : (root.focusMode ? "#211f30" : (card.nodeId === root.selectedId ? "#20343a" : "#1e2933"))
+                    }
+                    GradientStop {
+                        position: 1.0
+                        color: root.lightMode
+                               ? (card.nodeId === root.selectedId ? "#e8f2ef" : "#f0f4f8")
+                               : (root.focusMode ? "#191824" : (card.nodeId === root.selectedId ? "#18262d" : "#151e26"))
+                    }
                 }
             }
             Rectangle {
@@ -544,7 +588,7 @@ Item {
                 y: 1 * root.zoom
                 width: Math.max(10, parent.width - 20 * root.zoom)
                 height: 1 * root.zoom
-                color: Qt.rgba(1, 1, 1, 0.16)
+                color: Qt.rgba(1, 1, 1, root.lightMode ? 0.75 : 0.16)
             }
             Rectangle {
                 id: badge
@@ -572,7 +616,7 @@ Item {
                 width: Math.max(40 * root.zoom, badge.x - 20 * root.zoom)
                 height: 19 * root.zoom
                 text: String(card.node.title || "")
-                color: "#f0f5fa"
+                color: root.lightMode ? "#25364a" : (root.focusMode ? "#f1edff" : "#f0f5fa")
                 font.family: "Microsoft YaHei UI"
                 font.bold: true
                 font.pixelSize: Math.max(11, 11 * root.zoom)
@@ -597,7 +641,7 @@ Item {
                 width: Math.max(40 * root.zoom, parent.width - 28 * root.zoom)
                 height: Math.max(10, 14 * root.zoom)
                 text: String(card.node.meta || "")
-                color: "#b0bdc9"
+                color: root.lightMode ? "#65758a" : "#b0bdc9"
                 font.family: "Microsoft YaHei UI"
                 font.pixelSize: Math.max(10, 9 * root.zoom)
                 elide: Text.ElideRight
@@ -662,7 +706,7 @@ Item {
         x: 18
         y: 10
         text: "开发尝试树"
-        color: "#e2f3ef"
+        color: root.lightMode ? "#31596a" : (root.focusMode ? "#e7ddff" : "#e2f3ef")
         font.family: "Microsoft YaHei UI"
         font.bold: true
         font.pixelSize: 14
@@ -675,7 +719,7 @@ Item {
         text: root.compactHeader
               ? Math.round(root.zoom * 100) + "% · Ctrl+滚轮"
               : Math.round(root.zoom * 100) + "%  ·  Ctrl+滚轮缩放 · 拖动分支 / 平移画布"
-        color: "#a2afbd"
+        color: root.lightMode ? "#65758a" : "#a2afbd"
         font.family: "Microsoft YaHei UI"
         font.pixelSize: root.compactHeader ? 11 : 13
     }
@@ -686,7 +730,7 @@ Item {
         y: 32
         width: Math.max(100, parent.width - 36)
         text: "主干 = 当前编码主线  ·  分支 = 已取消、失败或等待中的尝试方向"
-        color: "#a2afbd"
+        color: root.lightMode ? "#65758a" : "#a2afbd"
         font.family: "Microsoft YaHei UI"
         font.pixelSize: 12
         elide: Text.ElideRight

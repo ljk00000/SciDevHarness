@@ -10,7 +10,7 @@ from unittest.mock import patch
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_QUICK_BACKEND"] = "software"
 
-from PySide6.QtCore import QPointF, QTimer  # noqa: E402
+from PySide6.QtCore import QPointF, QSettings, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from scidev_client import CodeEditor, ClientWindow, MAX_TREE_LAYOUT_BYTES, DevelopmentTreeView  # noqa: E402
@@ -87,6 +87,72 @@ class DevelopmentTreeLayoutTests(unittest.TestCase):
                 finally:
                     tree.close()
                     self.app.processEvents()
+
+
+class UIProfileTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_ui_profiles_update_editor_tree_layout_and_switcher(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-ui-profiles-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.resize(1500, 920)
+                window.show()
+                self.app.processEvents()
+
+                window.set_ui_profile("paper", persist=False)
+                self.app.processEvents()
+                self.assertIn("#f4f6f9", window.styleSheet())
+                self.assertTrue(window.ui_theme_actions["paper"].isChecked())
+                self.assertEqual(window.git_tree.rootObject().property("visualTheme"), "paper")
+                self.assertEqual(window.welcome_editor.ui_profile, "paper")
+                keyword_color = (
+                    window._editor_highlighters[window.welcome_editor]
+                    .rules[0][1]
+                    .foreground()
+                    .color()
+                    .name()
+                )
+                self.assertEqual(keyword_color, "#7c3aed")
+
+                window.set_ui_profile("focus", persist=False)
+                self.app.processEvents()
+                self.assertIn("#0b0d14", window.styleSheet())
+                sizes = window.workbench.sizes()
+                total = sum(sizes)
+                self.assertAlmostEqual(sizes[0] / total, 0.19, delta=0.015)
+                self.assertAlmostEqual(sizes[2] / total, 0.245, delta=0.015)
+                self.assertEqual(window.git_tree.rootObject().property("visualTheme"), "focus")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_theme_menu_persists_the_choice_and_restores_it_on_startup(self) -> None:
+        settings = QSettings("SciDevHarness", "SciDevHarness")
+        had_previous = settings.contains("uiProfile")
+        previous = settings.value("uiProfile") if had_previous else None
+        second_window = None
+        with tempfile.TemporaryDirectory(prefix="scidev-ui-profile-persistence-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.ui_theme_actions["paper"].trigger()
+                self.assertEqual(window.ui_profile, "paper")
+                self.assertEqual(settings.value("uiProfile"), "paper")
+
+                second_window = ClientWindow(Path(temp))
+                self.assertEqual(second_window.ui_profile, "paper")
+            finally:
+                window.close()
+                if second_window is not None:
+                    second_window.close()
+                if had_previous:
+                    settings.setValue("uiProfile", previous)
+                else:
+                    settings.remove("uiProfile")
+                settings.sync()
+                self.app.processEvents()
 
 
 class AgentWorkspaceRefreshTests(unittest.TestCase):
