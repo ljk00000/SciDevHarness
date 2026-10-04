@@ -967,7 +967,7 @@ class EditorSplitInteractionTests(unittest.TestCase):
 
     def test_same_file_opened_in_both_editor_groups_shares_live_document(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-editor-split-shared-document-") as temp:
-            root = Path(temp)
+            root = Path(temp).resolve()
             source = root / "shared.py"
             source.write_bytes(b"value = 1\r\n")
             window = ClientWindow(root)
@@ -1047,7 +1047,7 @@ class EditorSplitInteractionTests(unittest.TestCase):
 
     def test_closing_original_editor_keeps_shared_document_alive_in_other_group(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-editor-split-document-lifetime-") as temp:
-            root = Path(temp)
+            root = Path(temp).resolve()
             source = root / "shared.py"
             source.write_text("value = 1\n", encoding="utf-8")
             window = ClientWindow(root)
@@ -1080,7 +1080,7 @@ class EditorSplitInteractionTests(unittest.TestCase):
 
     def test_replacing_preview_does_not_mutate_a_shared_document(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-editor-split-shared-preview-") as temp:
-            root = Path(temp)
+            root = Path(temp).resolve()
             shared_path = root / "shared.py"
             previous_preview_path = root / "previous-preview.py"
             other_path = root / "other.py"
@@ -1121,7 +1121,7 @@ class EditorSplitInteractionTests(unittest.TestCase):
 
     def test_renaming_a_shared_file_keeps_both_views_and_document_tracking(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-editor-split-shared-rename-") as temp:
-            root = Path(temp)
+            root = Path(temp).resolve()
             source = root / "before.py"
             target = root / "after.py"
             source.write_text("value = 1\n", encoding="utf-8")
@@ -1160,7 +1160,7 @@ class EditorSplitInteractionTests(unittest.TestCase):
 
     def test_agent_refresh_updates_a_shared_document_only_once(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-editor-split-agent-refresh-") as temp:
-            root = Path(temp)
+            root = Path(temp).resolve()
             source = root / "shared.py"
             source.write_text("value = 1\n", encoding="utf-8")
             window = ClientWindow(root)
@@ -1193,7 +1193,7 @@ class EditorSplitInteractionTests(unittest.TestCase):
 
     def test_closing_window_counts_and_saves_a_shared_file_once(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-editor-split-close-save-once-") as temp:
-            root = Path(temp)
+            root = Path(temp).resolve()
             source = root / "shared.py"
             source.write_text("value = 1\n", encoding="utf-8")
             window = ClientWindow(root)
