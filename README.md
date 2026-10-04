@@ -6,6 +6,8 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 
 客户端使用 PySide6/Qt，采用 VSCode + Codex 风格的左侧资源管理器、中间编码工作区和右侧 Agent 对话栏。
 
+顶栏“主题”菜单可随时切换三套完整界面方案：Studio 深色均衡、Paper 明亮浅色、Focus 专注宽编辑器。选择会保存到本机设置；颜色同步覆盖编辑器语法、版本树与 Git 面板，Focus 会将空间更多留给代码区。
+
 ## 许可证与依赖
 
 - 项目代码采用 [Apache-2.0](LICENSE)；Qt/PySide6 与可选模型权重使用各自许可证，模型权重不随仓库分发。
@@ -35,6 +37,7 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 客户端包含：
 
 - 编码会话：在右侧 Agent 对话栏输入任务，Agent 自主读取文件、写代码、修复错误
+- 界面方案：Studio、Paper、Focus 三套可切换并记住选择的外观/布局配置
 - 工具调用：`list_files`、`read_file`、`write_file`、`replace_in_file`、`run_command`、`git_diff`；Agent 每次执行 shell 命令前都须用户批准
 - 本地任务队列：网络失败时指数退避并定时重试，进程重启后可恢复会话
 - Git 集成：查看状态和提交记录；自动提交仅包含任务开始时干净、且本次会话改动的文件，不会把已有暂存或未提交文件混进来
