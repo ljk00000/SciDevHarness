@@ -1,5 +1,10 @@
 # 历史与结果
 
+## 2026-10-04 17:06 (Asia/Shanghai) - Windows CI 路径回归修复
+- GitHub Actions 的 3.12/3.13/3.14 均暴露同一组失败：重命名遇到 `RUNNER~1` 短路径别名时无法相对项目根计算路径；diff 测试把同一路径的短/长写法误作不同路径。
+- 重命名前先规范化旧路径；diff 断言比较 resolve 后路径，并新增 Windows 短路径重命名回归。
+- 本机全量 194/194、短路径定向测试、compileall、QML lint、`git diff --check` 与离屏 UI smoke 通过；修复等待远端 CI 复核。
+
 ## 2026-10-04 16:55（Asia/Shanghai）· 编辑器/资源树/Git diff 边界修复
 
 - 编辑器保存现按打开文件的首个原始换行符保留 CRLF / LF / CR；Agent 更新干净缓冲区时同步 EOL 元数据。资源管理器可在“新建文件/文件夹”间切换，并拒绝任意层级的 `.git`、`.research` 等内部路径。
