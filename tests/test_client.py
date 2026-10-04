@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import tempfile
 import time
@@ -472,8 +473,8 @@ class GitDiffEditorTests(unittest.TestCase):
                 second_editor = window._active_editor()
 
                 self.assertIsNot(first_editor, second_editor)
-                self.assertEqual(Path(first_editor.property("diff_path")), first_path)
-                self.assertEqual(Path(second_editor.property("diff_path")), second_path)
+                self.assertEqual(Path(first_editor.property("diff_path")).resolve(), first_path.resolve())
+                self.assertEqual(Path(second_editor.property("diff_path")).resolve(), second_path.resolve())
                 self.assertIn("src/module.py", first_editor.toPlainText())
                 self.assertIn("tests/module.py", second_editor.toPlainText())
             finally:
@@ -546,6 +547,36 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                 self.assertFalse((source_dir / ".research").exists())
                 self.assertTrue(window.new_file_entry.isVisible())
                 self.assertIn("内部目录", window.statusBar().currentMessage())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    @unittest.skipUnless(os.name == "nt", "Windows short-path aliases are platform-specific")
+    def test_rename_accepts_a_windows_short_path_alias(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-short-path-rename-") as temp:
+            root = Path(temp)
+            source = root / "src" / "module.py"
+            source.parent.mkdir()
+            source.write_text("value = 1\n", encoding="utf-8")
+
+            short_path_buffer = ctypes.create_unicode_buffer(32768)
+            get_short_path_name = ctypes.windll.kernel32.GetShortPathNameW
+            get_short_path_name.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
+            get_short_path_name.restype = ctypes.c_uint
+            length = get_short_path_name(str(root), short_path_buffer, len(short_path_buffer))
+            self.assertGreater(length, 0)
+            short_root = Path(short_path_buffer.value)
+            self.assertNotEqual(short_root, root)
+
+            window = ClientWindow(root)
+            try:
+                window.start_rename_entry(short_root / "src" / "module.py")
+                window.new_file_entry.setText("renamed.py")
+                window.create_new_file()
+
+                renamed = root / "src" / "renamed.py"
+                self.assertTrue(renamed.is_file())
+                self.assertFalse(source.exists())
             finally:
                 window.close()
                 self.app.processEvents()

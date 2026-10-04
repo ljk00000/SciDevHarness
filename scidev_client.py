@@ -4724,6 +4724,11 @@ class ClientWindow(QMainWindow):
         mode = self._explorer_entry_mode
         old_target = self._rename_target
         if mode == "rename" and old_target is not None:
+            # QFileSystemModel may hand back a Windows 8.3 path (for example
+            # RUNNER~1) while project_root was opened through its long name.
+            # Canonicalize before computing the relative path and updating tabs.
+            old_target = old_target.resolve()
+        if mode == "rename" and old_target is not None:
             target = (old_target.parent / raw_name).resolve()
         else:
             target = (self._entry_parent / raw_name).resolve()
