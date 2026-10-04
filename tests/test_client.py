@@ -29,6 +29,7 @@ from scidev_client import (  # noqa: E402
     DevelopmentTreeView,
     MAX_TREE_LAYOUT_BYTES,
     NotificationToast,
+    TerminalOutputDecoder,
 )
 from scidev_core import CodingToolbox  # noqa: E402
 
@@ -1085,6 +1086,38 @@ class StreamingAgentUiTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_prompt_is_preserved_when_another_task_is_still_running(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-chat-busy-input-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.active_task_id = "task_in_progress"
+                prompt = "请接着检查第二个文件"
+                window.chat_input.setPlainText(prompt)
+                window.chat_input.setFocus()
+                self.app.processEvents()
+
+                with (
+                    patch.object(window.worker, "submit") as submit_task,
+                    patch.object(window, "_append_chat", wraps=window._append_chat) as append_chat,
+                ):
+                    QTest.keyClick(
+                        window.chat_input,
+                        Qt.Key.Key_Return,
+                        Qt.KeyboardModifier.ControlModifier,
+                    )
+                    self.app.processEvents()
+
+                self.assertEqual(window.chat_input.toPlainText(), prompt)
+                submit_task.assert_not_called()
+                append_chat.assert_any_call(
+                    "系统",
+                    "当前任务仍在执行，请等待 Agent 完成后继续。",
+                    "meta",
+                )
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_streamed_text_updates_one_bubble_and_finalizes_without_duplication(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-streaming-chat-") as temp:
             window = ClientWindow(Path(temp))
@@ -1169,6 +1202,41 @@ class TerminalUiTests(unittest.TestCase):
             finally:
                 window.close()
                 self.app.processEvents()
+
+    def test_terminal_keeps_utf8_characters_split_across_output_events(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-terminal-utf8-split-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                script = (
+                    "import sys,time; "
+                    "sys.stdout.buffer.write(bytes([0xe4])); sys.stdout.buffer.flush(); "
+                    "sys.stderr.buffer.write(bytes([0xe5])); sys.stderr.buffer.flush(); "
+                    "time.sleep(0.2); "
+                    "sys.stdout.buffer.write(bytes([0xb8,0xad])); sys.stdout.buffer.flush(); "
+                    "sys.stderr.buffer.write(bytes([0xad,0x97])); sys.stderr.buffer.flush()"
+                )
+                window.terminal_input.setText(subprocess.list2cmdline([sys.executable, "-c", script]))
+                window._run_terminal_command()
+
+                deadline = time.monotonic() + 10
+                while window.terminal_process is not None and time.monotonic() < deadline:
+                    self.app.processEvents()
+                    QTest.qWait(10)
+
+                self.assertIsNone(window.terminal_process, "terminal process did not finish")
+                terminal_text = window.terminal_output.toPlainText()
+                self.assertIn("中", terminal_text)
+                self.assertIn("字", terminal_text)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_terminal_decoder_preserves_split_legacy_codepage_text(self) -> None:
+        decoder = TerminalOutputDecoder("gbk")
+        self.assertEqual(decoder.decode(bytes([0xd7])), "")
+        self.assertEqual(decoder.decode(bytes([0xd6]), final=True), "字")
 
 
 if __name__ == "__main__":

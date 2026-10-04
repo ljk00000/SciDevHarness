@@ -602,6 +602,38 @@ def _choose_workspace_directory(initial_directory: Path, parent: QWidget | None 
     return selected if selected.is_dir() else None
 
 
+class TerminalOutputDecoder:
+    """Decode chunked terminal bytes as UTF-8, falling back for legacy output."""
+
+    def __init__(self, fallback_encoding: str):
+        self._fallback_encoding = fallback_encoding
+        self._pending = b""
+        self._using_fallback = False
+
+    def decode(self, raw: bytes, *, final: bool = False) -> str:
+        if self._using_fallback:
+            return raw.decode(self._fallback_encoding, errors="replace")
+        data = self._pending + raw
+        if not data:
+            return ""
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            if exc.reason == "unexpected end of data" and exc.end == len(data):
+                self._pending = b""
+                if not final:
+                    self._pending = data[exc.start:]
+                    return data[:exc.start].decode("utf-8")
+                return data.decode("utf-8", errors="replace")
+            self._pending = b""
+            self._using_fallback = True
+            prefix = data[:exc.start].decode("utf-8")
+            suffix = data[exc.start:].decode(self._fallback_encoding, errors="replace")
+            return prefix + suffix
+        self._pending = b""
+        return text
+
+
 class AppSignals(QObject):
     agent_event = Signal(str, object)
     worker_event = Signal(str, object)
@@ -1740,6 +1772,7 @@ class ClientWindow(QMainWindow):
         self.window_max_button: QToolButton | None = None
         self.terminal_process: QProcess | None = None
         self._terminal_buffer = ""
+        self._terminal_decoders: dict[str, Any] = {}
         self.terminal_cwd = self.project_root
         self._entry_parent = self.project_root
         self._explorer_entry_mode = "create"
@@ -4606,6 +4639,11 @@ class ClientWindow(QMainWindow):
         self.terminal_input.clear()
         self._append_terminal_output(f"\n$ {command}\n")
         self._terminal_buffer = ""
+        fallback_encoding = "mbcs" if os.name == "nt" else "utf-8"
+        self._terminal_decoders = {
+            "stdout": TerminalOutputDecoder(fallback_encoding),
+            "stderr": TerminalOutputDecoder(fallback_encoding),
+        }
         process = QProcess(self)
         self.terminal_process = process
         process.setWorkingDirectory(str(self.terminal_cwd))
@@ -4641,8 +4679,15 @@ class ClientWindow(QMainWindow):
         process = self.terminal_process
         if process is None:
             return
-        output = self._decode_terminal_bytes(bytes(process.readAllStandardOutput()))
-        output += self._decode_terminal_bytes(bytes(process.readAllStandardError()))
+        output = ""
+        for stream, raw in (
+            ("stdout", bytes(process.readAllStandardOutput())),
+            ("stderr", bytes(process.readAllStandardError())),
+        ):
+            if not raw:
+                continue
+            decoder = self._terminal_decoders.get(stream)
+            output += decoder.decode(raw) if decoder is not None else self._decode_terminal_bytes(raw)
         if output:
             self._terminal_buffer += output
             self._append_terminal_output(output)
@@ -4664,6 +4709,13 @@ class ClientWindow(QMainWindow):
 
     def _terminal_finished(self, exit_code: int, _status: QProcess.ExitStatus) -> None:
         self._read_terminal_output()
+        pending_text = "".join(
+            decoder.decode(b"", final=True) for decoder in self._terminal_decoders.values()
+        )
+        self._terminal_decoders.clear()
+        if pending_text:
+            self._terminal_buffer += pending_text
+            self._append_terminal_output(pending_text)
         self._append_terminal_output(f"\n[退出码 {exit_code}]\n")
         if exit_code != 0:
             self.problems_output.setPlainText(self._terminal_buffer.strip() or f"命令退出码: {exit_code}")
@@ -4945,13 +4997,13 @@ class ClientWindow(QMainWindow):
         if not prompt:
             self.chat_input.setFocus()
             return
-        self.chat_input.clear()
-        self._submit_prompt(prompt)
+        if self._submit_prompt(prompt):
+            self.chat_input.clear()
 
-    def _submit_prompt(self, prompt: str) -> None:
+    def _submit_prompt(self, prompt: str) -> bool:
         if self.active_task_id:
             self._append_chat("系统", "当前任务仍在执行，请等待 Agent 完成后继续。", "meta")
-            return
+            return False
         if self.current_session_id is None:
             self.current_session_id = new_id("session")
             self._append_chat("系统", f"已创建会话 {self.current_session_id}", "meta")
@@ -4965,6 +5017,7 @@ class ClientWindow(QMainWindow):
         self._set_state(self.chat_status, "排队中 · 等待 Agent", "StateWorking")
         self._set_state(self.workspace_state, "● 排队中", "StateWorking")
         self._append_log(f"编码任务已加入队列：{self.active_task_id}")
+        return True
 
     def new_coding_task(self) -> None:
         if self.active_task_id:
