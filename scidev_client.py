@@ -485,10 +485,16 @@ QFrame#AgentBubble { background: #18212b; border: 1px solid #2a3744; border-radi
 QFrame#ToolBubble { background: #172720; border: 1px solid #2e493a; border-radius: 8px; }
 QFrame#MetaBubble { background: transparent; border: none; }
 QFrame#SummaryBubble { background: #172934; border: 1px solid #2a4c5b; border-radius: 9px; }
+QFrame#NotificationToast { background: #202832; border: 1px solid #493b40; border-left: 3px solid #df7478; border-radius: 10px; }
 QLabel#BubbleRole { color: #91a0af; font-size: 9pt; font-weight: 600; }
 QLabel#BubbleText { color: #e2e9f0; font-size: 11pt; }
 QFrame#SummaryBubble QLabel#BubbleRole { color: #77cbed; }
 QFrame#SummaryBubble QLabel#BubbleText { color: #e5f7ff; }
+QLabel#NotificationBadge { background: #492b30; color: #ffb4b7; border-radius: 12px; font-size: 12pt; font-weight: 700; }
+QLabel#NotificationTitle { color: #f3f5f7; font-size: 11pt; font-weight: 650; }
+QLabel#NotificationBody { color: #c2cbd5; font-size: 10pt; }
+QToolButton#NotificationClose { background: transparent; color: #aab6c2; border: none; font-size: 16pt; }
+QToolButton#NotificationClose:hover { background: #303943; color: #ffffff; }
 QLabel#ToolText { color: #b9d4c3; font-family: "Consolas", "Courier New", monospace; font-size: 9pt; }
 QLabel#Chip { color: #a9d4ff; background: #19232e; border: 1px solid #2d3c4b; border-radius: 6px; padding: 4px 8px; }
 QLabel#MetricValue { color: #eef4fa; font-size: 16pt; font-weight: 600; }
@@ -1613,6 +1619,76 @@ class MessageBubble(QFrame):
         self.body_label.setText(self.body_label.text() + text)
 
 
+class NotificationToast(QFrame):
+    """A compact, non-blocking workspace notification."""
+
+    dismissed = Signal()
+    DISPLAY_MS = 9000
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setObjectName("NotificationToast")
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setMinimumWidth(0)
+        self.setMaximumWidth(440)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(13, 11, 9, 11)
+        layout.setSpacing(10)
+
+        badge = QLabel("!")
+        badge.setObjectName("NotificationBadge")
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedSize(24, 24)
+        badge.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+
+        content = QVBoxLayout()
+        content.setContentsMargins(0, 0, 0, 0)
+        content.setSpacing(3)
+        self.title_label = QLabel()
+        self.title_label.setObjectName("NotificationTitle")
+        self.title_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.title_label.setWordWrap(True)
+        self.title_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        content.addWidget(self.title_label)
+        self.body_label = QLabel()
+        self.body_label.setObjectName("NotificationBody")
+        self.body_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.body_label.setWordWrap(True)
+        self.body_label.setMaximumHeight(96)
+        self.body_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        content.addWidget(self.body_label)
+        layout.addLayout(content, 1)
+
+        self.close_button = QToolButton()
+        self.close_button.setObjectName("NotificationClose")
+        self.close_button.setText("×")
+        self.close_button.setToolTip("关闭通知")
+        self.close_button.setAccessibleName("关闭通知")
+        self.close_button.setFixedSize(26, 26)
+        self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_button.clicked.connect(self.dismiss)
+        layout.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
+
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.dismiss)
+
+    def show_message(self, title: str, message: str) -> None:
+        self.title_label.setText(title)
+        self.body_label.setText(message)
+        self.body_label.setToolTip(message)
+        self.adjustSize()
+        self._timer.start(self.DISPLAY_MS)
+
+    def dismiss(self) -> None:
+        self._timer.stop()
+        self.hide()
+        self.dismissed.emit()
+
+
 class ClientWindow(QMainWindow):
     WORKBENCH_COMPACT_BREAKPOINT = 1000
     EXPLORER_COLLAPSE_BREAKPOINT = 900
@@ -1639,6 +1715,7 @@ class ClientWindow(QMainWindow):
         self.current_session_id: str | None = None
         self.active_task_id: str | None = None
         self._streaming_bubbles: dict[tuple[str, int], MessageBubble] = {}
+        self._active_notification: NotificationToast | None = None
         self.current_file: Path | None = None
         self._editor_paths: dict[QWidget, Path] = {}
         self._editor_titles: dict[QWidget, str] = {}
@@ -2040,30 +2117,40 @@ class ClientWindow(QMainWindow):
         return bar
 
     def _show_message(self, title: str, message: str) -> None:
-        dialog = QDialog(self)
-        dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        dialog.resize(520, 220)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(0, 0, 0, 14)
-        layout.setSpacing(0)
-        layout.addWidget(self._dialog_title_bar(dialog, title))
-        body = QLabel(message)
-        body.setWordWrap(True)
-        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(18, 18, 18, 10)
-        body_layout.addWidget(body)
-        layout.addLayout(body_layout, 1)
-        actions = QHBoxLayout()
-        actions.setContentsMargins(18, 0, 18, 0)
-        actions.addStretch(1)
-        close = QPushButton("关闭")
-        close.setObjectName("Primary")
-        close.clicked.connect(dialog.accept)
-        actions.addWidget(close)
-        layout.addLayout(actions)
-        dialog.exec()
+        if self._active_notification is None:
+            notification = NotificationToast(self.centralWidget())
+            notification.dismissed.connect(self._clear_active_notification)
+            self._active_notification = notification
+        else:
+            notification = self._active_notification
+        notification.show_message(title, message)
+        self._position_notification()
+        notification.show()
+        notification.raise_()
+
+    def _clear_active_notification(self) -> None:
+        notification = self.sender()
+        if notification is not self._active_notification:
+            return
+        self._active_notification = None
+        notification.deleteLater()
+
+    def _position_notification(self) -> None:
+        notification = self._active_notification
+        if notification is None or not hasattr(self, "workspace_stack"):
+            return
+        root = self.centralWidget()
+        if root is None:
+            return
+        anchor = self.workspace_stack.mapTo(root, QPoint(0, 0))
+        anchor_rect = QRect(anchor, self.workspace_stack.size())
+        width = max(1, min(440, anchor_rect.width() - 24))
+        notification.setFixedWidth(width)
+        notification.adjustSize()
+        height = notification.sizeHint().height()
+        x = anchor_rect.x() + max(8, anchor_rect.width() - width - 12)
+        y = max(8, root.height() - height - 14)
+        notification.setGeometry(x, y, width, height)
 
     def _build_left_panel(self) -> QWidget:
         shell = QWidget()
@@ -2473,6 +2560,8 @@ class ClientWindow(QMainWindow):
             QTimer.singleShot(0, self._adapt_workbench_layout)
         if hasattr(self, "git_tree_splitter"):
             QTimer.singleShot(0, self._adapt_git_layout)
+        if self._active_notification is not None:
+            QTimer.singleShot(0, self._position_notification)
 
     def _adapt_title_bar_layout(self) -> None:
         compact = self.width() < 1120

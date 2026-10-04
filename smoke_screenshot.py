@@ -424,6 +424,42 @@ def verify_ui_profile(window: ClientWindow, profile_key: str, name: str) -> None
         raise RuntimeError(f"the version-tree canvas did not receive profile {profile_key!r} for {name}")
 
 
+def capture_notification_toast(
+    window: ClientWindow,
+    app: QApplication,
+    output_dir: Path,
+    profile_key: str,
+    size: tuple[int, int],
+) -> None:
+    name = f"notification-{profile_key}-{size[0]}x{size[1]}"
+    window.set_ui_profile(profile_key, persist=False)
+    window.show_workspace()
+    window.resize(*size)
+    window.show()
+    app.processEvents()
+    window._show_message("保存失败", "截图回归中的示例提示，不会阻塞代码编辑。")
+    for _ in range(3):
+        app.processEvents()
+        time.sleep(0.016)
+
+    notification = window._active_notification
+    root = window.centralWidget()
+    if notification is None or not notification.isVisible() or app.activeModalWidget() is not None:
+        raise RuntimeError(f"the non-modal notification is not visible for {name}")
+    if not root.rect().contains(notification.geometry()):
+        raise RuntimeError(
+            f"the notification is clipped for {name}: {notification.geometry()} / {root.rect()}"
+        )
+
+    image = window.grab().toImage()
+    destination = output_dir / f"{name}.png"
+    if image.isNull() or not image.save(str(destination), "PNG"):
+        raise RuntimeError(f"could not capture the notification toast: {destination}")
+    print(f"{destination} ({image.width()}x{image.height()})")
+    notification.dismiss()
+    app.processEvents()
+
+
 def capture_ui_profile_menu(window: ClientWindow, app: QApplication, output_dir: Path) -> None:
     menu_position = window.ui_theme_button.mapToGlobal(QPoint(0, window.ui_theme_button.height()))
     window.ui_theme_menu.popup(menu_position)
@@ -632,6 +668,10 @@ def main(argv: list[str] | None = None) -> int:
                 name = f"responsive-{profile_key}-{suffix}"
                 capture(window, app, output_dir, name, size)
                 verify_workbench_layout(window, name)
+
+        for profile_key in UI_PROFILES:
+            capture_notification_toast(window, app, output_dir, profile_key, (1500, 920))
+        capture_notification_toast(window, app, output_dir, "paper", (820, 600))
 
         for profile_key in ("paper", "focus"):
             window.set_ui_profile(profile_key, persist=False)

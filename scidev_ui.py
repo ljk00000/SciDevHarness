@@ -104,6 +104,12 @@ QFrame#AgentBubble { background: #f1f4f8; border-color: #e0e6ed; }
 QFrame#ToolBubble { background: #eaf4ed; border-color: #d1e5d7; }
 QFrame#MetaBubble { background: transparent; border: none; }
 QFrame#SummaryBubble { background: #e8f4f8; border-color: #cfe6ee; }
+QFrame#NotificationToast { background: #ffffff; border-color: #efd0d0; }
+QLabel#NotificationBadge { background: #f9e7e7; color: #a83c40; }
+QLabel#NotificationTitle { color: #253347; }
+QLabel#NotificationBody { color: #53647a; }
+QToolButton#NotificationClose { color: #708096; }
+QToolButton#NotificationClose:hover { background: #f0f3f7; color: #263346; }
 QLabel#BubbleRole { color: #647489; }
 QLabel#BubbleText { color: #2d3d52; }
 QFrame#SummaryBubble QLabel#BubbleRole { color: #176b83; }
@@ -201,6 +207,12 @@ QFrame#AgentBubble { background: #191925; border-color: #343244; }
 QFrame#ToolBubble { background: #172821; border-color: #2c493a; }
 QFrame#MetaBubble { background: transparent; border: none; }
 QFrame#SummaryBubble { background: #1b2533; border-color: #344a60; }
+QFrame#NotificationToast { background: #211d2b; border-color: #51404b; }
+QLabel#NotificationBadge { background: #492b38; color: #ffb4c4; }
+QLabel#NotificationTitle { color: #f0eef8; }
+QLabel#NotificationBody { color: #c7c3d3; }
+QToolButton#NotificationClose { color: #b0afc2; }
+QToolButton#NotificationClose:hover { background: #302b3b; color: #ffffff; }
 QLabel#BubbleRole { color: #aaa8bc; }
 QLabel#BubbleText { color: #eeedf5; }
 QFrame#SummaryBubble QLabel#BubbleRole { color: #8bd4ed; }

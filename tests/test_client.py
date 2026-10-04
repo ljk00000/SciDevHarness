@@ -18,7 +18,13 @@ from PySide6.QtCore import QPointF, QSize, QSettings, QTimer  # noqa: E402
 from PySide6.QtGui import QFontInfo, QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
-from scidev_client import CodeEditor, ClientWindow, MAX_TREE_LAYOUT_BYTES, DevelopmentTreeView  # noqa: E402
+from scidev_client import (  # noqa: E402
+    CodeEditor,
+    ClientWindow,
+    DevelopmentTreeView,
+    MAX_TREE_LAYOUT_BYTES,
+    NotificationToast,
+)
 
 
 class DevelopmentTreeLayoutTests(unittest.TestCase):
@@ -250,6 +256,60 @@ class UIProfileTests(unittest.TestCase):
                 else:
                     settings.remove("uiProfile")
                 settings.sync()
+                self.app.processEvents()
+
+
+class NotificationToastTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_messages_are_non_modal_reuse_one_toast_and_fit_responsive_workspace(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-notification-toast-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.resize(1100, 700)
+                window.show()
+                self.app.processEvents()
+
+                window._show_message("保存失败", "磁盘暂时不可写。")
+                notification = window._active_notification
+                self.assertIsInstance(notification, NotificationToast)
+                self.assertIsNone(self.app.activeModalWidget())
+                self.assertIs(notification.parentWidget(), window.centralWidget())
+                self.assertTrue(notification._timer.isActive())
+
+                window._show_message("Git 错误", "远程暂时不可用。")
+                self.app.processEvents()
+                self.assertIs(window._active_notification, notification)
+                self.assertEqual(len(window.centralWidget().findChildren(NotificationToast)), 1)
+                self.assertEqual(notification.title_label.text(), "Git 错误")
+                self.assertEqual(notification.body_label.text(), "远程暂时不可用。")
+
+                for profile, expected in (
+                    ("studio", "#202832"),
+                    ("paper", "#ffffff"),
+                    ("focus", "#211d2b"),
+                ):
+                    window.set_ui_profile(profile, persist=False)
+                    self.app.processEvents()
+                    self.assertIn(expected, window.styleSheet())
+
+                window.resize(820, 600)
+                self.app.processEvents()
+                toast_rect = notification.geometry()
+                root_rect = window.centralWidget().rect()
+                self.assertTrue(root_rect.contains(toast_rect))
+                self.assertGreaterEqual(toast_rect.x(), 0)
+                self.assertGreaterEqual(toast_rect.y(), 0)
+                self.assertLessEqual(toast_rect.right(), root_rect.right())
+                self.assertLessEqual(toast_rect.bottom(), root_rect.bottom())
+
+                notification.close_button.click()
+                self.app.processEvents()
+                self.assertIsNone(window._active_notification)
+            finally:
+                window.close()
                 self.app.processEvents()
 
 
