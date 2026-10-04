@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-04 18:20 (Asia/Shanghai) - 搜索告警与 junction 删除风险
+- 每次键入触发的 `QSortFilterProxyModel.invalidateFilter()` 在 PySide6 6.11.2 发出弃用警告；改为 `beginFilterChange/endFilterChange(Rows)`，真实键盘输入测试确认过滤正确且无该警告。
+- Windows 项目内 junction 原先显示为普通目录，删除入口会 `resolve()` 后误指向真实目标；现资源树隐藏链接，删除入口在解析前拒绝链接。新增回归复现并通过。
+- 工作区搜索测试改用真实键盘输入，并拦截 `Path.open` 验证超大文件确实不读取；补实际 QProcess 终端 stdout/stderr、带空格参数和非零退出码回归。全量 205/205，启动器/依赖 smoke、布局/主题/拖拽截图矩阵通过。
+- 本机最小 Qt 环境门禁因现有虚拟环境装有额外 `PySide6-Addons` 而失败；`pip check` 正常，未改动依赖。推送后由干净 CI 复核。
+
 ## 2026-10-04 18:02 (Asia/Shanghai) - 本地与远端验证通过
 - GitHub Actions [#37193907703](https://github.com/ljk00000/SciDevHarness/actions/runs/37193907703) 的 Python 3.12/3.13/3.14 全绿；完整测试、依赖 smoke、普通/125% DPI UI 截图和 QML lint 均通过。
 - 本机全量 202/202；提交 `0f857ca` 修复行列-only Quick Open，短/长路径断言修正后远端复验通过。`master` 已推至 `8e9f1ec`，`release/v5` 未改。
