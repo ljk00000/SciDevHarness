@@ -1597,6 +1597,65 @@ class WorkspaceSearchTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_quick_open_expands_visible_branches_for_broad_results(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-search-broad-expand-") as temp:
+            root = Path(temp)
+            directories = []
+            for index in range(151):
+                directory = root / f"branch_{index:03d}"
+                directory.mkdir()
+                (directory / "needle_result.py").write_text("value = 1\n", encoding="utf-8")
+                directories.append(directory)
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window.command_search.setFocus()
+                QTest.qWait(100)
+                window.command_search.setText("needle")
+                QTest.qWait(250)
+                self.app.processEvents()
+
+                def expanded_directories() -> list[Path]:
+                    return [
+                        directory
+                        for directory in directories
+                        if window.file_tree.isExpanded(
+                            window.file_proxy.mapFromSource(
+                                window.file_model.index(str(directory))
+                            )
+                        )
+                    ]
+
+                initial_expansions = expanded_directories()
+                self.assertGreater(len(initial_expansions), 0)
+                self.assertLess(len(initial_expansions), len(directories))
+                first_match = window.file_proxy.mapFromSource(
+                    window.file_model.index(str(initial_expansions[0] / "needle_result.py"))
+                )
+                self.assertTrue(
+                    window.file_tree.visualRect(first_match).intersects(
+                        window.file_tree.viewport().rect()
+                    )
+                )
+
+                scroll_bar = window.file_tree.verticalScrollBar()
+                for _ in range(5):
+                    scroll_bar.setValue(scroll_bar.maximum())
+                    QTest.qWait(80)
+                    self.app.processEvents()
+                    if directories[-1] in expanded_directories():
+                        break
+                self.assertTrue(
+                    window.file_tree.isExpanded(
+                        window.file_proxy.mapFromSource(
+                            window.file_model.index(str(directories[-1]))
+                        )
+                    )
+                )
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_quick_open_typing_survives_unreadable_link_metadata(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-search-metadata-") as temp:
             root = Path(temp)

@@ -1911,6 +1911,8 @@ class NotificationToast(QFrame):
 class ClientWindow(QMainWindow):
     WORKBENCH_COMPACT_BREAKPOINT = 1000
     EXPLORER_COLLAPSE_BREAKPOINT = 900
+    QUICK_SEARCH_BULK_EXPANSION_LIMIT = 150
+    QUICK_SEARCH_VISIBLE_EXPANSION_BATCH_SIZE = 20
     WORKBENCH_WIDE_MINIMUMS = (240, 360, 280)
     WORKBENCH_COMPACT_MINIMUMS = (200, 320, 232)
 
@@ -2058,10 +2060,22 @@ class ClientWindow(QMainWindow):
         workbench.splitterMoved.connect(self._on_workbench_splitter_moved)
         root_layout.addWidget(workbench, 1)
         self.setCentralWidget(root)
+        self._quick_search_expand_query = ""
+        self._quick_search_expand_directory_keys: set[str] = set()
         self._quick_search_expand_timer = QTimer(self)
         self._quick_search_expand_timer.setSingleShot(True)
         self._quick_search_expand_timer.setInterval(80)
         self._quick_search_expand_timer.timeout.connect(self._expand_filtered_file_branches_now)
+        self._quick_search_visible_expand_timer = QTimer(self)
+        self._quick_search_visible_expand_timer.setSingleShot(True)
+        self._quick_search_visible_expand_timer.setInterval(12)
+        self._quick_search_visible_expand_timer.timeout.connect(
+            self._expand_visible_filtered_file_branches
+        )
+        self.file_tree.verticalScrollBar().valueChanged.connect(
+            self._schedule_visible_filtered_branch_expansion
+        )
+        self.file_model.rowsInserted.connect(self._schedule_visible_filtered_branch_expansion)
         self.command_search.textChanged.connect(self.file_proxy.set_filter_text)
         self.command_search.textChanged.connect(self._update_command_suggestions)
         self.command_search.textChanged.connect(self._expand_filtered_file_branches)
@@ -2868,6 +2882,7 @@ class ClientWindow(QMainWindow):
             self._workbench_adapting = False
         self._adapt_explorer_density()
         self._adapt_chat_composer_density()
+        self._schedule_visible_filtered_branch_expansion()
 
     def _adapt_explorer_density(self) -> None:
         git_entry = getattr(self, "git_entry_button", None)
@@ -4671,6 +4686,9 @@ class ClientWindow(QMainWindow):
 
     def _expand_filtered_file_branches(self, text: str) -> None:
         query = text.strip().casefold()
+        self._quick_search_expand_query = query
+        self._quick_search_expand_directory_keys.clear()
+        self._quick_search_visible_expand_timer.stop()
         if len(query) < 2 or query.startswith(">"):
             self._quick_search_expand_timer.stop()
             return
@@ -4678,17 +4696,75 @@ class ClientWindow(QMainWindow):
 
     def _expand_filtered_file_branches_now(self) -> None:
         query = self.command_search.text().strip().casefold()
-        if self.file_proxy._filter_text != query:
+        if self.file_proxy._filter_text != query or self._quick_search_expand_query != query:
             return
         directories = self.file_proxy.matching_directory_paths()
-        # Avoid expanding a very broad search into hundreds of branches.
-        if len(directories) > 150:
+        if len(directories) > self.QUICK_SEARCH_BULK_EXPANSION_LIMIT:
+            self._quick_search_expand_directory_keys = {
+                self.file_proxy._path_key(directory) for directory in directories
+            }
+            self._schedule_visible_filtered_branch_expansion()
             return
         for directory in directories:
             source_index = self.file_model.index(os.fspath(directory))
             proxy_index = self.file_proxy.mapFromSource(source_index)
             if proxy_index.isValid():
                 self.file_tree.expand(proxy_index)
+
+    def _schedule_visible_filtered_branch_expansion(self, *_args: object) -> None:
+        if not self._quick_search_expand_directory_keys:
+            return
+        if (
+            self.file_proxy._filter_text != self._quick_search_expand_query
+            or not self.file_tree.isVisible()
+        ):
+            return
+        self._quick_search_visible_expand_timer.start()
+
+    def _expand_visible_filtered_file_branches(self) -> None:
+        query = self.command_search.text().strip().casefold()
+        if (
+            self.file_proxy._filter_text != query
+            or self._quick_search_expand_query != query
+            or not self._quick_search_expand_directory_keys
+            or not self.file_tree.isVisible()
+        ):
+            return
+
+        viewport = self.file_tree.viewport()
+        row_height = max(1, self.file_tree.sizeHintForRow(0))
+        expansions_this_batch = 0
+        processed_any = False
+        while expansions_this_batch < self.QUICK_SEARCH_VISIBLE_EXPANSION_BATCH_SIZE:
+            y = 0
+            processed_visible_branch = False
+            while y < viewport.height():
+                index = self.file_tree.indexAt(QPoint(2, y))
+                if not index.isValid():
+                    y += row_height
+                    continue
+                item_rect = self.file_tree.visualRect(index)
+                y = max(y + 1, item_rect.bottom() + 1)
+                source_index = self.file_proxy.mapToSource(index)
+                path_key = self.file_proxy._path_key(
+                    Path(self.file_model.filePath(source_index))
+                )
+                if path_key not in self._quick_search_expand_directory_keys:
+                    continue
+                self._quick_search_expand_directory_keys.discard(path_key)
+                processed_any = True
+                if self.file_tree.isExpanded(index):
+                    processed_visible_branch = True
+                    break
+                self.file_tree.expand(index)
+                expansions_this_batch += 1
+                processed_visible_branch = True
+                break
+            if not processed_visible_branch:
+                break
+
+        if self._quick_search_expand_directory_keys and processed_any:
+            self._quick_search_visible_expand_timer.start()
 
     def _focus_command_palette(self) -> None:
         self.show_workspace()
