@@ -20,7 +20,7 @@ if os.name == "nt":
 from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QTimer, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QMouseEvent, QWheelEvent
-from PySide6.QtWidgets import QApplication, QMessageBox, QSizePolicy
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QSizePolicy
 
 from scidev_client import ClientWindow, DevelopmentTreeView
 from scidev_ui import UI_PROFILES
@@ -32,8 +32,12 @@ def capture(
     output_dir: Path,
     name: str,
     size: tuple[int, int],
+    *,
+    physical_size: bool = False,
 ) -> QImage:
-    window.resize(*size)
+    scale = float(window.devicePixelRatioF()) if physical_size else 1.0
+    logical_size = (round(size[0] / scale), round(size[1] / scale))
+    window.resize(*logical_size)
     window.show()
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
@@ -54,7 +58,11 @@ def capture(
         app.processEvents()
         time.sleep(0.016)
     image = window.grab().toImage()
-    if image.isNull() or image.width() < size[0] - 8 or image.height() < size[1] - 8:
+    if physical_size:
+        wrong_size = abs(image.width() - size[0]) > 8 or abs(image.height() - size[1]) > 8
+    else:
+        wrong_size = image.width() < size[0] - 8 or image.height() < size[1] - 8
+    if image.isNull() or wrong_size:
         raise RuntimeError(f"unexpected screenshot size for {name}: {image.width()}x{image.height()}")
     destination = output_dir / f"{name}.png"
     if not image.save(str(destination), "PNG"):
@@ -65,8 +73,10 @@ def capture(
 
 def verify_screenshot_content(window: ClientWindow, name: str) -> None:
     image = window.grab().toImage().convertToFormat(QImage.Format.Format_ARGB32)
-    step_x = max(1, image.width() // 48)
-    step_y = max(1, image.height() // 32)
+    grid_columns = min(256, max(48, image.width() // 10))
+    grid_rows = min(180, max(32, image.height() // 10))
+    step_x = max(1, image.width() // grid_columns)
+    step_y = max(1, image.height() // grid_rows)
     colors = {
         image.pixelColor(x, y).rgba()
         for x in range(0, image.width(), step_x)
@@ -253,8 +263,35 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
         if visible_text_width < label.fontMetrics().horizontalAdvance(label.full_text) and "…" not in label.text():
             raise RuntimeError(f"workspace name was truncated without an ellipsis for {name}: {label.text()!r}")
     verify_title_bar_layout(window, name)
+    verify_status_bar_layout(window, name)
     verify_screenshot_content(window, name)
     print(f"{name} size={window.width()}x{window.height()} workbench widths={sizes}")
+
+
+def verify_status_bar_layout(window: ClientWindow, name: str) -> None:
+    status_bar = window.statusBar()
+    labels = [label for label in status_bar.findChildren(QLabel) if label.isVisible()]
+    if not labels:
+        raise RuntimeError(f"status bar has no visible labels for {name}")
+    bounds = status_bar.rect()
+    rectangles = [
+        QRect(label.mapTo(status_bar, QPoint(0, 0)), label.size())
+        for label in labels
+    ]
+    if any(not bounds.contains(rect) for rect in rectangles):
+        raise RuntimeError(
+            f"status-bar label is clipped for {name}: "
+            f"{[(label.text(), rect) for label, rect in zip(labels, rectangles)]} within {bounds}"
+        )
+    if any(
+        left.intersects(right)
+        for index, left in enumerate(rectangles)
+        for right in rectangles[index + 1 :]
+    ):
+        raise RuntimeError(
+            f"status-bar labels overlap for {name}: "
+            f"{[(label.text(), rect) for label, rect in zip(labels, rectangles)]}"
+        )
 
 
 def capture_unsaved_close_confirmation(
@@ -666,9 +703,11 @@ def main(argv: list[str] | None = None) -> int:
         window.git_failed_value.setText("1")
 
         responsive_viewports = (
-            ("full-hd", (1920, 1080)),
+            ("1080p", (1920, 1080)),
+            ("2k", (2560, 1440)),
+            ("4k", (3840, 2160)),
             ("laptop-1366", (1366, 768)),
-            ("hd-720", (1280, 720)),
+            ("720p", (1280, 720)),
             ("expanded-breakpoint", (1120, 700)),
             ("compact-breakpoint", (1119, 700)),
             ("xga", (1024, 768)),
@@ -686,7 +725,14 @@ def main(argv: list[str] | None = None) -> int:
             verify_keyboard_focus_ring(window, focus_image, focus_name)
             for suffix, size in responsive_viewports:
                 name = f"responsive-{profile_key}-{suffix}"
-                capture(window, app, output_dir, name, size)
+                capture(
+                    window,
+                    app,
+                    output_dir,
+                    name,
+                    size,
+                    physical_size=suffix in {"720p", "1080p", "2k", "4k"},
+                )
                 verify_workbench_layout(window, name)
 
         for profile_key in UI_PROFILES:
@@ -811,6 +857,17 @@ def main(argv: list[str] | None = None) -> int:
         capture(window, app, output_dir, "tree-wide-short-restored", (1500, 920))
         verify_workbench_layout(window, "tree-wide-short-restored")
         verify_git_splitter_layout(window, "tree-wide-short-restored", Qt.Orientation.Horizontal)
+        for resolution, size in (
+            ("720p", (1280, 720)),
+            ("1080p", (1920, 1080)),
+            ("2k", (2560, 1440)),
+            ("4k", (3840, 2160)),
+        ):
+            name = f"tree-resolution-studio-{resolution}"
+            capture(window, app, output_dir, name, size, physical_size=True)
+            verify_workbench_layout(window, name)
+            orientation = Qt.Orientation.Vertical if resolution == "720p" else Qt.Orientation.Horizontal
+            verify_git_splitter_layout(window, name, orientation)
         window.show_workspace()
         for name, size in (
             ("editor-narrow", (940, 620)),
