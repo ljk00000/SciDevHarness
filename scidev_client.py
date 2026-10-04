@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import tokenize
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -1902,6 +1903,8 @@ class ClientWindow(QMainWindow):
         self._ui_scale = 1.0
         self._base_ui_font = QFont(self.font())
         self._screen_window_handle = None
+        self._screen_metric_signal_screen = None
+        self._screen_metric_connections = []
         initial_screen = self.screen()
         self._offscreen_platform = QApplication.platformName().casefold() == "offscreen"
         if initial_screen is not None and not self._offscreen_platform:
@@ -2293,12 +2296,31 @@ class ClientWindow(QMainWindow):
     def _on_screen_changed(self, screen) -> None:  # noqa: ANN001 - QScreen is binding-defined.
         if screen is None:
             return
+        self._bind_screen_metric_signals(screen)
         geometry = screen.geometry()
         previous_scale = self._ui_scale
         target_scale = ui_scale_for_resolution(geometry.width(), geometry.height())
         self._apply_screen_resolution(geometry.width(), geometry.height())
         if not self._offscreen_platform:
             self._fit_window_to_screen(screen, previous_scale, target_scale)
+
+    def _bind_screen_metric_signals(self, screen) -> None:  # noqa: ANN001 - QScreen is binding-defined.
+        if screen is self._screen_metric_signal_screen:
+            return
+        for connection in self._screen_metric_connections:
+            QObject.disconnect(connection)
+        self._screen_metric_connections.clear()
+        self._screen_metric_signal_screen = screen
+
+        update_screen = partial(self._on_screen_metrics_changed, screen)
+        for signal_name in ("geometryChanged", "availableGeometryChanged"):
+            signal = getattr(screen, signal_name, None)
+            if signal is not None:
+                self._screen_metric_connections.append(signal.connect(update_screen))
+
+    def _on_screen_metrics_changed(self, screen, *_args: object) -> None:
+        if screen is self._screen_metric_signal_screen:
+            self._on_screen_changed(screen)
 
     def _fit_window_to_screen(self, screen, previous_scale: float, target_scale: float) -> None:
         """Keep a normal window visible and proportionate after a monitor change."""

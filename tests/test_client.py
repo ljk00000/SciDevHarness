@@ -10,7 +10,7 @@ import time
 import unittest
 import warnings
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_QUICK_BACKEND"] = "software"
@@ -19,7 +19,17 @@ if os.name == "nt":
     if windows_fonts.is_dir():
         os.environ["QT_QPA_FONTDIR"] = str(windows_fonts)
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QSize, QSettings, QTimer, Qt  # noqa: E402
+from PySide6.QtCore import (
+    QObject,
+    QPoint,
+    QPointF,
+    QRect,
+    QSize,
+    QSettings,
+    QTimer,
+    Qt,
+    Signal,
+)  # noqa: E402
 from PySide6.QtGui import QFontInfo, QIcon, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
@@ -38,17 +48,125 @@ from scidev_core import CodingToolbox, SummarySettings  # noqa: E402
 from scidev_ui import _scale_stylesheet_metrics, ui_scale_for_resolution  # noqa: E402
 
 
+class MutableScreen(QObject):
+    geometryChanged = Signal(QRect)
+    availableGeometryChanged = Signal(QRect)
+
+    def __init__(self, geometry: QRect, available: QRect):
+        super().__init__()
+        self._geometry = QRect(geometry)
+        self._available_geometry = QRect(available)
+
+    def geometry(self) -> QRect:
+        return QRect(self._geometry)
+
+    def availableGeometry(self) -> QRect:
+        return QRect(self._available_geometry)
+
+    def set_metrics(self, geometry: QRect, available: QRect) -> None:
+        self._geometry = QRect(geometry)
+        self._available_geometry = QRect(available)
+        self.geometryChanged.emit(QRect(self._geometry))
+        self.availableGeometryChanged.emit(QRect(self._available_geometry))
+
+    def set_geometry(self, geometry: QRect, available: QRect) -> None:
+        self._geometry = QRect(geometry)
+        self._available_geometry = QRect(available)
+        self.geometryChanged.emit(QRect(self._geometry))
+
+    def set_available_geometry(self, available: QRect) -> None:
+        self._available_geometry = QRect(available)
+        self.availableGeometryChanged.emit(QRect(self._available_geometry))
+
+
 class UIResolutionScalingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
     @staticmethod
-    def _screen(geometry: QRect, available: QRect) -> Mock:
-        screen = Mock()
-        screen.geometry.return_value = geometry
-        screen.availableGeometry.return_value = available
-        return screen
+    def _screen(geometry: QRect, available: QRect) -> MutableScreen:
+        return MutableScreen(geometry, available)
+
+    def test_screen_geometry_signal_rescales_window_without_monitor_switch(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-screen-geometry-signal-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._offscreen_platform = False
+                window.resize(1228, 626)
+                screen = self._screen(
+                    QRect(0, 0, 1280, 720), QRect(0, 0, 1280, 680)
+                )
+                window._on_screen_changed(screen)
+                self.assertEqual(len(window._screen_metric_connections), 2)
+
+                screen.set_geometry(
+                    QRect(0, 0, 3840, 2160), QRect(0, 0, 3840, 2080)
+                )
+                self.assertAlmostEqual(window._ui_scale, 1.3, places=3)
+                self.assertEqual(window.size(), QSize(1596, 814))
+
+                screen.set_geometry(
+                    QRect(0, 0, 1280, 720), QRect(0, 0, 1280, 680)
+                )
+                self.assertAlmostEqual(window._ui_scale, 1.0, places=3)
+                self.assertEqual(window.size(), QSize(1228, 626))
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_available_geometry_signal_keeps_window_inside_new_work_area(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-screen-work-area-signal-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._offscreen_platform = False
+                window.resize(1500, 900)
+                screen = self._screen(
+                    QRect(0, 0, 1920, 1080), QRect(0, 0, 1920, 1040)
+                )
+                window._on_screen_changed(screen)
+
+                screen.set_available_geometry(QRect(100, 60, 1000, 650))
+                geometry = window.geometry()
+                available = screen.availableGeometry()
+                self.assertGreaterEqual(geometry.left(), available.left())
+                self.assertGreaterEqual(geometry.top(), available.top())
+                self.assertLessEqual(geometry.right(), available.right())
+                self.assertLessEqual(geometry.bottom(), available.bottom())
+                self.assertEqual(geometry.size(), QSize(1000, 650))
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_screen_switch_disconnects_old_screen_metric_signals(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-screen-signal-rebind-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._offscreen_platform = False
+                low_resolution = self._screen(
+                    QRect(0, 0, 1280, 720), QRect(0, 0, 1280, 680)
+                )
+                high_resolution = self._screen(
+                    QRect(0, 0, 1920, 1080), QRect(0, 0, 1920, 1040)
+                )
+                window._on_screen_changed(low_resolution)
+                window._on_screen_changed(high_resolution)
+                self.assertEqual(window._screen_metric_signal_screen, high_resolution)
+                self.assertEqual(len(window._screen_metric_connections), 2)
+
+                low_resolution.set_metrics(
+                    QRect(0, 0, 3840, 2160), QRect(0, 0, 3840, 2080)
+                )
+                expected_scale = ui_scale_for_resolution(1920, 1080)
+                self.assertAlmostEqual(window._ui_scale, expected_scale, places=3)
+
+                high_resolution.set_metrics(
+                    QRect(0, 0, 3840, 2160), QRect(0, 0, 3840, 2080)
+                )
+                self.assertAlmostEqual(window._ui_scale, 1.3, places=3)
+            finally:
+                window.close()
+                self.app.processEvents()
 
     def test_window_geometry_tracks_screen_scale_and_clamps_to_available_area(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-screen-change-") as temp:
