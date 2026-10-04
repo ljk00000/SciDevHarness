@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-10-04 18:02 (Asia/Shanghai) - 本地与远端验证通过
+- GitHub Actions [#37193907703](https://github.com/ljk00000/SciDevHarness/actions/runs/37193907703) 的 Python 3.12/3.13/3.14 全绿；完整测试、依赖 smoke、普通/125% DPI UI 截图和 QML lint 均通过。
+- 本机全量 202/202；提交 `0f857ca` 修复行列-only Quick Open，短/长路径断言修正后远端复验通过。`master` 已推至 `8e9f1ec`，`release/v5` 未改。
+
 ## 2026-10-04 17:53 (Asia/Shanghai) - Quick Open 与 Windows CI 路径回归
 - 修复 `:3:2` 等仅行列跳转把空查询匹配到无关文件的问题；没有活动文件时保留输入并显示提示；新增两项 Qt 事件测试。
 - 本机全量测试 202/202 通过。CI 失败根因为 `RUNNER~1` 与 `runneradmin` 路径别名的字面比较，测试改用 `.resolve()` 规范路径，待新 CI 验证。
