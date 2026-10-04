@@ -73,14 +73,31 @@ class UIResolutionScalingTests(unittest.TestCase):
             window = ClientWindow(Path(temp))
             try:
                 tree = window.git_tree
+                tree.set_nodes(
+                    [
+                        {"id": "main", "lane": "main", "title": "Main", "status": "main"},
+                        {
+                            "id": "branch",
+                            "lane": "attempt",
+                            "parent_id": "main",
+                            "title": "Branch",
+                            "status": "failed",
+                        },
+                    ]
+                )
                 root = tree.rootObject()
                 self.assertIsNotNone(root)
+                normal_content_height = tree.minimumHeight()
                 window._apply_screen_resolution(3840, 2160)
                 self.app.processEvents()
                 self.assertAlmostEqual(window._ui_scale, 1.3, places=3)
                 self.assertAlmostEqual(float(root.property("uiScale")), 1.3, places=3)
                 self.assertAlmostEqual(window.welcome_editor.font().pointSizeF(), 15.6, places=1)
                 self.assertIn("font-size: 14.3pt", window.styleSheet())
+                self.assertGreater(tree.minimumHeight(), normal_content_height)
+                scaled_content_height = tree.minimumHeight()
+                tree._on_qml_node_moved("branch", 0, 1000)
+                self.assertGreater(tree.minimumHeight(), scaled_content_height)
             finally:
                 window.close()
                 self.app.processEvents()

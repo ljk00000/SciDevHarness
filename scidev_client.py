@@ -1577,6 +1577,7 @@ class DevelopmentTreeView(QQuickWidget):
     def set_ui_scale(self, ui_scale: float) -> None:
         """Keep version-tree labels and cards aligned with screen UI scaling."""
         self._ui_scale = min(1.5, max(1.0, float(ui_scale)))
+        self._update_minimum_height()
         if self._root_item is not None:
             self._root_item.setProperty("uiScale", self._ui_scale)
 
@@ -1688,7 +1689,24 @@ class DevelopmentTreeView(QQuickWidget):
         if x is None or y is None:
             return
         self._node_offsets[str(node_id)] = QPointF(x, y)
+        self._update_minimum_height()
         self._save_layout()
+
+    def _update_minimum_height(self) -> None:
+        main_count = max(1, sum(node.get("lane") == "main" for node in self.nodes))
+        attempts_by_parent: dict[str, int] = {}
+        for node in self.nodes:
+            if node.get("lane") == "attempt":
+                parent_id = str(node.get("parent_id") or "root")
+                attempts_by_parent[parent_id] = attempts_by_parent.get(parent_id, 0) + 1
+        extra_height = sum(max(0, count - 1) * 90 for count in attempts_by_parent.values())
+        offset_bottom = max(
+            (max(0.0, offset.y()) for offset in self._node_offsets.values()),
+            default=0.0,
+        )
+        scale = self._ui_scale
+        content_height = (140 + main_count * 122 + extra_height + offset_bottom) * scale
+        self.setMinimumHeight(max(math.ceil(420 * scale), math.ceil(content_height)))
 
     def set_nodes(self, nodes: list[dict[str, Any]]) -> None:
         self.nodes = nodes
@@ -1697,15 +1715,7 @@ class DevelopmentTreeView(QQuickWidget):
         if self.selected_id not in ids:
             self.selected_id = str(nodes[0]["id"]) if nodes else None
 
-        main_count = max(1, sum(node.get("lane") == "main" for node in nodes))
-        attempts_by_parent: dict[str, int] = {}
-        for node in nodes:
-            if node.get("lane") == "attempt":
-                parent_id = str(node.get("parent_id") or "root")
-                attempts_by_parent[parent_id] = attempts_by_parent.get(parent_id, 0) + 1
-        extra_height = sum(max(0, count - 1) * 90 for count in attempts_by_parent.values())
-        offset_bottom = max((max(0, int(offset.y())) for offset in self._node_offsets.values()), default=0)
-        self.setMinimumHeight(max(420, 140 + main_count * 122 + extra_height + offset_bottom))
+        self._update_minimum_height()
 
         if self._root_item is not None:
             qml_nodes = []
