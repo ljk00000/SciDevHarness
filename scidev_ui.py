@@ -246,8 +246,8 @@ UI_PROFILES: dict[str, UIProfile] = {
     "focus": UIProfile(
         key="focus",
         label="Focus · 专注宽编辑器",
-        description="紫色强调与更宽的中央编辑区，减少侧栏占用。",
-        layout_ratios=(0.19, 0.245),
+        description="保留项目导航空间并收窄对话栏，为代码留出更宽的中央编辑区。",
+        layout_ratios=(0.22, 0.20),
         tree_mode="focus",
         syntax_colors=("#d8a7ff", "#79c9ff", "#bfe584", "#80c995", "#ffbd85"),
         line_number_background="#151620",

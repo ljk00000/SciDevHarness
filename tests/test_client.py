@@ -122,8 +122,8 @@ class UIProfileTests(unittest.TestCase):
                 self.assertIn("#0b0d14", window.styleSheet())
                 sizes = window.workbench.sizes()
                 total = sum(sizes)
-                self.assertAlmostEqual(sizes[0] / total, 0.19, delta=0.015)
-                self.assertAlmostEqual(sizes[2] / total, 0.245, delta=0.015)
+                self.assertAlmostEqual(sizes[0] / total, 0.22, delta=0.015)
+                self.assertAlmostEqual(sizes[2] / total, 0.20, delta=0.015)
                 self.assertEqual(window.git_tree.rootObject().property("visualTheme"), "focus")
             finally:
                 window.close()

@@ -23,6 +23,7 @@ from PySide6.QtGui import QFont, QImage, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QSizePolicy
 
 from scidev_client import ClientWindow, DevelopmentTreeView
+from scidev_ui import UI_PROFILES
 
 
 def capture(
@@ -559,6 +560,23 @@ def main(argv: list[str] | None = None) -> int:
         window.git_main_value.setText("1")
         window.git_attempt_value.setText("2")
         window.git_failed_value.setText("1")
+
+        responsive_viewports = (
+            ("full-hd", (1920, 1080)),
+            ("laptop-1366", (1366, 768)),
+            ("hd-720", (1280, 720)),
+            ("expanded-breakpoint", (1120, 700)),
+            ("compact-breakpoint", (1119, 700)),
+            ("xga", (1024, 768)),
+        )
+        for profile_key in UI_PROFILES:
+            window.set_ui_profile(profile_key, persist=False)
+            verify_ui_profile(window, profile_key, f"responsive-{profile_key}")
+            window.show_workspace()
+            for suffix, size in responsive_viewports:
+                name = f"responsive-{profile_key}-{suffix}"
+                capture(window, app, output_dir, name, size)
+                verify_workbench_layout(window, name)
 
         for profile_key in ("paper", "focus"):
             window.set_ui_profile(profile_key, persist=False)
