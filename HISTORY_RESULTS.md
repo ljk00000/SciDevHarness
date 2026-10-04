@@ -1,5 +1,10 @@
 # 历史与结果
 
+## 2026-10-04 22:03 (Asia/Shanghai) - 同屏显示模式变更审查
+- 本轮确认 1 个实质性问题：只连接窗口迁屏信号，未订阅屏幕 `geometryChanged` / `availableGeometryChanged`；同屏修改分辨率、任务栏/保留区域后，窗口不重新缩放或夹取。Qt 文档明确 `QWindow.screenChanged` 仅在窗口屏幕变化时触发。
+- 100%/125% DPI 720p、1080p、2K、4K 和随机邻近分辨率截图矩阵通过；依赖 smoke、全量 230 项通过。原生桌面窗口不可见，未宣称实机 UI 验收。
+- 官方参考：[QWindow::screenChanged](https://doc.qt.io/qt-6.12/qwindow.html#screenChanged)、[QScreen geometry signals](https://doc.qt.io/qt-6/qscreen.html#signals)。下轮加入信号绑定、重连与回归测试。
+
 ## 2026-10-04 21:49 (Asia/Shanghai) - 跨显示器窗口尺寸修复
 - 窗口迁移到不同分辨率屏幕时按 UI 缩放比例同步缩放；依据目标屏幕可用区域约束尺寸与位置，支持负坐标副屏，并保留用户手动尺寸比例。最大化/全屏不由应用强制改几何。
 - 回归覆盖 720p→4K→720p、同屏重复回调、负坐标屏幕和最大化状态；全量 230 项、100%/125% DPI 截图矩阵、QML lint、依赖 smoke 均通过。
