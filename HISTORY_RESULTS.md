@@ -1,5 +1,8 @@
 # 历史与结果
 
+## 2026-10-04 19:16 (Asia/Shanghai) - 搜索兼容修复跨版本 CI 通过
+- 提交 `6b636ea` 的 GitHub Actions `37198044756` 在 Python 3.12/3.13/3.14 全绿；包含完整测试、依赖 smoke、IDE/版本树截图和 QML lint。
+
 ## 2026-10-04 19:13 (Asia/Shanghai) - 搜索输入兼容性回归修复
 - Quick Open 逐键触发过滤变更；新增兼容旧 Qt 过滤 API 的 `invalidateRowsFilter` 回退，避免新 API 不存在时键入即报错；本机 Qt 6.11.2 键盘测试正常，模拟旧 API 测试通过。
 - 全量测试 210 项通过。当前环境未复现用户所见错误，版本/错误原文待进一步对照。
