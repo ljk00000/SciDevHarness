@@ -4084,7 +4084,10 @@ class ClientWindow(QMainWindow):
             index = group.indexOf(editor)
             group.setCurrentIndex(index)
             if preview:
-                self._preview_editor = editor
+                # Clicking an already pinned tab must not downgrade it into
+                # the single replaceable preview slot.
+                if editor not in self._pinned_editors:
+                    self._preview_editor = editor
             else:
                 self._pinned_editors.add(editor)
                 if editor is self._preview_editor:
@@ -4367,7 +4370,10 @@ class ClientWindow(QMainWindow):
             if count >= 500:
                 break
             try:
-                raw = path.read_bytes()
+                if path.stat().st_size > CodingToolbox.MAX_READ_BYTES:
+                    continue
+                with path.open("rb") as stream:
+                    raw = stream.read(CodingToolbox.MAX_READ_BYTES + 1)
                 if len(raw) > CodingToolbox.MAX_READ_BYTES or b"\x00" in raw:
                     continue
                 lines = raw.decode("utf-8", errors="replace").splitlines()

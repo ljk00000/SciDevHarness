@@ -27,6 +27,7 @@ from scidev_client import (  # noqa: E402
     MAX_TREE_LAYOUT_BYTES,
     NotificationToast,
 )
+from scidev_core import CodingToolbox  # noqa: E402
 
 
 class DevelopmentTreeLayoutTests(unittest.TestCase):
@@ -482,6 +483,43 @@ class GitDiffEditorTests(unittest.TestCase):
                 self.app.processEvents()
 
 
+class EditorTabBehaviorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_preview_click_does_not_unpin_an_open_tab_or_discard_dirty_preview(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-preview-tabs-") as temp:
+            root = Path(temp)
+            paths = [root / f"file-{index}.py" for index in range(1, 4)]
+            for index, path in enumerate(paths, start=1):
+                path.write_text(f"value = {index}\n", encoding="utf-8")
+
+            window = ClientWindow(root)
+            try:
+                window._open_file(paths[0], preview=False)
+                pinned_editor = window._active_editor()
+
+                window._open_file(paths[0], preview=True)
+                self.assertIsNone(window._preview_editor)
+
+                window._open_file(paths[1], preview=True)
+                preview_editor = window._active_editor()
+                self.assertIsNot(preview_editor, pinned_editor)
+                self.assertIs(window._preview_editor, preview_editor)
+                preview_editor.insertPlainText("# keep unsaved preview\n")
+
+                window._open_file(paths[2], preview=True)
+                self.assertIsNot(window._active_editor(), preview_editor)
+                self.assertTrue(preview_editor.document().isModified())
+                self.assertIn("# keep unsaved preview", preview_editor.toPlainText())
+                self.assertEqual(window._editor_paths[pinned_editor].resolve(), paths[0].resolve())
+                preview_editor.document().setModified(False)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
 class ExplorerInlineEntryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -526,7 +564,7 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                 renamed = analysis_dir / "renamed.py"
                 self.assertTrue(renamed.is_file())
                 self.assertFalse(source.exists())
-                self.assertEqual(window._editor_paths[editor], renamed)
+                self.assertEqual(window._editor_paths[editor].resolve(), renamed.resolve())
             finally:
                 window.close()
                 self.app.processEvents()
@@ -577,6 +615,47 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                 renamed = root / "src" / "renamed.py"
                 self.assertTrue(renamed.is_file())
                 self.assertFalse(source.exists())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
+class WorkspaceSearchTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_search_skips_oversized_files_without_reading_them_and_opens_results(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-workspace-search-") as temp:
+            root = Path(temp)
+            source = root / "src" / "module.py"
+            source.parent.mkdir()
+            source.write_text("ignore this\nNeedle found here\n", encoding="utf-8")
+            oversized = root / "checkpoint.bin"
+            with oversized.open("wb") as stream:
+                stream.truncate(CodingToolbox.MAX_READ_BYTES + 1)
+
+            original_read_bytes = Path.read_bytes
+
+            def reject_oversized_read(path: Path) -> bytes:
+                if path == oversized:
+                    raise AssertionError("workspace search must not load an oversized file")
+                return original_read_bytes(path)
+
+            window = ClientWindow(root)
+            try:
+                window.workspace_search_input.setText("needle")
+                with patch.object(Path, "read_bytes", reject_oversized_read):
+                    window._search_workspace()
+
+                self.assertEqual(window.workspace_search_results.topLevelItemCount(), 1)
+                result = window.workspace_search_results.topLevelItem(0)
+                self.assertEqual(result.data(0, Qt.ItemDataRole.UserRole), str(source))
+                self.assertEqual(result.data(0, Qt.ItemDataRole.UserRole + 1), 2)
+
+                window._open_search_result(result)
+                self.assertEqual(window.current_file.resolve(), source.resolve())
+                self.assertEqual(window._active_editor().textCursor().blockNumber(), 1)
             finally:
                 window.close()
                 self.app.processEvents()
