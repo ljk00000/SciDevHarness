@@ -1,5 +1,10 @@
 # 历史与结果
 
+## 2026-10-04 19:38 (Asia/Shanghai) - 搜索、工作区和符号导航回归修复
+- 项目扫描现在跳过 symlink/junction；选择已有窗口会同步更新启动恢复目录；Shift+F12 自动打开搜索结果并按 Python 大小写匹配。
+- F2 使用 Python tokenizer 只改标识符 token，保留注释/字符串，拒绝关键字和无法安全分词的文件；支持 Unicode 名称及 f-string 表达式。
+- 补多窗口、junction、引用搜索、改名、版本树点击回归；全量 216 项、60 张 UI 截图及 launcher/dependency smoke 通过。
+
 ## 2026-10-04 19:16 (Asia/Shanghai) - 搜索兼容修复跨版本 CI 通过
 - 提交 `6b636ea` 的 GitHub Actions `37198044756` 在 Python 3.12/3.13/3.14 全绿；包含完整测试、依赖 smoke、IDE/版本树截图和 QML lint。
 
