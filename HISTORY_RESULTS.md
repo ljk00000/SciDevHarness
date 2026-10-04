@@ -1,5 +1,10 @@
 # 历史与结果
 
+## 2026-10-04 18:35 (Asia/Shanghai) - 周期/最终总结幂等键冲突修复
+- `_summarize_session` 按 session、phase、turn 生成请求键：单次总结的网络重试继续复用键，不同阶段总结不再被服务端幂等缓存混淆。
+- 回归测试先在旧逻辑下失败，再通过；完整 205 项测试、依赖 smoke、启动器预检、依赖一致性和 QML lint 通过。
+- 780×480 至 1920×1080 离屏布局/主题/版本树拖拽恢复截图矩阵通过；本轮无可见原生桌面，未声称实机截图验收。
+
 ## 2026-10-04 18:23 (Asia/Shanghai) - 搜索与 junction 修复 CI 通过
 - GitHub Actions [#37195090931](https://github.com/ljk00000/SciDevHarness/actions/runs/37195090931) 对提交 `bdbe774` 在 Python 3.12/3.13/3.14 全部成功；最小 Qt 运行时门禁、全量测试、依赖 smoke、常规/125% DPI 截图与 QML lint 均通过。
 - 干净 CI 环境证明本机最小 Qt 门禁失败仅由已有虚拟环境额外安装的 Addons 导致，不是项目依赖或本次修改回归。
