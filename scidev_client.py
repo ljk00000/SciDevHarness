@@ -1898,12 +1898,13 @@ class ClientWindow(QMainWindow):
         self.setWindowTitle("SciDevHarness — Coding Workspace")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(780, 480)
+        self._base_minimum_size = QSize(self.minimumSize())
         self._ui_scale = 1.0
         self._base_ui_font = QFont(self.font())
         self._screen_window_handle = None
         initial_screen = self.screen()
-        offscreen_platform = QApplication.platformName().casefold() == "offscreen"
-        if initial_screen is not None and not offscreen_platform:
+        self._offscreen_platform = QApplication.platformName().casefold() == "offscreen"
+        if initial_screen is not None and not self._offscreen_platform:
             initial_geometry = initial_screen.geometry()
             available_geometry = initial_screen.availableGeometry()
             self._ui_scale = ui_scale_for_resolution(
@@ -2293,7 +2294,33 @@ class ClientWindow(QMainWindow):
         if screen is None:
             return
         geometry = screen.geometry()
+        previous_scale = self._ui_scale
+        target_scale = ui_scale_for_resolution(geometry.width(), geometry.height())
         self._apply_screen_resolution(geometry.width(), geometry.height())
+        if not self._offscreen_platform:
+            self._fit_window_to_screen(screen, previous_scale, target_scale)
+
+    def _fit_window_to_screen(self, screen, previous_scale: float, target_scale: float) -> None:
+        """Keep a normal window visible and proportionate after a monitor change."""
+        if self.isMaximized() or self.isFullScreen():
+            return
+
+        available = screen.availableGeometry()
+        available_width = max(1, available.width())
+        available_height = max(1, available.height())
+        minimum_width = min(self._base_minimum_size.width(), available_width)
+        minimum_height = min(self._base_minimum_size.height(), available_height)
+        self.setMinimumSize(minimum_width, minimum_height)
+
+        ratio = target_scale / previous_scale if previous_scale > 0 else 1.0
+        current = self.geometry()
+        width = min(available_width, max(minimum_width, round(current.width() * ratio)))
+        height = min(available_height, max(minimum_height, round(current.height() * ratio)))
+        left = available.x()
+        top = available.y()
+        x = min(max(current.x(), left), left + available_width - width)
+        y = min(max(current.y(), top), top + available_height - height)
+        self.setGeometry(QRect(x, y, width, height))
 
     def _apply_screen_resolution(self, width: int, height: int) -> None:
         scale = ui_scale_for_resolution(width, height)

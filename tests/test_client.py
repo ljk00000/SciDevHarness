@@ -10,7 +10,7 @@ import time
 import unittest
 import warnings
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_QUICK_BACKEND"] = "software"
@@ -19,7 +19,7 @@ if os.name == "nt":
     if windows_fonts.is_dir():
         os.environ["QT_QPA_FONTDIR"] = str(windows_fonts)
 
-from PySide6.QtCore import QPoint, QPointF, QSize, QSettings, QTimer, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, QRect, QSize, QSettings, QTimer, Qt  # noqa: E402
 from PySide6.QtGui import QFontInfo, QIcon, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
@@ -42,6 +42,79 @@ class UIResolutionScalingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def _screen(geometry: QRect, available: QRect) -> Mock:
+        screen = Mock()
+        screen.geometry.return_value = geometry
+        screen.availableGeometry.return_value = available
+        return screen
+
+    def test_window_geometry_tracks_screen_scale_and_clamps_to_available_area(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-screen-change-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._offscreen_platform = False  # Simulate real screens deterministically.
+                window.resize(1228, 626)
+                high_resolution = self._screen(
+                    QRect(0, 0, 3840, 2160), QRect(0, 0, 3840, 2080)
+                )
+                window._on_screen_changed(high_resolution)
+                self.assertEqual(window.size(), QSize(1596, 814))
+                self.assertAlmostEqual(window._ui_scale, 1.3, places=3)
+
+                window._on_screen_changed(high_resolution)
+                self.assertEqual(window.size(), QSize(1596, 814))
+
+                low_resolution = self._screen(
+                    QRect(0, 0, 1280, 720), QRect(0, 0, 1280, 680)
+                )
+                window._on_screen_changed(low_resolution)
+                self.assertEqual(window.size(), QSize(1228, 626))
+                self.assertAlmostEqual(window._ui_scale, 1.0, places=3)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_window_is_clamped_inside_negative_origin_monitor(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-screen-clamp-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._offscreen_platform = False
+                window.resize(2200, 1200)
+                window.move(4000, 2000)
+                screen = self._screen(
+                    QRect(-1280, 0, 1280, 720), QRect(-1280, 0, 1280, 680)
+                )
+                window._on_screen_changed(screen)
+                geometry = window.geometry()
+                available = screen.availableGeometry()
+                self.assertGreaterEqual(geometry.left(), available.left())
+                self.assertGreaterEqual(geometry.top(), available.top())
+                self.assertLessEqual(geometry.right(), available.right())
+                self.assertLessEqual(geometry.bottom(), available.bottom())
+                self.assertEqual(geometry.size(), QSize(1280, 680))
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_maximized_window_is_not_resized_by_monitor_callback(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-screen-maximized-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._offscreen_platform = False
+                window.showMaximized()
+                self.app.processEvents()
+                before = window.geometry()
+                screen = self._screen(
+                    QRect(0, 0, 3840, 2160), QRect(0, 0, 3840, 2080)
+                )
+                window._on_screen_changed(screen)
+                self.assertTrue(window.isMaximized())
+                self.assertEqual(window.geometry(), before)
+            finally:
+                window.close()
+                self.app.processEvents()
 
     def test_ui_scale_grows_monotonically_with_resolution_and_is_bounded(self) -> None:
         sizes = (
