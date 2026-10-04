@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-10-04 18:23 (Asia/Shanghai) - 搜索修复远端复验通过
+- `master` 提交 `bdbe774` 的 GitHub Actions #37195090931 在 Python 3.12/3.13/3.14 全绿，含最小 Qt 门禁、205 项测试、依赖 smoke、双 DPI UI 渲染和 QML lint。
+- 继续检查真实搜索交互及 Explorer 链接边界；本机原生可见窗口仍不可用，离屏截图不替代实机验收。
+
 ## 2026-10-04 18:20 (Asia/Shanghai) - 搜索告警与链接路径修复
 - Quick Open 每键过滤改用 Qt 6.9+ 过滤器变更 API；修复项目树暴露 junction、删除误解析到真实目标的风险。
 - 本机全量 205/205；依赖 smoke、启动器预检和离屏 UI 截图通过。最小 Qt 门禁被现有 `.venv` 中额外安装的 `PySide6-Addons` 拦截，未卸载。

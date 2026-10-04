@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-10-04 18:23 (Asia/Shanghai) - 搜索与 junction 修复 CI 通过
+- GitHub Actions [#37195090931](https://github.com/ljk00000/SciDevHarness/actions/runs/37195090931) 对提交 `bdbe774` 在 Python 3.12/3.13/3.14 全部成功；最小 Qt 运行时门禁、全量测试、依赖 smoke、常规/125% DPI 截图与 QML lint 均通过。
+- 干净 CI 环境证明本机最小 Qt 门禁失败仅由已有虚拟环境额外安装的 Addons 导致，不是项目依赖或本次修改回归。
+
 ## 2026-10-04 18:20 (Asia/Shanghai) - 搜索告警与 junction 删除风险
 - 每次键入触发的 `QSortFilterProxyModel.invalidateFilter()` 在 PySide6 6.11.2 发出弃用警告；改为 `beginFilterChange/endFilterChange(Rows)`，真实键盘输入测试确认过滤正确且无该警告。
 - Windows 项目内 junction 原先显示为普通目录，删除入口会 `resolve()` 后误指向真实目标；现资源树隐藏链接，删除入口在解析前拒绝链接。新增回归复现并通过。
