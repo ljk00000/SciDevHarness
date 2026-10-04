@@ -483,6 +483,48 @@ class GitDiffEditorTests(unittest.TestCase):
                 self.app.processEvents()
 
 
+class GitWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_git_panel_stages_unstages_and_commits_workspace_changes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-git-panel-") as temp:
+            root = Path(temp)
+            source = root / "src" / "module.py"
+            source.parent.mkdir()
+            window = ClientWindow(root)
+            try:
+                window.init_git()
+                source.write_text("value = 1\n", encoding="utf-8")
+                window.refresh_git_status()
+
+                item = next(
+                    window.git_changes_tree.topLevelItem(index)
+                    for index in range(window.git_changes_tree.topLevelItemCount())
+                    if window.git_changes_tree.topLevelItem(index).data(0, Qt.ItemDataRole.UserRole)
+                    == "src/module.py"
+                )
+                window.git_changes_tree.setCurrentItem(item)
+                window.stage_selected_change()
+                self.assertEqual(window.git.status_entries()[0]["code"], "A ")
+
+                window.unstage_selected_change()
+                self.assertEqual(window.git.status_entries()[0]["code"], "??")
+
+                window.stage_all_changes()
+                self.assertEqual(window.git.status_entries()[0]["code"], "A ")
+                window.git_commit_input.setText("test: commit from Git panel")
+                window.commit_workspace()
+
+                self.assertTrue(window.git.head_sha())
+                self.assertEqual(window.git.status_entries(), [])
+                self.assertIn("test: commit from Git panel", window.git.log())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
 class EditorTabBehaviorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -650,7 +692,8 @@ class WorkspaceSearchTests(unittest.TestCase):
 
                 self.assertEqual(window.workspace_search_results.topLevelItemCount(), 1)
                 result = window.workspace_search_results.topLevelItem(0)
-                self.assertEqual(result.data(0, Qt.ItemDataRole.UserRole), str(source))
+                result_path = Path(str(result.data(0, Qt.ItemDataRole.UserRole)))
+                self.assertEqual(result_path.resolve(), source.resolve())
                 self.assertEqual(result.data(0, Qt.ItemDataRole.UserRole + 1), 2)
 
                 window._open_search_result(result)
