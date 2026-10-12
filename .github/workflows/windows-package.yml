@@ -80,7 +80,7 @@ jobs:
             throw "Standalone runtime/license inventory failed (exit $LASTEXITCODE)."
           }
 
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: SciDevHarness-Windows-x64-build-manifest
           path: ${{ runner.temp }}\SciDevHarness-Windows-x64-build-manifest.json
