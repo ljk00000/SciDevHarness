@@ -3016,6 +3016,38 @@ class SummarySettingsUiTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_tool_bubble_without_arguments_reads_as_prose(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-tool-args-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                with patch.object(window, "_append_execution_chat") as append:
+                    window._handle_agent_event("tool_started", {
+                        "session_id": "tool-args", "name": "git_diff", "arguments": {},
+                    })
+                append.assert_called_once()
+                self.assertEqual(append.call_args.args[1], "无需参数")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_completed_bubble_reports_skipped_auto_commit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-completed-commit-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                with patch.object(window, "_append_execution_chat") as append:
+                    window._handle_agent_event("completed", {
+                        "session_id": "completed-ui",
+                        "git_result_sha": "",
+                        "git_auto_commit_warning": "工作区尚未初始化 Git",
+                        "verification_report": {"status": "not_run"},
+                        "text": "done",
+                    })
+                text = append.call_args.args[1]
+                self.assertIn("未自动提交", text)
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_multi_agent_progress_and_report_are_visible_in_chat(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-multi-agent-ui-") as temp:
             window = ClientWindow(Path(temp))

@@ -396,6 +396,11 @@ def run_smoke(base_url: str, model: str, api_key: str) -> dict[str, Any]:
             git,
             event_callback=lambda name, data: events.append((name, data)),
             summary_settings=summary_settings,
+            # The smoke task forbids run_command and supplies no approval
+            # callback, so a required verification gate could never pass.
+            require_verification=False,
+            # Disposable workspace: approve reviewed patch hunks automatically.
+            patch_review=lambda preview: {int(hunk["id"]) for hunk in preview["hunks"]},
         )
         task = {"payload": {"session_id": "live_local_model_smoke", "prompt": TASK_PROMPT}}
         with patch("scidev_core.urlopen", new=observe_request):
@@ -469,6 +474,9 @@ def run_smoke(base_url: str, model: str, api_key: str) -> dict[str, Any]:
                 git,
                 event_callback=lambda name, data: task_events.append((name, data)),
                 summary_settings=summary_settings,
+                # Same reasoning as the first task: no approval channel exists.
+                require_verification=False,
+                patch_review=lambda preview: {int(hunk["id"]) for hunk in preview["hunks"]},
             )
             task_result = {
                 "payload": {

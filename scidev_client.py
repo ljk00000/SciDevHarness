@@ -5754,7 +5754,8 @@ class ClientWindow(QMainWindow):
                 )
                 self._append_log("补丁已准备，等待逐块审核")
                 return
-            args = json.dumps(payload.get("arguments", {}), ensure_ascii=False)
+            arguments = payload.get("arguments")
+            args = json.dumps(arguments, ensure_ascii=False) if arguments else "无需参数"
             self._append_execution_chat(
                 self._tool_event_speaker(payload), args, "tool", session_id=payload.get("session_id")
             )
@@ -5785,7 +5786,9 @@ class ClientWindow(QMainWindow):
             )
             self._append_log("部分文件受 Git 自动提交安全策略保护，仍保留在工作区")
         elif event == "completed":
-            sha = payload.get("git_result_sha") or "无新提交"
+            sha = str(payload.get("git_result_sha") or "")
+            if not sha:
+                sha = "未自动提交" if payload.get("git_auto_commit_warning") else "无新提交"
             report = payload.get("verification_report")
             status = report.get("status") if isinstance(report, dict) else "not_run"
             label = VerificationTracker.label(str(status or "not_run"))

@@ -1,5 +1,16 @@
 # 历史与结果
 
+## 2026-10-28（Asia/Shanghai）· 本地 Qwen 弱模型实测
+- 环境：Ollama 0.35.0、`scidev-qwen2.5-coder-7b:q4_k_m`（RTX 4070，4.7 GB）、loopback `http://127.0.0.1:11434/v1`、流式 + 文本工具调用回退。
+- 失败 1：`scripts/smoke_local_ollama.py` 使用默认 `require_verification=True`，但没有 `command_approval`；`run_command` 永远被拒，代码任务必然停在“未运行项目检查”，白跑 2 次补验模型调用。修正：代理在无审批通道时立即失败并说明原因（不再补问），smoke 在“禁止 run_command”的任务上显式关闭验证门槛。
+- 失败 2：smoke 的修 bug 阶段需要改已有文件，但没有 `patch_review` 回调；`replace_in_file` 被策略拒绝后任务必然失败。修正：一次性临时工作区自动批准补丁块。
+- 界面问题：无参数工具（如 `git_diff`）的气泡正文显示 `{}`；已改为“无需参数”。自动提交被跳过时完成气泡仍显示“Git commit: 无新提交”；已改为“未自动提交”。
+- 实测通过：修正后 smoke 4 个编码任务全部通过（3 个新建 + 1 个修 bug 走 `read_file → replace_in_file(拒绝) → apply_patch`）、自动提交、最终总结、临时工作区清理；真实客户端单任务约 4.7 s，用量 4 次请求/↑35.3 KB/↓49.0 KB，上下文 3.5k/32.8k。
+- 观察（非缺陷）：弱模型不会主动执行项目检查，也会把“必须调用工具”理解成贴文本；验证门槛因此拦截，属于既定 fail-closed 行为。
+- 曾尝试“未初始化 Git 时不自动建仓/提交”，但与既有测试契约冲突（项目预期自动初始化并提交），已撤回。
+- 遗留问题：`tests.test_client` 约 1/3 的运行中出现一次 Qt 原生访问冲突（`scidev_client.py:831 QCompleter` 创建时，PySide6 6.11.2 + Python 3.14 + offscreen/software QML）；按测试类二分未能稳定复现单一来源，`WA_DeleteOnClose` 可降低频率但会破坏一个用例，需在 Qt/PySide 层进一步定位。
+- 回归：519 项测试 514 通过、4 失败、1 错误、8 跳过（5 项为沙箱限制）；ruff/mypy/编译通过。
+
 ## 2026-10-28（Asia/Shanghai）· 第二轮 Bug 排查与修复
 - 并发 Git：多个 `GitManager`（界面刷新、`git_diff` 工具、自动提交）各自加锁，同一仓库并发 `add/status` 实测报 `Unable to create index.lock`（退出码 128）。改为按仓库路径共享进程内锁；`_run` 遇到 `index.lock` 最多重试 3 次，仍占用时抛明确错误。
 - 审计库并发：同一项目的多个 `EventLedger` 共享一把锁；SQLite 索引写入遇 `database is locked` 重试 3 次后降级返回 0，JSONL 仍是审计事实源，不再让编码任务失败。

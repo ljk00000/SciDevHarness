@@ -4407,6 +4407,35 @@ class SharedRepositoryLockTests(unittest.TestCase):
             self.assertIn("probe", ledger.events_path.read_text(encoding="utf-8"))
 
 
+class VerificationGateConfigurationTests(unittest.TestCase):
+    def test_missing_approval_channel_fails_fast_without_extra_model_turns(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-gate-no-approval-") as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            agent = CodingAgent(
+                root, ledger, GitManager(root),
+                require_verification=True,
+                command_approval=None,
+            )
+            session = {
+                "session_id": "gate-no-approval",
+                "status": "active",
+                "prompt": "change code",
+                "messages": [],
+                "verification_runs": [],
+                "verification_code_changed": True,
+                "verification_edit_revision": 1,
+                "verification_paths": [],
+            }
+            with self.assertRaisesRegex(PermanentError, "没有命令审批通道"):
+                agent._enforce_verification_gate(
+                    session, "gate-no-approval", "change code", [], 1, "done",
+                )
+            self.assertEqual(session["status"], "verification_required")
+            events = ledger.events_path.read_text(encoding="utf-8")
+            self.assertIn("coding_session_verification_required", events)
+
+
 class ObservabilityTests(unittest.TestCase):
     def test_usage_accounting_failure_is_recorded_without_failing_the_task(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

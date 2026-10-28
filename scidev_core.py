@@ -5486,6 +5486,30 @@ class CodingAgent:
             and session.get("verification_code_changed")
             and verification_report.get("status") != "passed"
         ):
+            if self.toolbox.command_approval is None:
+                # Without an approval channel run_command can never execute, so
+                # asking the model for checks only burns turns. Fail closed
+                # immediately with an accurate, actionable reason.
+                blocked_message = (
+                    "代码改动尚未验证：当前运行没有命令审批通道，无法执行项目检查。"
+                    "改动保留在工作区，本次不会自动提交；"
+                    "请在桌面客户端中运行，或为该调用提供 command_approval 后重试。"
+                )
+                session["status"] = "verification_required"
+                session["verification_required"] = True
+                session["error"] = blocked_message
+                session["final_message"] = f"{content.rstrip()}\n\n{blocked_message}".strip()
+                session["updated_at"] = now_iso()
+                failure = {
+                    "session_id": session_id,
+                    "error": blocked_message,
+                    "verification_report": verification_report,
+                }
+                self.ledger.append("coding_session_verification_required", failure)
+                self.ledger.append("coding_session_failed", failure)
+                self._save_session(session)
+                self._emit("verification_blocked", failure | {"text": content})
+                raise PermanentError(blocked_message)
             attempts = int(session.get("verification_required_retries", 0) or 0)
             attempts_list = session.get("verification_runs") or []
             latest_attempt = attempts_list[-1] if attempts_list and isinstance(attempts_list[-1], dict) else {}
