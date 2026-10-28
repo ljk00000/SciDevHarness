@@ -13,7 +13,7 @@
 - 门禁与仓库（10）：加入 ruff（E4/E7/E9/F，全绿）、mypy（`scidev_process.py`/`scidev_usage.py` 无问题）、覆盖率门禁（`scripts/run_tests_coverage.py` 父进程编排，实测总覆盖率 79%）；CI 改为 ruff → mypy → 覆盖率测试；清理 80 个不可达提交，`.git` 41.4→25.1 MB。
 - 回归：508 项测试中 503 通过、4 失败、1 错误、8 跳过；仍失败的 5 项均为沙箱限制（暂存目标必须在源码树外、符号链接需特权），CI 环境可用。编译、ruff、mypy 通过；未推送远端。
 
-- 结构（6，第二阶段）：把“验证 / 验收 / 收尾”从回合循环中抽出为 `_enforce_verification_gate`、`_run_acceptance_stage`、`_finish_coding_session`（各 77–93 行，显式入参与返回值）。`_run_with_editor_context` 再降至 991 行；工具执行循环仍留待下一步拆分。153 项核心/验收/上下文测试全绿。
+- 结构（6，完成）：把回合流程拆成五个显式阶段——`_prepare_coding_run`（会话/Provider/工具准备，252 行）、`_execute_tool_calls`（工具执行与跨回合状态回传，360 行）、`_enforce_verification_gate`（93 行）、`_run_acceptance_stage`（83 行）、`_finish_coding_session`（提交与完成负载，77 行）；`_run_with_editor_context` 1383→705 行，仅保留编排与门禁判断。工具阶段显式传入/回传 12 个跨回合状态，避免隐式泄漏；227 项核心/验收/多 Agent/SVG/验证测试全绿。
 
 ## 2026-10-28（Asia/Shanghai）· 关键问题体检（10 项）
 - 方法：AST 复杂度/异常统计、子进程与线程调用点追踪、真实 `git` 计时与打桩、仓库对象统计；复现脚本为临时探针，未改产品代码。

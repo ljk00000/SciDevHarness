@@ -1,8 +1,9 @@
 # 当前工作
 
-## 2026-10-28（Asia/Shanghai）· 十项关键问题修复（进行中）
-- 已完成 9 项并验证；第 6 项完成两个阶段：抽出 `_prepare_coding_run`（252 行）以及 `_enforce_verification_gate`（93 行）、`_run_acceptance_stage`（82 行）、`_finish_coding_session`（77 行）；`_run_with_editor_context` 1383 → 991 行。
-- 下一步：拆分剩余的“act”前后阶段（模型调用与工具执行循环），再提交工作区中其余修复文件。
+## 2026-10-28（Asia/Shanghai）· 十项关键问题修复（已完成）
+- 10 项全部完成：Git 异步+超时+单次查询、原子覆盖写、测试隔离、模块入库、按键防抖、巨型函数分阶段、进程树终止+命令策略、单一 porcelain 解析、静默异常可观测、静态门禁与仓库清理。
+- 第 6 项拆出 `_prepare_coding_run`、`_execute_tool_calls`、`_enforce_verification_gate`、`_run_acceptance_stage`、`_finish_coding_session`；`_run_with_editor_context` 1383→705 行。
+- 验证：508 项测试 503 通过、4 失败、1 错误、8 跳过（5 项均为沙箱限制）；ruff/mypy 通过；覆盖率 79%。下一步：可按需继续拆分模型调用段，并为各阶段补独立契约测试。
 
 ## 2026-10-28（Asia/Shanghai）· 关键问题清单（已完成排查）
 - 体检出 10 项关键问题；修复结果见 [HISTORY_RESULTS.md](HISTORY_RESULTS.md)。
