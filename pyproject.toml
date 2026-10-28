@@ -12,7 +12,50 @@ dependencies = ["PySide6-Essentials>=6.11,<7"]
 files = [
     "scidev_client.py",
     "scidev_core.py",
+    "scidev_process.py",
+    "scidev_acceptance.py",
+    "scidev_usage.py",
+    "scidev_context.py",
+    "scidev_environment.py",
+    "scidev_patching.py",
+    "scidev_memory.py",
+    "scidev_multi_agent.py",
+    "scidev_planning.py",
+    "scidev_verification.py",
+    "scidev_browser.py",
     "scidev_icons.py",
     "scidev_ui.py",
+    "scidev_preferences.py",
+    "scidev_settings.py",
+    "scidev_highlighting.py",
     "ui/qml/DevelopmentTree.qml",
+    "ui/icons/chevron-down.svg",
+    "ui/icons/chevron-up.svg",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [".research", ".venv", ".tmp-tests", "examples", "deployment"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*.py" = ["E402"]
+"tests/*.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+follow_imports = "skip"
+files = ["scidev_process.py", "scidev_usage.py"]
+
+[tool.coverage.run]
+branch = true
+include = ["scidev_*.py"]
+
+[tool.coverage.report]
+fail_under = 40
+skip_empty = true

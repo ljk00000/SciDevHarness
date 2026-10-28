@@ -40,7 +40,6 @@ import scidev_core
 from scidev_core import CodingAgent, EventLedger, GitManager, SummarySettings
 from smoke_local_ollama import (
     DEFAULT_MODEL,
-    MAX_TOKENS,
     _record_local_request,
     configure_local_environment,
     validate_local_base_url,
