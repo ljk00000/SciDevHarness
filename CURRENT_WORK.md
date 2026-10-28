@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-10-28（Asia/Shanghai）· 第二轮 Bug 修复（已完成）
+- 修复 6 项：同仓库多 `GitManager` 的 index.lock 冲突（共享锁 + 重试）、审计库跨实例并发与索引降级、敏感重命名检测失败关闭、`.research` 私有状态自动忽略、提交后版本树 HEAD 陈旧、错误可观测字段。
+- 验证：515 项测试 510 通过、4 失败、1 错误、8 跳过（5 项为沙箱限制）；ruff/mypy/编译通过；改动已提交并推送。
+- 下一步：可继续覆盖浏览器工具（当前覆盖率 49%）与视觉复查（66%）的未测路径。
+
 ## 2026-10-28（Asia/Shanghai）· 十项关键问题修复（已完成）
 - 10 项全部完成：Git 异步+超时+单次查询、原子覆盖写、测试隔离、模块入库、按键防抖、巨型函数分阶段、进程树终止+命令策略、单一 porcelain 解析、静默异常可观测、静态门禁与仓库清理。
 - 第 6 项拆出 `_prepare_coding_run`、`_execute_tool_calls`、`_enforce_verification_gate`、`_run_acceptance_stage`、`_finish_coding_session`；`_run_with_editor_context` 1383→705 行。

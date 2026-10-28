@@ -4,6 +4,7 @@ import json
 import errno
 import os
 import socket
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -4286,6 +4287,124 @@ class GitTimeoutAndParserTests(unittest.TestCase):
             self.assertEqual([p.name for p in Path(temp).iterdir()], ["app.py"])
             atomic_write_bytes(target, b"new\n")
             self.assertEqual(target.read_text(encoding="utf-8"), "new\n")
+
+
+class SharedRepositoryLockTests(unittest.TestCase):
+    def test_git_managers_share_one_lock_per_repository(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-shared-lock-") as temp:
+            root = Path(temp)
+            other = root / "other"
+            other.mkdir()
+            self.assertIs(GitManager(root)._run_lock, GitManager(root)._run_lock)
+            self.assertIsNot(GitManager(root)._run_lock, GitManager(other)._run_lock)
+
+    def test_ledgers_share_one_lock_per_project(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-shared-ledger-") as temp:
+            root = Path(temp)
+            self.assertIs(EventLedger(root)._lock, EventLedger(root)._lock)
+
+    def test_concurrent_managers_do_not_collide_on_the_git_index(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-git-lock-race-") as temp:
+            root = Path(temp)
+            (root / "app.py").write_text("value = 1\n", encoding="utf-8")
+            first = GitManager(root)
+            first.init()
+            first.commit_changes("baseline")
+            second = GitManager(root)
+            failures: list[BaseException] = []
+
+            def churn(manager: GitManager) -> None:
+                try:
+                    for _ in range(12):
+                        manager.stage_all()
+                        manager.snapshot()
+                except BaseException as exc:  # noqa: BLE001 - the test records it
+                    failures.append(exc)
+
+            threads = [
+                threading.Thread(target=churn, args=(first,)),
+                threading.Thread(target=churn, args=(second,)),
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30)
+            self.assertEqual(failures, [])
+
+    def test_index_lock_is_retried_instead_of_failing_the_task(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-index-retry-") as temp:
+            manager = GitManager(Path(temp))
+            locked = subprocess.CalledProcessError(
+                128,
+                ["git", "status"],
+                output="",
+                stderr="fatal: Unable to create '.../.git/index.lock': File exists.",
+            )
+            success = subprocess.CompletedProcess(["git", "status"], 0, "clean", "")
+            with (
+                patch("scidev_core.subprocess.run", side_effect=[locked, success]) as run,
+                patch("scidev_core.time.sleep"),
+            ):
+                result = manager._run(["status"])
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(run.call_count, 2)
+
+    def test_rename_detection_failure_hides_candidates_instead_of_aborting(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-rename-failclosed-") as temp:
+            root = Path(temp)
+            (root / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+            (root / "app.py").write_text("value = 1\n", encoding="utf-8")
+            manager = GitManager(root)
+            manager.init()
+            manager.commit_changes("baseline")
+            (root / ".env").unlink()
+            (root / "leak.txt").write_text("secret-copy\n", encoding="utf-8")
+
+            real_run = manager._run
+
+            def failing(args, check=False, env=None, timeout=None):
+                if "add" in args and env:
+                    raise subprocess.CalledProcessError(
+                        128,
+                        ["git", *args],
+                        output="",
+                        stderr="fatal: pathspec '.env' did not match any files",
+                    )
+                return real_run(args, check=check, env=env, timeout=timeout)
+
+            with patch.object(manager, "_run", side_effect=failing):
+                groups = manager._sensitive_rename_groups()
+                diff = manager.diff(protect_sensitive=True)
+            self.assertIn({".env", "leak.txt"}, groups)
+            self.assertNotIn("secret-copy", diff)
+            self.assertEqual(manager.last_rename_detection_degraded, [".env", "leak.txt"])
+
+    def test_research_runtime_files_stay_out_of_git_status(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-research-ignore-") as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            ledger.append("probe", {"value": 1})
+            manager = GitManager(root)
+            manager.init()
+            manager.commit_changes("baseline")
+            ledger.append("probe", {"value": 2})
+            self.assertEqual(
+                {path for path in manager.status_paths() if path.startswith(".research/")},
+                set(),
+            )
+            # The ignore file itself may be tracked, but never the private data.
+            self.assertTrue((root / ".research" / ".gitignore").exists())
+
+    def test_event_append_survives_a_locked_index_database(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-ledger-lock-") as temp:
+            ledger = EventLedger(Path(temp))
+            with (
+                patch.object(ledger, "_db", side_effect=sqlite3.OperationalError("database is locked")),
+                patch("scidev_core.time.sleep"),
+            ):
+                event_id = ledger.append("probe", {"value": 1})
+            self.assertEqual(event_id, 0)
+            self.assertIn("probe", ledger.events_path.read_text(encoding="utf-8"))
 
 
 class ObservabilityTests(unittest.TestCase):

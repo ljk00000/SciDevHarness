@@ -876,6 +876,23 @@ class GitWorkflowTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_git_head_label_follows_a_commit_even_after_early_render(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-git-head-label-") as temp:
+            root = Path(temp)
+            window = ClientWindow(root)
+            try:
+                window.init_git()
+                (root / "app.py").write_text("value = 1\n", encoding="utf-8")
+                sha = window.git.commit_changes("first")
+                # Commit UI renders the tree before the async snapshot arrives.
+                window._refresh_development_tree()
+                self.assertEqual(window.git_head_value.text(), "暂无")
+                window.refresh_git_status(background=False)
+                self.assertEqual(window.git_head_value.text(), sha[:8])
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_git_panel_stages_unstages_and_commits_workspace_changes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-git-panel-") as temp:
             root = Path(temp)

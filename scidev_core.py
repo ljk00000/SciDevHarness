@@ -255,6 +255,38 @@ def destructive_command_reason(command: str) -> str | None:
     return None
 
 
+_SHARED_PATH_LOCKS: dict[str, threading.RLock] = {}
+_SHARED_LOCKS_GUARD = threading.Lock()
+
+# Runtime state written by the Harness itself. Without this file a project
+# without .gitignore would show prompts/transcripts as changes and "commit all"
+# could publish them.
+RESEARCH_IGNORE_PATTERNS = (
+    "events.jsonl",
+    "runs.db",
+    "runs.db-*",
+    "requests/",
+    "sessions/",
+    "settings.json",
+    "memory.sqlite3*",
+    "summaries/",
+    "tree_layout.json",
+    "validation/",
+    "browser/",
+)
+
+
+def shared_thread_lock(kind: str, path: Path) -> threading.RLock:
+    """Return one in-process lock per repository or ledger path."""
+    key = f"{kind}:{os.path.normcase(os.fspath(Path(path).resolve()))}"
+    with _SHARED_LOCKS_GUARD:
+        lock = _SHARED_PATH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _SHARED_PATH_LOCKS[key] = lock
+        return lock
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -285,8 +317,21 @@ class EventLedger:
         self.research_dir.mkdir(parents=True, exist_ok=True)
         self.events_path = self.research_dir / "events.jsonl"
         self.db_path = self.research_dir / "runs.db"
-        self._lock = threading.RLock()
+        # All ledgers for one project share a lock so concurrent appends from
+        # several windows/workers cannot interleave JSONL or SQLite writes.
+        self._lock = shared_thread_lock("ledger", self.research_dir)
+        self._ensure_gitignore()
         self._init_db()
+
+    def _ensure_gitignore(self) -> None:
+        """Keep private runtime state out of the project's commits."""
+        path = self.research_dir / ".gitignore"
+        if path.exists():
+            return
+        try:
+            path.write_text("\n".join(RESEARCH_IGNORE_PATTERNS) + "\n", encoding="utf-8")
+        except OSError:
+            pass
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=10)
@@ -357,12 +402,21 @@ class EventLedger:
         with self._lock:
             with self.events_path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
-            with self._db() as conn:
-                cursor = conn.execute(
-                    "INSERT INTO events(timestamp, event_type, payload) VALUES (?, ?, ?)",
-                    (timestamp, event_type, serialized),
-                )
-                return int(cursor.lastrowid)
+            # The JSONL log is the audit source of truth; the SQLite table is a
+            # query index. A transient lock must not fail the coding task.
+            for attempt in range(3):
+                try:
+                    with self._db() as conn:
+                        cursor = conn.execute(
+                            "INSERT INTO events(timestamp, event_type, payload) VALUES (?, ?, ?)",
+                            (timestamp, event_type, serialized),
+                        )
+                        return int(cursor.lastrowid)
+                except sqlite3.OperationalError:
+                    if attempt == 2:
+                        return 0
+                    time.sleep(0.05 * (attempt + 1))
+            return 0
 
     def prepare_tool_calls(
         self, session_id: str, assistant_message_index: int, tool_calls: list[dict[str, Any]],
@@ -775,10 +829,13 @@ class GitManager:
         self._toplevel_known = False
         self._toplevel_cache: Path | None = None
         self._toplevel_returncode = 0
-        # Serialise Git invocations so a background refresh and a user action
-        # cannot race on the same index.
-        self._run_lock = threading.Lock()
+        # Every GitManager for the same repository shares one lock; separate
+        # instances (UI refresh, toolbox diff, auto-commit) otherwise collide
+        # on .git/index.lock.
+        self._run_lock = shared_thread_lock("git", self.project_root)
         self._repo_lock = threading.RLock()
+        # Set when rename detection had to fail closed; exposed for diagnostics.
+        self.last_rename_detection_degraded: list[str] = []
 
     def _run(
         self,
@@ -789,40 +846,50 @@ class GitManager:
     ) -> subprocess.CompletedProcess[str]:
         command = ["git", *args]
         limit = self.COMMAND_TIMEOUT_SECONDS if timeout is None else timeout
-        try:
-            with self._run_lock:
-                return subprocess.run(
-                    command,
-                    cwd=self.project_root,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    check=check,
-                    env=env,
-                    timeout=limit,
-                    **background_process_options(),
+        for attempt in range(4):
+            try:
+                with self._run_lock:
+                    return subprocess.run(
+                        command,
+                        cwd=self.project_root,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=check,
+                        env=env,
+                        timeout=limit,
+                        **background_process_options(),
+                    )
+            except subprocess.CalledProcessError as exc:
+                # Another process (user's terminal, IDE) can hold the index
+                # briefly; retry instead of failing the coding task.
+                stderr = exc.stderr or ""
+                if "index.lock" in stderr and attempt < 3:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
+            except subprocess.TimeoutExpired as exc:
+                if check:
+                    raise PermanentError(
+                        f"Git 操作超时（{limit:.0f} 秒）：{' '.join(args[:3])}"
+                    ) from exc
+                return subprocess.CompletedProcess(
+                    command, 124, "", f"git 超时（{limit:.0f} 秒）"
                 )
-        except subprocess.TimeoutExpired as exc:
-            if check:
-                raise PermanentError(
-                    f"Git 操作超时（{limit:.0f} 秒）：{' '.join(args[:3])}"
-                ) from exc
-            return subprocess.CompletedProcess(
-                command, 124, "", f"git 超时（{limit:.0f} 秒）"
-            )
-        except OSError as exc:
-            # A desktop client should still open when Git is not installed.
-            # Read-only probes then behave like an unavailable repository;
-            # mutating calls keep a useful, conventional command error.
-            if check:
-                raise subprocess.CalledProcessError(
-                    127,
-                    command,
-                    output="",
-                    stderr=str(exc),
-                ) from exc
-            return subprocess.CompletedProcess(command, 127, "", str(exc))
+            except OSError as exc:
+                # A desktop client should still open when Git is not installed.
+                # Read-only probes then behave like an unavailable repository;
+                # mutating calls keep a useful, conventional command error.
+                if check:
+                    raise subprocess.CalledProcessError(
+                        127,
+                        command,
+                        output="",
+                        stderr=str(exc),
+                    ) from exc
+                return subprocess.CompletedProcess(command, 127, "", str(exc))
+        raise PermanentError(f"Git 索引持续被占用：{' '.join(args[:3])}")
 
     @staticmethod
     def _same_path(left: Path, right: Path) -> bool:
@@ -1021,31 +1088,38 @@ class GitManager:
         if len(candidates) < 2:
             return detected
 
-        with tempfile.TemporaryDirectory(prefix="scidev-git-rename-check-") as temp_dir:
-            environment = os.environ.copy()
-            environment["GIT_INDEX_FILE"] = str(Path(temp_dir) / "index")
-            self._run(["read-tree", self.head_sha()], check=True, env=environment)
-            self._run(
-                ["--literal-pathspecs", "add", "-A", "--", *candidates],
-                check=True,
-                env=environment,
-            )
-            result = self._run(
-                ["--literal-pathspecs", "diff", "--cached", "--find-renames", "--name-status", "-z", "HEAD"],
-                env=environment,
-            )
-            records = result.stdout.split("\x00")
-            index = 0
-            while index < len(records):
-                status = records[index]
-                index += 1
-                if not status:
-                    continue
-                path_count = 2 if status.startswith(("R", "C")) else 1
-                group = {path for path in records[index:index + path_count] if path}
-                index += path_count
-                if len(group) > 1 and any(_is_protected_workspace_path(path) for path in group):
-                    detected.append(group)
+        try:
+            with tempfile.TemporaryDirectory(prefix="scidev-git-rename-check-") as temp_dir:
+                environment = os.environ.copy()
+                environment["GIT_INDEX_FILE"] = str(Path(temp_dir) / "index")
+                self._run(["read-tree", self.head_sha()], check=True, env=environment)
+                self._run(
+                    ["--literal-pathspecs", "add", "-A", "--", *candidates],
+                    check=True,
+                    env=environment,
+                )
+                result = self._run(
+                    ["--literal-pathspecs", "diff", "--cached", "--find-renames", "--name-status", "-z", "HEAD"],
+                    env=environment,
+                )
+                records = result.stdout.split("\x00")
+                index = 0
+                while index < len(records):
+                    status = records[index]
+                    index += 1
+                    if not status:
+                        continue
+                    path_count = 2 if status.startswith(("R", "C")) else 1
+                    group = {path for path in records[index:index + path_count] if path}
+                    index += path_count
+                    if len(group) > 1 and any(_is_protected_workspace_path(path) for path in group):
+                        detected.append(group)
+        except (subprocess.CalledProcessError, PermanentError):
+            # Fail closed: when rename detection cannot run (vanished path,
+            # locked index, timeout) hide every candidate so a protected
+            # rename can never leak into the review diff.
+            detected.append(set(candidates))
+            self.last_rename_detection_degraded = sorted(candidates)[:50]
         return detected
 
     def stage_all(self) -> None:

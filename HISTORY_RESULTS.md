@@ -1,6 +1,14 @@
 # 历史与结果
 
-## 2026-10-28（Asia/Shanghai）· 十项关键问题修复（9 完成，1 分阶段）
+## 2026-10-28（Asia/Shanghai）· 第二轮 Bug 排查与修复
+- 并发 Git：多个 `GitManager`（界面刷新、`git_diff` 工具、自动提交）各自加锁，同一仓库并发 `add/status` 实测报 `Unable to create index.lock`（退出码 128）。改为按仓库路径共享进程内锁；`_run` 遇到 `index.lock` 最多重试 3 次，仍占用时抛明确错误。
+- 审计库并发：同一项目的多个 `EventLedger` 共享一把锁；SQLite 索引写入遇 `database is locked` 重试 3 次后降级返回 0，JSONL 仍是审计事实源，不再让编码任务失败。
+- 敏感重命名检测：临时索引操作失败（文件消失、索引锁、超时）原先直接抛错中断任务；现在“失败关闭”——把全部候选路径视为敏感并记录到 `last_rename_detection_degraded`，差异中绝不泄露，同时任务继续。
+- 内部状态误入库：应用会在任何工作区写 `.research/`；此前没有忽略规则时，Git 面板会显示 `runs.db/events.jsonl`，“全部暂存/提交”可能提交提示词与转录。`EventLedger` 现在首次运行时写入 `.research/.gitignore`（仅忽略运行时私有文件），测试验证其不会出现在 `git status`。
+- 版本树 HEAD 陈旧：提交后界面先渲染版本树、后收到异步快照，HEAD 标签会停留在旧值。`_apply_git_snapshot` 在快照 HEAD 变化时直接刷新标签。
+- 回归：515 项测试中 510 通过、4 失败、1 错误、8 跳过（5 项仍是沙箱限制）；ruff/mypy/编译通过。
+
+## 2026-10-28（Asia/Shanghai）· 十项关键问题修复（已完成）
 - Git（1）：`GitManager._run` 统一 10 s 读超时/60 s 写超时，超时返回 124 或抛 `PermanentError`；`snapshot()` 用一次 porcelain 查询同时产出文本与条目；UI 刷新改后台线程 + 序列号防旧结果覆盖，关闭窗口时等待并禁止信号，避免 Qt 销毁后崩溃。实测 `refresh_git_status` 在 Git 阻塞 2 s 时立即返回，等待接口随后应用。
 - 原子写（2）：新增 `atomic_write_bytes`（临时文件 + fsync + `os.replace`），`write_file`、两处批量替换与 `_save_session` 复用；失败时保留原文件并清理临时文件（含回归测试）。
 - 测试隔离（3）：新增 `tests/test_isolation_guard.py`，导入时把临时目录导离 VCS 工作树、必要时设置 `GIT_CEILING_DIRECTORIES`，并静态检查测试不得直接打开真实 `QSettings`；主题持久化测试改用临时 INI。零环境变量全量运行后 HEAD 与暂存区不变。

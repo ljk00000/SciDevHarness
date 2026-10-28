@@ -6039,7 +6039,14 @@ class ClientWindow(QMainWindow):
         entries = snapshot.get("entries") or []
         state = str(snapshot.get("state") or "")
         if "head" in snapshot:
-            self._cached_head_sha = str(snapshot.get("head") or "")
+            head = str(snapshot.get("head") or "")
+            if head != getattr(self, "_cached_head_sha", None):
+                self._cached_head_sha = head
+                # The tree may already have rendered before this snapshot
+                # arrived (for example right after a commit); refresh the label.
+                if hasattr(self, "git_head_value"):
+                    self.git_head_value.setText(head[:8] if head else "暂无")
+            self._cached_head_sha = head
         if hasattr(self, "git_status_output"):
             self.git_status_output.setPlainText(raw_status)
         self._refresh_git_changes(entries)
