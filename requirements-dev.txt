@@ -1,0 +1,4 @@
+# Development-only tools used by CI quality gates. Not required to run the client.
+ruff==0.17.3
+mypy==2.4.0
+coverage==7.17.0

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c111b">
+  <title>俄罗斯方块 · SciDevHarness 示例项目</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-synthesis: none; text-rendering: optimizeLegibility; --bg:#0c111b; --panel:#141c29; --line:#263348; --text:#eef3fb; --muted:#9aa9be; }
+    * { box-sizing: border-box; }
+    body { min-width:320px; min-height:100vh; margin:0; color:var(--text); background:radial-gradient(ellipse at 50% -24%,rgba(74,102,169,.22),transparent 54%),var(--bg); }
+    button { font:inherit; }
+    .app { width:min(100% - 40px,980px); margin:0 auto; padding:34px 0 28px; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:26px; }
+    .brand { display:flex; align-items:center; gap:12px; color:#dce6f8; font-size:14px; font-weight:650; }
+    .brand-mark { display:grid; grid-template-columns:repeat(2,8px); gap:2px; transform:rotate(-8deg); }
+    .brand-mark i { width:8px; height:8px; border-radius:2px; background:#9ab4ff; }
+    .brand-mark i:nth-child(2) { opacity:.72; } .brand-mark i:nth-child(3) { opacity:.5; }
+    .offline { display:inline-flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+    .offline::before { width:7px; height:7px; border-radius:50%; background:#60d6a2; content:""; box-shadow:0 0 12px #60d68866; }
+    .intro { margin-bottom:22px; }
+    .eyebrow { margin:0 0 8px; color:#9db4ec; font-size:11px; font-weight:700; letter-spacing:.14em; }
+    h1 { margin:0; font-size:clamp(24px,4vw,34px); font-weight:660; letter-spacing:-.035em; }
+    .subtitle { margin:9px 0 0; color:var(--muted); font-size:14px; line-height:1.6; }
+    .game-layout { display:grid; grid-template-columns:minmax(280px,1fr) 292px; gap:16px; align-items:stretch; }
+    .board-panel,.side-panel { border:1px solid var(--line); border-radius:18px; background:linear-gradient(155deg,#172131,#121925 70%); box-shadow:0 18px 55px #0003; }
+    .board-panel { display:grid; place-items:center; min-height:620px; padding:18px; }
+    .board-wrap { position:relative; width:min(100%,330px); overflow:hidden; border:1px solid #30405a; border-radius:12px; background:#0a1019; box-shadow:0 14px 42px #0005; }
+    #board { display:block; width:100%; height:auto; aspect-ratio:1 / 2; }
+    .board-overlay { position:absolute; inset:0; display:grid; place-content:center; gap:8px; padding:22px; background:#09101bcc; text-align:center; backdrop-filter:blur(5px); }
+    .board-overlay[hidden] { display:none; }
+    .overlay-title { font-size:23px; font-weight:700; } .overlay-copy { color:#c0cbdd; font-size:13px; }
+    .overlay-button { justify-self:center; margin-top:9px; padding:10px 16px; border:0; border-radius:9px; color:#101827; background:#b4c6ff; font-weight:700; cursor:pointer; }
+    .side-panel { display:flex; flex-direction:column; gap:15px; padding:17px; }
+    .score-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+    .stat { min-height:82px; padding:13px 14px; border:1px solid #28364b; border-radius:12px; background:#111925; }
+    .stat-label { display:block; margin-bottom:8px; color:var(--muted); font-size:11px; }
+    .stat-value { display:block; font-size:23px; font-variant-numeric:tabular-nums; font-weight:680; letter-spacing:-.03em; }
+    .section-card { padding:14px; border:1px solid #28364b; border-radius:12px; background:#111925; }
+    .section-heading { display:flex; align-items:center; justify-content:space-between; margin:0 0 11px; color:#dce5f4; font-size:12px; font-weight:650; }
+    .section-hint { color:#8090a8; font-size:10px; font-weight:450; }
+    .next-wrap { display:grid; min-height:93px; place-items:center; border-radius:8px; background:#0c131e; }
+    #next { display:block; width:112px; height:88px; }
+    .action-row { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+    .action-button { min-height:40px; border:1px solid #3a4a63; border-radius:9px; color:#e3eaf7; background:#1b2738; font-size:12px; font-weight:620; cursor:pointer; transition:background .15s,border-color .15s,transform .15s; }
+    .action-button:hover { border-color:#718bb9; background:#23334a; } .action-button:active { transform:translateY(1px); }
+    .action-button.primary { border-color:#718bd0; color:#101827; background:#a9beff; } .action-button.primary:hover { background:#c0ceff; }
+    .controls { display:grid; gap:9px; }
+    .control-line { display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--muted); font-size:11px; }
+    .keyset { display:inline-flex; align-items:center; gap:4px; }
+    kbd { min-width:24px; padding:4px 6px; border:1px solid #344258; border-bottom-width:2px; border-radius:5px; color:#dce6f7; background:#1b2534; font:10px ui-monospace,Consolas,monospace; text-align:center; }
+    .touch-controls { display:none; grid-template-columns:repeat(4,1fr); gap:7px; }
+    .touch-controls button { min-height:42px; border:1px solid #3a4a63; border-radius:9px; color:#e3eaf7; background:#1b2738; touch-action:manipulation; }
+    .footer-note { margin:auto 2px 0; color:#77869d; font-size:10px; line-height:1.5; }
+    @media (max-width:760px) {
+      .app { width:min(100% - 28px,560px); padding-top:22px; } .topbar { margin-bottom:22px; }
+      .game-layout { grid-template-columns:minmax(0,1fr); } .board-panel { min-height:0; padding:14px; } .board-wrap { width:min(100%,300px); }
+      .side-panel { display:grid; grid-template-columns:1fr 1fr; align-items:start; padding:13px; } .score-grid { grid-row:span 2; }
+      .next-card { min-width:0; } .next-wrap { min-height:78px; } .controls-card,.footer-note { grid-column:1 / -1; } .touch-controls { display:grid; }
+    }
+    @media (max-width:420px) {
+      .app { width:min(100% - 20px,400px); } .subtitle { font-size:12px; } .side-panel { gap:9px; padding:10px; }
+      .stat { min-height:72px; padding:10px; } .stat-value { font-size:20px; } .section-card { padding:10px; }
+      .topbar { flex-direction:column; align-items:flex-start; gap:10px; }
+      .brand { font-size:12px; white-space:nowrap; }
+      .offline { white-space:nowrap; }
+      .control-line { font-size:10px; } .touch-controls button { min-height:40px; }
+    }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto !important; transition-duration:.01ms !important; } }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>SciDevHarness <span aria-hidden="true">/</span> 示例项目</div>
+      <div class="offline">离线可玩 · 无需安装</div>
+    </header>
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow">一个可直接运行的网页项目</p>
+      <h1 id="page-title">俄罗斯方块</h1>
+      <p class="subtitle">整理方块，消除整行。这个示例是独立的 HTML 文件，保存后双击即可在浏览器中游玩。</p>
+    </section>
+    <section class="game-layout" aria-label="俄罗斯方块游戏">
+      <div class="board-panel"><div class="board-wrap">
+        <canvas id="board" width="300" height="600" aria-label="俄罗斯方块游戏棋盘">你的浏览器不支持 Canvas。</canvas>
+        <div id="overlay" class="board-overlay" hidden><div id="overlay-title" class="overlay-title">已暂停</div><div id="overlay-copy" class="overlay-copy">休息一下，准备好后继续。</div><button id="overlay-action" class="overlay-button" type="button">继续游戏</button></div>
+      </div></div>
+      <aside class="side-panel" aria-label="游戏信息与控制">
+        <div class="score-grid" aria-live="polite">
+          <div class="stat"><span class="stat-label">得分</span><strong id="score" class="stat-value">0</strong></div>
+          <div class="stat"><span class="stat-label">最高分</span><strong id="best" class="stat-value">0</strong></div>
+          <div class="stat"><span class="stat-label">消除行数</span><strong id="lines" class="stat-value">0</strong></div>
+          <div class="stat"><span class="stat-label">等级</span><strong id="level" class="stat-value">1</strong></div>
+        </div>
+        <section class="section-card next-card" aria-label="下一个方块"><h2 class="section-heading">下一个 <span class="section-hint">NEXT</span></h2><div class="next-wrap"><canvas id="next" width="112" height="88" aria-hidden="true"></canvas></div></section>
+        <div class="action-row"><button id="pause" class="action-button primary" type="button">暂停</button><button id="restart" class="action-button" type="button">重新开始</button></div>
+        <section class="section-card controls-card">
+          <h2 class="section-heading">操作方式 <span class="section-hint">KEYBOARD</span></h2>
+          <div class="controls">
+            <div class="control-line"><span>移动</span><span class="keyset"><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></span></div>
+            <div class="control-line"><span>旋转 / 硬降</span><span class="keyset"><kbd>↑</kbd><kbd>Space</kbd></span></div>
+            <div class="control-line"><span>暂停 / 重开</span><span class="keyset"><kbd>P</kbd><kbd>R</kbd></span></div>
+          </div>
+        </section>
+        <div class="touch-controls" aria-label="触控操作"><button type="button" data-action="left" aria-label="左移">←</button><button type="button" data-action="rotate" aria-label="旋转">↻</button><button type="button" data-action="right" aria-label="右移">→</button><button type="button" data-action="drop" aria-label="硬降">↓</button></div>
+        <p class="footer-note">提示：每消除一行即可得分；连续消行会获得更高分数。按 P 暂停，按 R 重新开始。</p>
+      </aside>
+    </section>
+  </main>
+  <script>
+    "use strict";
+    (() => {
+      const COLS=10, ROWS=20, CELL=30;
+      const COLORS={I:"#68d9e8",O:"#f3c969",T:"#b48aff",S:"#75d49a",Z:"#ff778b",J:"#719aff",L:"#f4a46b"};
+      const SHAPES={I:[[1,1,1,1]],O:[[1,1],[1,1]],T:[[0,1,0],[1,1,1]],S:[[0,1,1],[1,1,0]],Z:[[1,1,0],[0,1,1]],J:[[1,0,0],[1,1,1]],L:[[0,0,1],[1,1,1]]};
+      const boardCanvas=document.getElementById("board"),ctx=boardCanvas.getContext("2d");
+      const nextCanvas=document.getElementById("next"),nextCtx=nextCanvas.getContext("2d");
+      const overlay=document.getElementById("overlay"),overlayTitle=document.getElementById("overlay-title"),overlayCopy=document.getElementById("overlay-copy"),overlayAction=document.getElementById("overlay-action"),pauseButton=document.getElementById("pause");
+      let board,bag=[],current,nextType,score=0,lines=0,level=1,best=0,paused=false,ended=false,lastTime=0,fallTime=0;
+      try { best=Number(localStorage.getItem("scidev-tetris-best")||0)||0; } catch (_error) { best=0; }
+      function shuffledBag(){const pieces=Object.keys(SHAPES);for(let i=pieces.length-1;i>0;i-=1){const j=Math.floor(Math.random()*(i+1));[pieces[i],pieces[j]]=[pieces[j],pieces[i]];}return pieces;}
+      function takeType(){if(!bag.length)bag=shuffledBag();return bag.pop();}
+      function makePiece(type){const matrix=SHAPES[type].map(row=>row.slice());return{type,matrix,x:Math.floor((COLS-matrix[0].length)/2),y:0};}
+      function collides(piece,dx=0,dy=0,matrix=piece.matrix){for(let y=0;y<matrix.length;y+=1)for(let x=0;x<matrix[y].length;x+=1){if(!matrix[y][x])continue;const nx=piece.x+x+dx,ny=piece.y+y+dy;if(nx<0||nx>=COLS||ny>=ROWS)return true;if(ny>=0&&board[ny][nx])return true;}return false;}
+      function rotateMatrix(matrix){return matrix[0].map((_cell,column)=>matrix.map(row=>row[column]).reverse());}
+      function rotate(){if(paused||ended)return;const rotated=rotateMatrix(current.matrix);for(const offset of[0,-1,1,-2,2])if(!collides(current,offset,0,rotated)){current.x+=offset;current.matrix=rotated;render();return;}}
+      function spawn(){current=makePiece(nextType);nextType=takeType();drawNext();if(collides(current))finishGame();}
+      function lockPiece(){current.matrix.forEach((row,y)=>row.forEach((filled,x)=>{if(filled&&current.y+y>=0)board[current.y+y][current.x+x]=current.type;}));clearLines();spawn();}
+      function clearLines(){let cleared=0;for(let y=ROWS-1;y>=0;y-=1)if(board[y].every(Boolean)){board.splice(y,1);board.unshift(Array(COLS).fill(0));cleared+=1;y+=1;}if(cleared){score+=([0,100,300,500,800][cleared]||cleared*200)*level;lines+=cleared;level=Math.floor(lines/10)+1;updateStats();}}
+      function move(dx,dy){if(paused||ended)return false;if(!collides(current,dx,dy)){current.x+=dx;current.y+=dy;render();return true;}if(dy>0)lockPiece();render();return false;}
+      function hardDrop(){if(paused||ended)return;let distance=0;while(!collides(current,0,1)){current.y+=1;distance+=1;}score+=distance*2;updateStats();lockPiece();render();}
+      function drawCell(context,x,y,color,size,ghost=false){const inset=Math.max(1,Math.round(size*.08));context.save();if(ghost){context.strokeStyle=color;context.globalAlpha=.55;context.lineWidth=1.5;context.strokeRect(x*size+inset+.5,y*size+inset+.5,size-inset*2-1,size-inset*2-1);}else{context.fillStyle=color;context.globalAlpha=.94;context.beginPath();context.roundRect(x*size+inset,y*size+inset,size-inset*2,size-inset*2,Math.max(2,size*.16));context.fill();context.fillStyle="#fff";context.globalAlpha=.18;context.fillRect(x*size+inset+2,y*size+inset+2,size-inset*2-4,Math.max(2,size*.12));}context.restore();}
+      function drawMatrix(context,matrix,offsetX,offsetY,color,size,ghost=false){matrix.forEach((row,y)=>row.forEach((filled,x)=>{if(filled)drawCell(context,offsetX+x,offsetY+y,color,size,ghost);}));}
+      function render(){ctx.clearRect(0,0,boardCanvas.width,boardCanvas.height);ctx.fillStyle="#0b111b";ctx.fillRect(0,0,boardCanvas.width,boardCanvas.height);ctx.strokeStyle="#ffffff0b";ctx.lineWidth=1;for(let x=0;x<=COLS;x+=1){ctx.beginPath();ctx.moveTo(x*CELL+.5,0);ctx.lineTo(x*CELL+.5,boardCanvas.height);ctx.stroke();}for(let y=0;y<=ROWS;y+=1){ctx.beginPath();ctx.moveTo(0,y*CELL+.5);ctx.lineTo(boardCanvas.width,y*CELL+.5);ctx.stroke();}board.forEach((row,y)=>row.forEach((type,x)=>{if(type)drawCell(ctx,x,y,COLORS[type],CELL);}));if(current&&!ended){let ghostY=current.y;while(!collides(current,0,ghostY-current.y+1))ghostY+=1;drawMatrix(ctx,current.matrix,current.x,ghostY,COLORS[current.type],CELL,true);drawMatrix(ctx,current.matrix,current.x,current.y,COLORS[current.type],CELL);}}
+      function drawNext(){nextCtx.clearRect(0,0,nextCanvas.width,nextCanvas.height);if(!nextType)return;const matrix=SHAPES[nextType],size=21;const x=Math.floor((nextCanvas.width/size-matrix[0].length)/2),y=Math.floor((nextCanvas.height/size-matrix.length)/2);drawMatrix(nextCtx,matrix,x,y,COLORS[nextType],size);}
+      function updateStats(){if(score>best){best=score;try{localStorage.setItem("scidev-tetris-best",String(best));}catch(_error){/* Storage is optional for file pages. */}}document.getElementById("score").textContent=score.toLocaleString("zh-CN");document.getElementById("best").textContent=best.toLocaleString("zh-CN");document.getElementById("lines").textContent=String(lines);document.getElementById("level").textContent=String(level);}
+      function showOverlay(title,copy,action,callback){overlayTitle.textContent=title;overlayCopy.textContent=copy;overlayAction.textContent=action;overlayAction.onclick=callback;overlay.hidden=false;}
+      function hideOverlay(){overlay.hidden=true;}
+      function togglePause(){if(ended)return;paused=!paused;pauseButton.textContent=paused?"继续":"暂停";if(paused)showOverlay("已暂停","休息一下，准备好后继续。","继续游戏",togglePause);else{hideOverlay();lastTime=0;}}
+      function finishGame(){ended=true;pauseButton.textContent="暂停";showOverlay("游戏结束","本局得分："+score.toLocaleString("zh-CN"),"再来一局",restart);}
+      function restart(){board=Array.from({length:ROWS},()=>Array(COLS).fill(0));bag=[];score=0;lines=0;level=1;paused=false;ended=false;lastTime=0;fallTime=0;pauseButton.textContent="暂停";updateStats();nextType=takeType();spawn();hideOverlay();render();}
+      function perform(action){if(action==="left")move(-1,0);else if(action==="right")move(1,0);else if(action==="down"){if(move(0,1)){score+=1;updateStats();}}else if(action==="rotate")rotate();else if(action==="drop")hardDrop();else if(action==="pause")togglePause();else if(action==="restart")restart();}
+      function onKeyDown(event){const actions={ArrowLeft:"left",ArrowRight:"right",ArrowDown:"down",ArrowUp:"rotate",Space:"drop",KeyP:"pause",KeyR:"restart",KeyX:"rotate"},action=actions[event.code];if(!action)return;event.preventDefault();if(event.repeat&&["drop","pause","restart","rotate"].includes(action))return;perform(action);}
+      function frame(time){if(!lastTime)lastTime=time;const delta=Math.min(time-lastTime,100);lastTime=time;if(!paused&&!ended){fallTime+=delta;const interval=Math.max(90,820-(level-1)*65);if(fallTime>=interval){fallTime=0;move(0,1);}}requestAnimationFrame(frame);}
+      document.addEventListener("keydown",onKeyDown);pauseButton.addEventListener("click",()=>perform("pause"));document.getElementById("restart").addEventListener("click",()=>perform("restart"));
+      document.querySelectorAll("[data-action]").forEach(button=>button.addEventListener("pointerdown",event=>{event.preventDefault();perform(button.dataset.action);}));
+      updateStats();restart();requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>
