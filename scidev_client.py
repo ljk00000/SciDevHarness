@@ -2542,6 +2542,7 @@ class ClientWindow(QMainWindow):
         self.signals = AppSignals()
         self.current_session_id: str | None = None
         self.active_task_id: str | None = None
+        self._cancel_requested = False
         self._streaming_bubbles: dict[tuple[str, int], MessageBubble] = {}
         self._execution_group_active = False
         self._execution_group_session_id = ""
@@ -4765,6 +4766,7 @@ class ClientWindow(QMainWindow):
         if not task_id or not self.ledger.retry_now(task_id):
             return
         self.active_task_id = task_id
+        self._sync_stop_button()
         self.worker.wake()
         self._set_state(self.chat_status, "排队中 · 正在重新尝试", "StateWorking")
         self._set_state(self.workspace_state, "● 排队中", "StateWorking")
@@ -5103,6 +5105,12 @@ class ClientWindow(QMainWindow):
         send.setObjectName("Primary")
         send.clicked.connect(self.submit_chat)
         bottom.addWidget(send)
+        self.stop_task_button = QPushButton("停止")
+        self.stop_task_button.setObjectName("Quiet")
+        self.stop_task_button.setToolTip("停止当前编码任务；本次改动不会自动提交")
+        self.stop_task_button.clicked.connect(self.cancel_active_task)
+        self.stop_task_button.setVisible(False)
+        bottom.addWidget(self.stop_task_button)
         composer_layout.addLayout(bottom)
         layout.addWidget(composer)
         return chat
@@ -5464,6 +5472,8 @@ class ClientWindow(QMainWindow):
         elif event == "task_completed" and task_id == self.active_task_id:
             self._finish_execution_group("completed")
             self.active_task_id = None
+            self._cancel_requested = False
+            self._sync_stop_button()
             self.task_plan_panel.set_run_state("completed")
             self._set_state(self.chat_status, "就绪 · 可以继续对话", "StateReady")
             self._set_state(self.workspace_state, "● 就绪", "StateReady")
@@ -5476,12 +5486,26 @@ class ClientWindow(QMainWindow):
             self._interrupt_streaming_bubbles("Agent · 未完成回复")
             self._finish_execution_group("failed")
             self.active_task_id = None
-            self.task_plan_panel.set_run_state("failed")
-            self._set_state(self.chat_status, "任务失败 · 可从历史重试", "StateError")
-            self._set_state(self.workspace_state, "● 出错", "StateError")
-            self.problems_output.setPlainText(error_message)
-            visible_error = error_message if len(error_message) <= 2400 else error_message[:2400].rstrip() + "…"
-            self._append_chat("Harness · 任务失败", visible_error, "system")
+            self._sync_stop_button()
+            cancelled = self._cancel_requested
+            self._cancel_requested = False
+            if cancelled:
+                self.task_plan_panel.set_run_state("failed")
+                self._set_state(self.chat_status, "已停止 · 可以继续对话", "StateReady")
+                self._set_state(self.workspace_state, "● 已停止", "StateReady")
+                self.problems_output.setPlainText(error_message)
+                self._append_chat(
+                    "Harness · 任务已停止",
+                    "已按你的请求停止；本次改动未自动提交，仍保留在工作区。",
+                    "system",
+                )
+            else:
+                self.task_plan_panel.set_run_state("failed")
+                self._set_state(self.chat_status, "任务失败 · 可从历史重试", "StateError")
+                self._set_state(self.workspace_state, "● 出错", "StateError")
+                self.problems_output.setPlainText(error_message)
+                visible_error = error_message if len(error_message) <= 2400 else error_message[:2400].rstrip() + "…"
+                self._append_chat("Harness · 任务失败", visible_error, "system")
             self._refresh_open_file_after_task()
         self._append_log(self._worker_message(event, payload))
         self.refresh_git_status()
@@ -7999,6 +8023,30 @@ class ClientWindow(QMainWindow):
             except OSError:
                 continue
 
+    def _sync_stop_button(self) -> None:
+        button = getattr(self, "stop_task_button", None)
+        if button is None:
+            return
+        running = self.active_task_id is not None
+        button.setVisible(running)
+        button.setEnabled(running)
+
+    def cancel_active_task(self) -> None:
+        """Stop the running task before its next model call, tool or commit."""
+        if self.active_task_id is None:
+            self._append_log("当前没有正在运行的任务")
+            return
+        self.agent.request_cancel()
+        self._cancel_requested = True
+        self._append_chat(
+            "系统",
+            "已请求停止；当前模型调用返回后不再执行工具或自动提交，改动保留在工作区。",
+            "meta",
+        )
+        self._append_log("已请求停止当前任务")
+        if hasattr(self, "stop_task_button"):
+            self.stop_task_button.setEnabled(False)
+
     def submit_chat(self) -> None:
         prompt = self.chat_input.toPlainText().strip()
         if not prompt:
@@ -8017,6 +8065,7 @@ class ClientWindow(QMainWindow):
         if self.current_session_id is None:
             self.current_session_id = new_id("session")
             self._append_chat("系统", f"已创建会话 {self.current_session_id}", "meta")
+        self._cancel_requested = False
         self._execution_group_active = True
         self._execution_group_session_id = str(self.current_session_id)
         self._active_execution_group = None
@@ -8036,6 +8085,7 @@ class ClientWindow(QMainWindow):
             },
             max_attempts=6,
         )
+        self._sync_stop_button()
         self.task_plan_panel.set_plan(None, run_state="running")
         self._set_state(self.chat_status, "排队中 · 等待 Agent", "StateWorking")
         self._set_state(self.workspace_state, "● 排队中", "StateWorking")
@@ -8245,6 +8295,9 @@ class ClientWindow(QMainWindow):
                     event.ignore()
                     return
         self._closing = True
+        # A running task must not keep editing or auto-committing after the
+        # workspace window is gone.
+        self.agent.request_cancel()
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
             with self._git_status_lock:

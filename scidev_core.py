@@ -3482,6 +3482,8 @@ class CodingAgent:
     # Reserve bounded turns for diff verification and completion after a late edit.
     MAX_SVG_ARTIFACT_TURNS = 10
     MAX_TOOL_FORMAT_RETRIES = 2
+    MAX_EMPTY_RESPONSE_RETRIES = 2
+    MAX_IDENTICAL_TOOL_RESULTS = 3
     MAX_PLAN_COMPLETION_RETRIES = 2
     MAX_SPECIALIST_CALLS_PER_TASK = 3
     MAX_SVG_CREATION_RETRIES = 1
@@ -3552,6 +3554,11 @@ class CodingAgent:
         self.project_memory = ProjectMemory(self.project_root)
         self.single_user_prompt_only = single_user_prompt_only
         self.require_verification = bool(require_verification)
+        # Set by the desktop client when the window closes; checked between
+        # model turns and tool calls so a closed workspace stops changing files.
+        self._cancel = threading.Event()
+        self._tool_loop_signature: tuple[str, str, str] | None = None
+        self._tool_loop_repeats = 0
         self.toolbox = CodingToolbox(
             self.project_root,
             ledger,
@@ -3565,6 +3572,43 @@ class CodingAgent:
     def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self.event_callback:
             self.event_callback(event, data)
+
+    def _mark_session_failed_after_error(self, payload: dict[str, Any], exc: BaseException) -> None:
+        """Keep the on-disk session consistent when the run aborts unexpectedly."""
+        session_id = str(payload.get("session_id") or "")
+        if not session_id:
+            return
+        path = self._session_path(session_id)
+        try:
+            session = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if not isinstance(session, dict) or session.get("status") != "active":
+            return
+        message = f"{type(exc).__name__}: {exc}"[:800]
+        session["status"] = "failed"
+        session["error"] = message
+        session["updated_at"] = now_iso()
+        self.ledger.append("coding_session_failed", {"session_id": session_id, "error": message})
+        self._save_session(session)
+        self._emit("failed", {"session_id": session_id, "error": message})
+
+    def request_cancel(self) -> None:
+        """Ask the running task to stop before its next model call or tool."""
+        self._cancel.set()
+
+    def _raise_if_cancelled(self, session: dict[str, Any], session_id: str) -> None:
+        if not self._cancel.is_set():
+            return
+        message = "任务已取消；本次没有自动提交，改动保留在工作区。"
+        session["status"] = "cancelled"
+        session["error"] = message
+        session["final_message"] = message
+        session["updated_at"] = now_iso()
+        self.ledger.append("coding_session_cancelled", {"session_id": session_id, "error": message})
+        self._save_session(session)
+        self._emit("cancelled", {"session_id": session_id, "text": message})
+        raise PermanentError(message)
 
     def _session_path(self, session_id: str) -> Path:
         return self.project_root / ".research" / "sessions" / f"{session_id}.json"
@@ -5196,6 +5240,9 @@ class CodingAgent:
         payload = task.get("payload") if isinstance(task, dict) else None
         if not isinstance(payload, dict):
             raise PermanentError("编码任务缺少有效 payload")
+        self._cancel.clear()
+        self._tool_loop_signature = None
+        self._tool_loop_repeats = 0
         self.toolbox.reset_task_write_scope()
         self.toolbox.clear_editor_context()
         try:
@@ -5204,6 +5251,9 @@ class CodingAgent:
                 payload.get("context_readonly_paths"),
             )
             return self._run_with_editor_context(task)
+        except Exception as exc:
+            self._mark_session_failed_after_error(payload, exc)
+            raise
         finally:
             self.toolbox.clear_editor_context()
             self.toolbox.reset_task_write_scope()
@@ -5334,14 +5384,22 @@ class CodingAgent:
             session["semantic_acceptance_retries"] = 0
             session["svg_creation_retries"] = 0
             session["svg_repair_noop_retries"] = 0
-            self._append_followup_prompt(
-                session["messages"],
-                session,
-                session_id,
-                0,
-                f"继续当前编码会话。\n新任务：\n{prompt}",
-                reason="a second user task was supplied to a single-prompt run",
-            )
+            if session.get("status") == "cancelled":
+                # A stopped task's unfinished tool transcript must not steer
+                # the next prompt (weak models otherwise finish the old task).
+                session["messages"] = [
+                    {"role": "system", "content": self._system_prompt_for_task(prompt)},
+                    {"role": "user", "content": f"用户任务：\n{prompt}"},
+                ]
+            else:
+                self._append_followup_prompt(
+                    session["messages"],
+                    session,
+                    session_id,
+                    0,
+                    f"继续当前编码会话。\n新任务：\n{prompt}",
+                    reason="a second user task was supplied to a single-prompt run",
+                )
             session["last_prompt"] = prompt
             session["prompt"] = prompt
         else:
@@ -5771,6 +5829,7 @@ class CodingAgent:
     ) -> dict[str, Any]:
         """Execute this turn's tool calls and report the state they changed."""
         for call_index, call in enumerate(tool_calls):
+            self._raise_if_cancelled(session, session_id)
             function = call.get("function", {}) if isinstance(call, dict) else {}
             name = str(function.get("name", ""))
             call_id = str(call.get("id", new_id("tool")))
@@ -5912,6 +5971,35 @@ class CodingAgent:
                 result = f"浏览器操作已由用户拒绝：{exc}"
             except Exception as exc:  # Other tool errors go back to the model for correction.
                 result = f"工具执行失败：{type(exc).__name__}: {exc}"
+            signature = (
+                name,
+                json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str),
+                str(result)[:200],
+            )
+            if signature == self._tool_loop_signature:
+                self._tool_loop_repeats += 1
+            else:
+                self._tool_loop_signature = signature
+                self._tool_loop_repeats = 1
+            if self._tool_loop_repeats >= self.MAX_IDENTICAL_TOOL_RESULTS:
+                loop_message = (
+                    f"模型连续 {self._tool_loop_repeats} 次重复同一工具调用且结果不变"
+                    f"（{name}）；为避免继续消耗，本次任务已停止。"
+                )
+                session["status"] = "failed"
+                session["error"] = loop_message
+                session["updated_at"] = now_iso()
+                self.ledger.append(
+                    "tool_loop_detected",
+                    {
+                        "session_id": session_id,
+                        "tool": name,
+                        "repeats": self._tool_loop_repeats,
+                    },
+                )
+                self._save_session(session)
+                self._emit("failed", {"session_id": session_id, "error": loop_message})
+                raise PermanentError(loop_message)
             if name == "run_command" and verification_before is not None:
                 verification_after = self._verification_snapshot(session)
                 execution = dict(self.toolbox.last_command_execution or {
@@ -6133,8 +6221,10 @@ class CodingAgent:
         tool_scope_prompt = run_state["tool_scope_prompt"]
         turn_limit = run_state["turn_limit"]
         workspace_revision = run_state["workspace_revision"]
+        empty_response_retries = 0
 
         for turn in range(1, turn_limit + 1):
+            self._raise_if_cancelled(session, session_id)
             if context_dirty:
                 self._refresh_project_context(session, prompt, focus_paths)
                 context_dirty = False
@@ -6217,6 +6307,43 @@ class CodingAgent:
             content = self._text_content(message.get("content"))
             tool_calls = message.get("tool_calls") or []
             tool_parse_error = message.get("tool_parse_error")
+            self._raise_if_cancelled(session, session_id)
+            if not content and not tool_calls and not isinstance(tool_parse_error, dict):
+                # A weak/local model can return an empty message (for example
+                # when the prompt exceeds its context). Never report that as a
+                # finished task; ask once or twice, then fail explicitly.
+                empty_response_retries += 1
+                if self.single_user_prompt_only or empty_response_retries > self.MAX_EMPTY_RESPONSE_RETRIES:
+                    if self.single_user_prompt_only:
+                        error = "模型返回空回复；单用户提示模式不能追加提示，任务已停止。"
+                    else:
+                        error = "模型连续返回空回复；请检查模型上下文窗口、提示词长度或服务状态。"
+                    session["status"] = "failed"
+                    session["error"] = error
+                    session["updated_at"] = now_iso()
+                    self.ledger.append(
+                        "model_empty_response_exhausted",
+                        {"session_id": session_id, "turn": turn, "retries": empty_response_retries - 1},
+                    )
+                    self._save_session(session)
+                    self._emit("failed", {"session_id": session_id, "turn": turn, "error": error})
+                    raise PermanentError(error)
+                self.ledger.append(
+                    "model_empty_response",
+                    {"session_id": session_id, "turn": turn, "retry": empty_response_retries},
+                )
+                self._emit(
+                    "model_empty_response",
+                    {"session_id": session_id, "turn": turn, "retry": empty_response_retries},
+                )
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "你的上一条回复为空。请立即给出下一步："
+                        "要么调用一个可用工具，要么给出最终答复。"
+                    ),
+                })
+                continue
             if isinstance(tool_parse_error, dict) and not tool_calls:
                 tool_name = str(tool_parse_error.get("name", ""))[:80]
                 parse_reason = str(tool_parse_error.get("reason", "invalid_tool_envelope"))[:80]
@@ -6739,6 +6866,7 @@ class CodingAgent:
                 if accept_retry:
                     continue
 
+                self._raise_if_cancelled(session, session_id)
                 return self._finish_coding_session(
                     provider, session, session_id, prompt, content, changed_paths, turn,
                     acceptance_report, verification_report,

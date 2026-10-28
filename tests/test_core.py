@@ -16,7 +16,7 @@ from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from scidev_core import (
     CodingAgent,
@@ -4434,6 +4434,204 @@ class VerificationGateConfigurationTests(unittest.TestCase):
             self.assertEqual(session["status"], "verification_required")
             events = ledger.events_path.read_text(encoding="utf-8")
             self.assertIn("coding_session_verification_required", events)
+
+
+class EmptyModelResponseTests(unittest.TestCase):
+    def _agent(self, root: Path) -> CodingAgent:
+        return CodingAgent(
+            root, EventLedger(root), GitManager(root),
+            summary_settings=SummarySettings(enabled=False),
+            require_verification=False,
+        )
+
+    def test_empty_reply_is_retried_once_then_completes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-empty-reply-") as temp:
+            root = Path(temp)
+            provider = Mock()
+            provider.chat.side_effect = [
+                {"content": "", "tool_calls": []},
+                {"content": "done", "tool_calls": []},
+            ]
+            agent = self._agent(root)
+            task = {"payload": {"session_id": "empty-once", "prompt": "say done", "planning_mode": "off"}}
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run(task)
+            self.assertEqual(result["text"], "done")
+            self.assertEqual(provider.chat.call_count, 2)
+            self.assertIn(
+                "model_empty_response",
+                (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+            )
+
+    def test_persistent_empty_replies_fail_instead_of_reporting_success(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-empty-exhausted-") as temp:
+            root = Path(temp)
+            provider = Mock()
+            provider.chat.side_effect = [
+                {"content": "", "tool_calls": []}
+                for _ in range(CodingAgent.MAX_EMPTY_RESPONSE_RETRIES + 1)
+            ]
+            agent = self._agent(root)
+            task = {"payload": {"session_id": "empty-always", "prompt": "say done", "planning_mode": "off"}}
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "空回复"):
+                    agent.run(task)
+            self.assertEqual(provider.chat.call_count, CodingAgent.MAX_EMPTY_RESPONSE_RETRIES + 1)
+            events = (root / ".research" / "events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("model_empty_response_exhausted", events)
+            session = json.loads(
+                (root / ".research" / "sessions" / "empty-always.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session["status"], "failed")
+
+
+    def test_provider_error_marks_the_session_failed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-provider-error-") as temp:
+            root = Path(temp)
+            provider = Mock()
+            provider.chat.side_effect = RuntimeError("provider down")
+            agent = self._agent(root)
+            task = {"payload": {"session_id": "provider-error", "prompt": "say hi", "planning_mode": "off"}}
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaises(RuntimeError):
+                    agent.run(task)
+            session = json.loads(
+                (root / ".research" / "sessions" / "provider-error.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session["status"], "failed")
+            self.assertIn("provider down", session["error"])
+            self.assertIn(
+                "coding_session_failed",
+                (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+            )
+
+
+class CancellationTests(unittest.TestCase):
+    def test_new_task_after_cancel_starts_from_a_clean_transcript(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-cancel-clean-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            agent = CodingAgent(
+                root, EventLedger(root), GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            provider = Mock()
+            seen: list[list[dict[str, object]]] = []
+
+            def chat(messages, **_kwargs):
+                seen.append(list(messages))
+                if len(seen) == 1:
+                    agent.request_cancel()
+                    return {
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "old-call",
+                            "function": {
+                                "name": "write_file",
+                                "arguments": json.dumps({"path": "first.py", "content": "print('first')\n"}),
+                            },
+                        }],
+                    }
+                return {"content": "done", "tool_calls": []}
+
+            provider.chat.side_effect = chat
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaises(PermanentError):
+                    agent.run({"task_id": "t1", "payload": {
+                        "session_id": "clean-session", "prompt": "create first.py", "planning_mode": "off",
+                    }})
+                result = agent.run({"task_id": "t2", "payload": {
+                    "session_id": "clean-session", "prompt": "create second.py", "planning_mode": "off",
+                }})
+            self.assertEqual(result["text"], "done")
+            self.assertFalse((root / "first.py").exists())
+            second_messages = seen[-1]
+            self.assertEqual(len(second_messages), 2)
+            self.assertNotIn("first.py", json.dumps(second_messages, ensure_ascii=False))
+            self.assertIn("second.py", json.dumps(second_messages, ensure_ascii=False))
+
+
+    def test_cancel_during_model_call_prevents_tools_and_commit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-cancel-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            git.commit_changes("baseline")
+            agent = CodingAgent(
+                root, ledger, git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            provider = Mock()
+
+            def chat_then_cancel(*_args, **_kwargs):
+                agent.request_cancel()
+                return {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": json.dumps({"path": "late.py", "content": "print('late')\n"}),
+                        },
+                    }],
+                }
+
+            provider.chat.side_effect = chat_then_cancel
+            task = {"task_id": "cancel-task", "payload": {
+                "session_id": "cancel-session", "prompt": "create late.py", "planning_mode": "off",
+            }}
+            baseline = git.head_sha()
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "任务已取消"):
+                    agent.run(task)
+            self.assertFalse((root / "late.py").exists())
+            self.assertEqual(git.head_sha(), baseline)
+            self.assertEqual(git.status_paths(), set())
+            session = json.loads(
+                (root / ".research" / "sessions" / "cancel-session.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session["status"], "cancelled")
+            self.assertIn(
+                "coding_session_cancelled",
+                (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+            )
+
+
+class ToolLoopGuardTests(unittest.TestCase):
+    def test_identical_failing_tool_calls_stop_instead_of_burning_turns(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-tool-loop-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            agent = CodingAgent(
+                root, EventLedger(root), GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            provider = Mock()
+            provider.chat.return_value = {
+                "content": "",
+                "tool_calls": [{
+                    "id": "same-call",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": json.dumps({"path": "missing.txt"}),
+                    },
+                }],
+            }
+            task = {"task_id": "loop", "payload": {
+                "session_id": "loop", "prompt": "read missing.txt", "planning_mode": "off",
+            }}
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "重复同一工具调用"):
+                    agent.run(task)
+            self.assertEqual(provider.chat.call_count, CodingAgent.MAX_IDENTICAL_TOOL_RESULTS)
+            self.assertIn(
+                "tool_loop_detected",
+                (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+            )
 
 
 class ObservabilityTests(unittest.TestCase):

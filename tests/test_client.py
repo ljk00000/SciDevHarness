@@ -3323,6 +3323,57 @@ class StreamingAgentUiTests(unittest.TestCase):
                 self.app.processEvents()
 
 
+class TaskControlUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_stop_button_cancels_the_running_task(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-stop-task-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                self.assertFalse(window.stop_task_button.isVisible())
+                window.active_task_id = "task-running"
+                window._sync_stop_button()
+                self.assertTrue(window.stop_task_button.isVisible())
+                self.assertTrue(window.stop_task_button.isEnabled())
+                with patch.object(window.agent, "request_cancel") as cancel:
+                    window.cancel_active_task()
+                cancel.assert_called_once_with()
+                self.assertFalse(window.stop_task_button.isEnabled())
+                window.active_task_id = None
+                window._sync_stop_button()
+                self.assertFalse(window.stop_task_button.isVisible())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_cancelled_task_is_reported_as_stopped_not_failed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-cancel-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                window.active_task_id = "task-cancel"
+                window._cancel_requested = True
+                with patch.object(window, "_append_chat") as append:
+                    window._handle_worker_event("task_failed", {
+                        "task_id": "task-cancel",
+                        "error": "任务已取消；本次没有自动提交，改动保留在工作区。",
+                    })
+                self.assertIn("已停止", window.chat_status.text())
+                self.assertIsNone(window.active_task_id)
+                self.assertFalse(window.stop_task_button.isVisible())
+                self.assertFalse(window._cancel_requested)
+                stopped = [call.args[1] for call in append.call_args_list if "停止" in str(call.args[1])]
+                self.assertTrue(stopped)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
 class TerminalUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

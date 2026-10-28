@@ -1,5 +1,16 @@
 # 历史与结果
 
+## 2026-10-28（Asia/Shanghai）· 本地 Qwen 第二轮（取消/空回复/循环）
+- 空回复：弱模型（或提示词超上下文）返回空消息时，原先直接“完成”且无内容。现在最多补问 2 次，仍空则会话标记 failed 并报错；单用户提示模式不追加提示，直接停止。
+- 传输失败：provider 抛错后会话文件停留在 `active`（重启像仍在运行）。现在 `run` 兜底将 active 会话标记 failed 并写 `coding_session_failed`。
+- 关窗不取消：任务运行中关闭窗口，Agent 仍继续写文件并自动提交（实测关闭后新增 commit）。现在 `closeEvent` 请求取消，Agent 在下一个模型返回/工具调用/提交前停止，改动保留但不提交。
+- 无停止入口：新增聊天区“停止”按钮（运行中可见），停止后状态显示“已停止”，不再误报“任务失败”。
+- 重复工具循环：同一工具同参数同结果连续调用原先会跑满 32 轮（32 次模型调用）。现在第 3 次触发熔断并记录 `tool_loop_detected`。
+- 取消后的新任务：同一会话继续沿用旧工具转录，弱模型会继续完成上一个任务，并把旧文件以新任务消息提交。现在取消后的新任务重置为干净系统提示+新用户消息（实测第二个任务只创建并提交自己的文件）。
+- 验证通过：脏工作区隔离（只提交 Agent 文件，用户改动保留）、`../` 路径穿越拦截、停止按钮/关窗取消、取消后重试。
+- 大提示词：49k 字符触发 Ollama 静默截断（195.9s 后回显 padding）；更大提示触发 `Provider stream ended before a completion marker`，现会话正确 failed。建议本地 Ollama 显式设置 `num_ctx`（如 Modelfile `PARAMETER num_ctx 32768` 或启动参数），否则 Harness 的 32k 上下文预算与服务器实际窗口不一致。
+- 回归：527 项测试 522 通过、4 失败、1 错误、8 跳过（5 项为沙箱限制）；ruff/mypy/编译通过。
+
 ## 2026-10-28（Asia/Shanghai）· 本地 Qwen 弱模型实测
 - 环境：Ollama 0.35.0、`scidev-qwen2.5-coder-7b:q4_k_m`（RTX 4070，4.7 GB）、loopback `http://127.0.0.1:11434/v1`、流式 + 文本工具调用回退。
 - 失败 1：`scripts/smoke_local_ollama.py` 使用默认 `require_verification=True`，但没有 `command_approval`；`run_command` 永远被拒，代码任务必然停在“未运行项目检查”，白跑 2 次补验模型调用。修正：代理在无审批通道时立即失败并说明原因（不再补问），smoke 在“禁止 run_command”的任务上显式关闭验证门槛。
