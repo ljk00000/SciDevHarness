@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import ast
 import ctypes
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import warnings
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_QUICK_BACKEND"] = "software"
@@ -32,7 +34,7 @@ from PySide6.QtCore import (
 )  # noqa: E402
 from PySide6.QtGui import QFontInfo, QIcon, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
 
 from scidev_client import (  # noqa: E402
     CodeEditor,
@@ -40,12 +42,15 @@ from scidev_client import (  # noqa: E402
     DevelopmentTreeView,
     MAX_TREE_LAYOUT_BYTES,
     NotificationToast,
+    PatchReviewCard,
     ProjectFilterProxy,
     TerminalOutputDecoder,
     _is_link_or_junction,
+    default_sample_workspace,
+    resolve_startup_workspace,
 )
 from scidev_core import CodingToolbox, SummarySettings  # noqa: E402
-from scidev_ui import _scale_stylesheet_metrics, ui_scale_for_resolution  # noqa: E402
+from scidev_ui import ACTIVITY_RAIL_WIDTH, _scale_stylesheet_metrics, ui_scale_for_resolution  # noqa: E402
 
 
 class MutableScreen(QObject):
@@ -261,6 +266,12 @@ class UIResolutionScalingTests(unittest.TestCase):
 
     def test_resolution_scale_reaches_editor_and_qml_version_tree(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-ui-resolution-scale-") as temp:
+            isolated_settings = QSettings(
+                str(Path(temp) / "ui.ini"), QSettings.Format.IniFormat
+            )
+            settings_patch = patch("scidev_client.QSettings", return_value=isolated_settings)
+            settings_patch.start()
+            self.addCleanup(settings_patch.stop)
             window = ClientWindow(Path(temp))
             try:
                 tree = window.git_tree
@@ -492,7 +503,7 @@ class UIProfileTests(unittest.TestCase):
                 self.assertIn("#0b0d14", window.styleSheet())
                 sizes = window.workbench.sizes()
                 total = sum(sizes)
-                self.assertAlmostEqual(sizes[0] / total, 0.22, delta=0.015)
+                self.assertAlmostEqual(sizes[0] / total, 0.20, delta=0.015)
                 self.assertAlmostEqual(sizes[2] / total, 0.20, delta=0.015)
                 self.assertEqual(window.git_tree.rootObject().property("visualTheme"), "focus")
             finally:
@@ -508,7 +519,7 @@ class UIProfileTests(unittest.TestCase):
                 self.app.processEvents()
 
                 self.assertTrue(window.explorer.isHidden())
-                self.assertEqual(window.workbench.sizes()[0], 58)
+                self.assertEqual(window.workbench.sizes()[0], ACTIVITY_RAIL_WIDTH)
                 self.assertGreaterEqual(window.workbench.sizes()[1], 480)
                 self.assertEqual(window.activity_buttons[0].toolTip(), "显示资源管理器")
                 self.assertEqual(window.activity_buttons[0].accessibleName(), "显示资源管理器")
@@ -592,29 +603,26 @@ class UIProfileTests(unittest.TestCase):
                 self.app.processEvents()
 
     def test_theme_menu_persists_the_choice_and_restores_it_on_startup(self) -> None:
-        settings = QSettings("SciDevHarness", "SciDevHarness")
-        had_previous = settings.contains("uiProfile")
-        previous = settings.value("uiProfile") if had_previous else None
         second_window = None
         with tempfile.TemporaryDirectory(prefix="scidev-ui-profile-persistence-") as temp:
-            window = ClientWindow(Path(temp))
-            try:
-                window.ui_theme_actions["paper"].trigger()
-                self.assertEqual(window.ui_profile, "paper")
-                self.assertEqual(settings.value("uiProfile"), "paper")
+            root = Path(temp)
+            # Isolated settings: a test must never rewrite the developer's theme.
+            settings = QSettings(str(root / "ui.ini"), QSettings.Format.IniFormat)
+            with patch("scidev_client.QSettings", return_value=settings):
+                window = ClientWindow(root)
+                try:
+                    window.ui_theme_actions["paper"].trigger()
+                    self.assertEqual(window.ui_profile, "paper")
+                    self.assertEqual(settings.value("uiProfile"), "paper")
 
-                second_window = ClientWindow(Path(temp))
-                self.assertEqual(second_window.ui_profile, "paper")
-            finally:
-                window.close()
-                if second_window is not None:
-                    second_window.close()
-                if had_previous:
-                    settings.setValue("uiProfile", previous)
-                else:
-                    settings.remove("uiProfile")
-                settings.sync()
-                self.app.processEvents()
+                    second_window = ClientWindow(root)
+                    self.assertEqual(second_window.ui_profile, "paper")
+                finally:
+                    window.close()
+                    if second_window is not None:
+                        second_window.close()
+                    settings.sync()
+                    self.app.processEvents()
 
 
 class NotificationToastTests(unittest.TestCase):
@@ -841,6 +849,33 @@ class GitWorkflowTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_git_refresh_does_not_block_the_ui_thread(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-git-async-") as temp:
+            window = ClientWindow(Path(temp))
+            release = threading.Event()
+            started = threading.Event()
+
+            def slow_snapshot():
+                started.set()
+                release.wait(10)
+                return {"state": "clean", "text": "工作区干净", "entries": [], "head": ""}
+
+            try:
+                with patch.object(window.git, "snapshot", side_effect=slow_snapshot):
+                    start = time.monotonic()
+                    window.refresh_git_status()
+                    elapsed = time.monotonic() - start
+                    self.assertLess(elapsed, 0.2, "refresh must return before Git finishes")
+                    self.assertTrue(started.wait(2), "Git work did not start in the background")
+                    self.app.processEvents()
+                    release.set()
+                    self.assertTrue(window.wait_for_git_status(5))
+                    self.assertEqual(window.status_branch.text(), "Git · 工作区干净")
+            finally:
+                release.set()
+                window.close()
+                self.app.processEvents()
+
     def test_git_panel_stages_unstages_and_commits_workspace_changes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-git-panel-") as temp:
             root = Path(temp)
@@ -850,7 +885,7 @@ class GitWorkflowTests(unittest.TestCase):
             try:
                 window.init_git()
                 source.write_text("value = 1\n", encoding="utf-8")
-                window.refresh_git_status()
+                window.refresh_git_status(background=False)
 
                 item = next(
                     window.git_changes_tree.topLevelItem(index)
@@ -912,6 +947,536 @@ class EditorTabBehaviorTests(unittest.TestCase):
                 preview_editor.document().setModified(False)
             finally:
                 window.close()
+                self.app.processEvents()
+
+
+class ProjectContextUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_context_preview_is_async_and_displays_current_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-context-preview-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            source.write_text("def calculate_price():\n    return 42\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "pyproject.toml").write_text(
+                '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8",
+            )
+            (root / "tests" / "test_feature.py").write_text(
+                "def test_feature():\n    assert True\n", encoding="utf-8",
+            )
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                window.chat_input.setPlainText("calculate_price")
+                original_build = window.agent.context_snapshot
+                thread_ids = []
+
+                def build(*args, **kwargs):
+                    thread_ids.append(threading.get_ident())
+                    return original_build(*args, **kwargs)
+
+                with patch.object(window.agent, "context_snapshot", side_effect=build):
+                    window.show_project_context()
+                    deadline = time.monotonic() + 3
+                    while window._context_preview_pending and time.monotonic() < deadline:
+                        self.app.processEvents()
+                        time.sleep(0.01)
+                    self.assertFalse(window._context_preview_pending)
+                self.assertTrue(thread_ids)
+                self.assertNotEqual(thread_ids[0], threading.get_ident())
+                self.assertEqual(window.bottom_tabs.currentIndex(), window.project_context_tab_index)
+                self.assertIn("calculate_price", window.project_context_output.toPlainText())
+                self.assertIn("python -m pytest", window.project_context_output.toPlainText())
+                self.assertIn("module.py", window.project_context_snapshot["sources"])
+                self.assertEqual(
+                    window.project_context_snapshot["test_discovery"]["candidates"][0]["command"],
+                    "python -m pytest",
+                )
+                self.assertIn("host", window.project_context_snapshot["environment"])
+                self.assertFalse(window.project_context_snapshot["environment"]["installed_dependencies_checked"])
+                self.assertTrue(window.project_context_refresh.isEnabled())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_environment_check_button_runs_async_and_shows_inline_report(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-env-check-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            inspector = Mock()
+            inspector.inspect.return_value = {
+                "status": "passed",
+                "interpreter": ".venv/Scripts/python.exe",
+                "report": "Python 3.13 · pip check clean",
+            }
+            try:
+                with patch("scidev_client.ProjectEnvironmentInspector", return_value=inspector) as factory:
+                    window.project_environment_check.click()
+                    deadline = time.monotonic() + 3
+                    while window._environment_check_running and time.monotonic() < deadline:
+                        self.app.processEvents()
+                        time.sleep(0.01)
+                    self.app.processEvents()
+
+                self.assertFalse(window._environment_check_running)
+                self.assertTrue(window.project_environment_check.isEnabled())
+                self.assertIn("Python 3.13", window.project_context_output.toPlainText())
+                self.assertEqual(factory.call_args.args[0], Path(temp).resolve())
+                inspector.inspect.assert_called_once_with()
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_environment_check_excludes_concurrent_coding_task_submission(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-env-check-guard-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._environment_check_running = True
+                with patch.object(window.worker, "submit") as submit:
+                    self.assertFalse(window._submit_prompt("do work"))
+                submit.assert_not_called()
+            finally:
+                window._environment_check_running = False
+                window.close()
+                self.app.processEvents()
+
+    def test_environment_check_requests_one_clear_approval_dialog(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-env-approval-") as temp:
+            window = ClientWindow(Path(temp))
+            dialogs = []
+
+            def approve_once() -> None:
+                active = [widget for widget in self.app.topLevelWidgets() if isinstance(widget, QMessageBox)]
+                dialogs.extend(active)
+                self.assertEqual(len(active), 1)
+                active[0].button(QMessageBox.StandardButton.Yes).click()
+
+            try:
+                QTimer.singleShot(0, approve_once)
+                approved = window._request_command_approval(
+                    "fixed local toolchain probes",
+                    45,
+                    purpose="批准项目环境核验？",
+                    explanation="仅查询版本，不联网、不安装、不运行项目脚本。",
+                )
+
+                self.assertTrue(approved)
+                self.assertEqual(len(dialogs), 1)
+                self.assertEqual(dialogs[0].text(), "批准项目环境核验？")
+                self.assertIn("仅查询版本", dialogs[0].informativeText())
+                self.assertEqual(dialogs[0].detailedText(), "fixed local toolchain probes")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_context_preview_uses_unsaved_buffer_instead_of_disk_contents(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-context-buffer-preview-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            source.write_text("disk_version = 'old'\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                editor.setPlainText("def unsaved_marker():\n    return 'new'\n")
+                editor.document().setModified(True)
+                window.chat_input.setPlainText("unsaved_marker")
+                window.show_project_context()
+                deadline = time.monotonic() + 3
+                while window._context_preview_pending and time.monotonic() < deadline:
+                    self.app.processEvents()
+                    time.sleep(0.01)
+
+                snapshot = window.project_context_snapshot
+                self.assertEqual(snapshot["editor_overrides"], ["module.py"])
+                self.assertIn("unsaved_marker", window.project_context_output.toPlainText())
+                self.assertNotIn("disk_version", window.project_context_output.toPlainText())
+                self.assertIn("未保存缓冲只读接入", window.project_context_meta.text())
+                self.assertEqual(source.read_text(encoding="utf-8"), "disk_version = 'old'\n")
+                editor.document().setModified(False)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_submission_captures_dirty_buffers_as_readonly_without_saving(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-context-buffer-submit-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            source.write_text("disk_version = 'old'\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                editor.setPlainText("buffer_version = 'new'\n")
+                editor.document().setModified(True)
+                with patch.object(window.worker, "submit", return_value="buffer_task") as submit:
+                    self.assertTrue(window._submit_prompt("inspect this file"))
+
+                payload = submit.call_args.args[1]
+                self.assertEqual(payload["context_readonly_paths"], ["module.py"])
+                self.assertEqual(payload["context_overrides"], {"module.py": "buffer_version = 'new'\n"})
+                self.assertIn("只读上下文", payload["prompt"])
+                self.assertEqual(source.read_text(encoding="utf-8"), "disk_version = 'old'\n")
+                editor.document().setModified(False)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_context_submission_includes_focus_but_never_auto_attaches_secret_selection(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-context-submission-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            source.write_text("value = 1\n", encoding="utf-8")
+            secret = root / ".env"
+            secret.write_text("SECRET=do_not_attach", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                with patch.object(window.worker, "submit", return_value="test_task") as submit:
+                    self.assertTrue(window._submit_prompt("inspect"))
+                self.assertEqual(submit.call_args.args[1]["context_files"], ["module.py"])
+                window.active_task_id = None
+                window._open_file(secret, preview=False)
+                window._active_editor().selectAll()
+                with patch.object(window.worker, "submit", return_value="secret_test_task") as submit:
+                    self.assertTrue(window._submit_prompt("inspect"))
+                payload = submit.call_args.args[1]
+                self.assertEqual(payload["context_files"], [])
+                self.assertNotIn("do_not_attach", payload["prompt"])
+                self.assertNotIn(".env", payload["prompt"])
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_old_preview_does_not_overwrite_newer_live_context(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-context-update-order-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                old_generation = window._context_generation
+                window._handle_agent_event("project_context_updated", {"text": "new live context", "sources": []})
+                window._handle_agent_event("project_context_preview", {
+                    "text": "old preview", "sources": [], "generation": old_generation,
+                })
+                self.assertEqual(window.project_context_output.toPlainText(), "new live context")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
+class PatchReviewUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def preview() -> dict[str, object]:
+        return {
+            "file_count": 1,
+            "hunks": [
+                {"id": 1, "path": "module.py", "operation": "update", "added_lines": 1,
+                 "removed_lines": 1, "diff": "-return 1\n+return 2"},
+                {"id": 2, "path": "module.py", "operation": "update", "added_lines": 1,
+                 "removed_lines": 1, "diff": "-return 3\n+return 4"},
+            ],
+        }
+
+    def test_review_card_requires_explicit_hunk_selection(self) -> None:
+        card = PatchReviewCard(self.preview())
+        decisions = []
+        card.decision.connect(decisions.append)
+        try:
+            self.assertEqual(card.selected_hunks(), set())
+            self.assertFalse(card.apply_button.isEnabled())
+            card.hunk_checks[2].setChecked(True)
+            self.assertTrue(card.apply_button.isEnabled())
+            card.apply_button.click()
+            self.assertEqual(decisions, [{2}])
+            self.assertFalse(card.hunk_checks[1].isEnabled())
+            self.assertFalse(card.apply_button.isEnabled())
+        finally:
+            card.close()
+            card.deleteLater()
+            self.app.processEvents()
+
+    def test_client_review_callback_waits_for_selection_and_returns_selected_hunks(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-patch-review-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            result: list[set[int] | None] = []
+            request_thread = threading.Thread(
+                target=lambda: result.append(window._request_patch_review(self.preview())),
+                name="patch-review-test",
+                daemon=True,
+            )
+            try:
+                request_thread.start()
+                deadline = time.monotonic() + 3
+                card = None
+                while time.monotonic() < deadline:
+                    self.app.processEvents()
+                    pending = list(window._pending_patch_reviews.values())
+                    card = next((request.get("card") for request in pending if request.get("card")), None)
+                    if card is not None:
+                        break
+                    time.sleep(0.01)
+                self.assertIsNotNone(card)
+                self.assertTrue(request_thread.is_alive())
+                card.hunk_checks[1].setChecked(True)
+                card.apply_button.click()
+                request_thread.join(timeout=3)
+                self.assertFalse(request_thread.is_alive())
+                self.assertEqual(result, [{1}])
+                self.assertEqual(window._pending_patch_reviews, {})
+            finally:
+                if request_thread.is_alive():
+                    window._resolve_patch_review(next(iter(window._pending_patch_reviews.values())), None)
+                    request_thread.join(timeout=3)
+            window.close()
+            self.app.processEvents()
+
+
+    def test_clearing_chat_releases_pending_review_without_approval(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-patch-review-cancel-") as temp:
+            window = ClientWindow(Path(temp))
+            result: list[set[int] | None] = []
+            request_thread = threading.Thread(
+                target=lambda: result.append(window._request_patch_review(self.preview())),
+                name="patch-review-cancel-test",
+                daemon=True,
+            )
+            try:
+                request_thread.start()
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline and not any(
+                    request.get("card") for request in window._pending_patch_reviews.values()
+                ):
+                    self.app.processEvents()
+                    time.sleep(0.01)
+                self.assertTrue(any(request.get("card") for request in window._pending_patch_reviews.values()))
+                window._clear_chat_history()
+                request_thread.join(timeout=3)
+                self.assertFalse(request_thread.is_alive())
+                self.assertEqual(result, [None])
+                self.assertEqual(window._pending_patch_reviews, {})
+            finally:
+                if request_thread.is_alive():
+                    for request in list(window._pending_patch_reviews.values()):
+                        window._resolve_patch_review(request, None)
+                    request_thread.join(timeout=3)
+                window.close()
+                self.app.processEvents()
+
+
+class BrowserApprovalUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_browser_approval_shows_exact_action_defaults_to_deny_and_records_choice(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-browser-approval-") as temp:
+            window = ClientWindow(Path(temp))
+            observed: list[dict[str, object]] = []
+
+            def deny_dialog() -> None:
+                dialog = next(
+                    (
+                        widget
+                        for widget in self.app.topLevelWidgets()
+                        if isinstance(widget, QMessageBox)
+                        and widget.windowTitle() == "浏览器操作确认"
+                    ),
+                    None,
+                )
+                if dialog is None:
+                    QTimer.singleShot(10, deny_dialog)
+                    return
+                observed.append({
+                    "text": dialog.text(),
+                    "info": dialog.informativeText(),
+                    "details": dialog.detailedText(),
+                    "default": dialog.defaultButton().text() if dialog.defaultButton() else "",
+                    "frameless": bool(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint),
+                })
+                next(button for button in dialog.buttons() if button.text() == "拒绝").click()
+
+            try:
+                QTimer.singleShot(20, deny_dialog)
+                approved = window._request_browser_approval("click", "#submit → 提交报名表")
+                self.assertFalse(approved)
+                self.assertEqual(len(observed), 1)
+                self.assertIn("独立 Edge", str(observed[0]["text"]))
+                self.assertIn("提交表单", str(observed[0]["info"]))
+                self.assertIn("#submit", str(observed[0]["details"]))
+                self.assertEqual(observed[0]["default"], "拒绝")
+                self.assertTrue(observed[0]["frameless"])
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
+class VerificationUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_check_evidence_and_final_verification_are_visible_without_dialogs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-verification-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                self.assertTrue(window.agent.require_verification)
+                with (
+                    patch.object(window, "_append_chat") as append_chat,
+                    patch.object(window, "_append_log"),
+                    patch.object(window, "_refresh_open_file_after_task"),
+                    patch.object(window, "refresh_git_status"),
+                    patch.object(window, "_refresh_development_tree"),
+                ):
+                    window._handle_agent_event("verification_recorded", {
+                        "kind": "test", "check_status": "passed", "exit_code": 0,
+                        "command": "pytest -q",
+                    })
+                    window._handle_agent_event("completed", {
+                        "git_result_sha": "abcdef1234567890",
+                        "verification_report": {"status": "stale"},
+                    })
+                    window._handle_agent_event("verification_blocked", {
+                        "text": "I could not verify this edit.",
+                        "error": "The change remains uncommitted.",
+                    })
+
+                self.assertEqual(append_chat.call_count, 4)
+                self.assertIn("检查通过（对应当前代码）", append_chat.call_args_list[0].args[1])
+                self.assertIn("pytest -q", append_chat.call_args_list[0].args[1])
+                self.assertIn("检查结果已过时", append_chat.call_args_list[1].args[1])
+                self.assertEqual(append_chat.call_args_list[2].args[0], "Agent · 未完成验证")
+                self.assertEqual(append_chat.call_args_list[3].args[0], "Harness · 未自动提交")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+
+class EditorOutlineTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_outline_shows_placeholder_for_files_without_symbols(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-outline-empty-") as temp:
+            root = Path(temp)
+            source = root / "notes.py"
+            source.write_text("# no declarations here\nvalue = 1\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+
+                self.assertEqual(window.outline_tree.topLevelItemCount(), 1)
+                self.assertEqual(
+                    window.outline_tree.topLevelItem(0).text(0),
+                    "当前文件没有可识别的符号",
+                )
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_typing_debounces_to_a_single_parse_and_large_files_skip_it(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-code-intel-") as temp:
+            root = Path(temp)
+            source = root / "module.py"
+            source.write_text(
+                "\n".join(f"def f{index}():\n    return {index}" for index in range(40)),
+                encoding="utf-8",
+            )
+            window = ClientWindow(root)
+            try:
+                window._open_file(source, preview=False)
+                editor = window._active_editor()
+                parsed: list[int] = []
+                real_parse = ast.parse
+
+                def counting(source_text, *args, **kwargs):
+                    parsed.append(1)
+                    return real_parse(source_text, *args, **kwargs)
+
+                with patch("scidev_client.ast.parse", side_effect=counting):
+                    for index in range(5):
+                        editor.insertPlainText(f"# keystroke {index}\n")
+                    self.app.processEvents()
+                    self.assertLessEqual(len(parsed), 1, "one keystroke burst must parse at most once")
+                    QTest.qWait(window.CODE_INTEL_DEBOUNCE_MS + 200)
+                self.assertEqual(len(parsed), 1, "the debounced refresh must parse exactly once")
+                self.assertGreater(window.outline_tree.topLevelItemCount(), 0)
+
+                # Oversized documents fall back to a line scan instead of parsing.
+                window.CODE_INTEL_MAX_PARSE_CHARS = 10
+                with patch("scidev_client.ast.parse", side_effect=AssertionError("must not parse")):
+                    window._refresh_code_intel()
+                self.assertGreater(window.outline_tree.topLevelItemCount(), 0)
+            finally:
+                window.code_editor.document().setModified(False)
+                window.close()
+                self.app.processEvents()
+
+
+class TaskPlanClientTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_plan_mode_is_persisted_and_plan_progress_is_visible_and_clearable(self) -> None:
+        from scidev_planning import TaskPlan
+
+        with tempfile.TemporaryDirectory(prefix="scidev-plan-panel-") as temporary:
+            window = ClientWindow(Path(temporary))
+            old_mode = window.ui_settings.value("planningMode")
+            old_collapsed = window.ui_settings.value("taskPlanCollapsed")
+            try:
+                window.ui_settings.setValue("taskPlanCollapsed", False)
+                window.ui_settings.sync()
+                window.task_plan_panel.collapsed = False
+                window.task_plan_panel._sync_controls()
+                window.task_plan_panel.mode_actions["required"].trigger()
+                self.assertEqual(window.planning_mode, "required")
+                with patch.object(window.worker, "submit", return_value="test_plan_task") as submit:
+                    self.assertTrue(window._submit_prompt("整理实现计划"))
+                self.assertEqual(submit.call_args.args[1]["planning_mode"], "required")
+
+                plan = TaskPlan.update(
+                    None,
+                    [
+                        {"step": "检查项目结构", "status": "in_progress"},
+                        {"step": "列出修改方案", "status": "pending"},
+                    ],
+                )
+                window._handle_agent_event(
+                    "plan_updated",
+                    {"mode": "required", "plan": plan.to_record(), "session_id": "session-plan-ui"},
+                )
+                self.assertEqual(window.task_plan_panel.plan, plan)
+                self.assertEqual(window.task_plan_panel.progress_label.text(), "执行中 · 0/2")
+                visible_steps = [label.text() for label in window.task_plan_panel.findChildren(QLabel)]
+                self.assertIn("检查项目结构", visible_steps)
+                self.assertIn("进行中", visible_steps)
+                window.task_plan_panel.toggle_collapsed()
+                self.assertTrue(window.task_plan_panel.scroll.isHidden())
+                window.task_plan_panel.toggle_collapsed()
+                self.assertFalse(window.task_plan_panel.scroll.isHidden())
+
+                window.active_task_id = None
+                window.new_coding_task()
+                self.assertIsNone(window.task_plan_panel.plan)
+                self.assertEqual(window.task_plan_panel.mode, "required")
+            finally:
+                window.close()
+                if old_mode is None:
+                    window.ui_settings.remove("planningMode")
+                else:
+                    window.ui_settings.setValue("planningMode", old_mode)
+                if old_collapsed is None:
+                    window.ui_settings.remove("taskPlanCollapsed")
+                else:
+                    window.ui_settings.setValue("taskPlanCollapsed", old_collapsed)
+                window.ui_settings.sync()
                 self.app.processEvents()
 
 
@@ -1124,7 +1689,7 @@ class EditorSplitInteractionTests(unittest.TestCase):
             root = Path(temp).resolve()
             source = root / "before.py"
             target = root / "after.py"
-            source.write_text("value = 1\n", encoding="utf-8")
+            source.write_text("def value():\n    return 1\n", encoding="utf-8")
             window = ClientWindow(root)
             primary = secondary = None
             try:
@@ -1133,6 +1698,15 @@ class EditorSplitInteractionTests(unittest.TestCase):
                 window._open_editor_to_side(source)
                 secondary = window._active_editor()
                 shared_document = primary.document()
+                window._refresh_outline()
+                window._remember_navigation()
+                window.workspace_search_input.setText("return 1")
+                window._search_workspace()
+                self.assertEqual(
+                    Path(window.outline_tree.topLevelItem(0).data(0, Qt.ItemDataRole.UserRole)),
+                    source,
+                )
+                self.assertEqual(window.workspace_search_results.topLevelItemCount(), 1)
 
                 source.rename(target)
                 window._update_open_paths_after_rename(source, target)
@@ -1142,6 +1716,18 @@ class EditorSplitInteractionTests(unittest.TestCase):
                 self.assertEqual(window._editor_paths[secondary], target)
                 self.assertNotIn(source, window._shared_editor_documents)
                 self.assertIs(window._shared_editor_documents[target], shared_document)
+                self.assertEqual(window.breadcrumb.text(), "项目  /  after.py")
+                self.assertEqual(
+                    Path(window.outline_tree.topLevelItem(0).data(0, Qt.ItemDataRole.UserRole)),
+                    target,
+                )
+                self.assertEqual(window._navigation_back[-1][0], target)
+                search_result = window.workspace_search_results.topLevelItem(0)
+                self.assertEqual(
+                    Path(search_result.data(0, Qt.ItemDataRole.UserRole)),
+                    target,
+                )
+                self.assertTrue(search_result.text(0).startswith("after.py:2"))
 
                 secondary.selectAll()
                 secondary.insertPlainText("value = 2\n")
@@ -1633,6 +2219,29 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                 self.assertTrue(renamed.is_file())
                 self.assertFalse(source.exists())
                 self.assertEqual(window._editor_paths[editor].resolve(), renamed.resolve())
+                self.assertEqual(window.breadcrumb.text(), "项目  /  src/analysis/renamed.py")
+
+                window.terminal_cwd = analysis_dir
+                window._remember_navigation()
+                window.start_rename_entry(analysis_dir)
+                window.new_file_entry.setText("renamed-analysis")
+                window.create_new_file()
+
+                renamed_directory = source_dir / "renamed-analysis"
+                renamed_file = renamed_directory / "renamed.py"
+                self.assertTrue(renamed_directory.is_dir())
+                self.assertTrue(renamed_file.is_file())
+                self.assertEqual(window._editor_paths[editor].resolve(), renamed_file.resolve())
+                self.assertEqual(window.current_file.resolve(), renamed_file.resolve())
+                self.assertEqual(
+                    window.breadcrumb.text(),
+                    "项目  /  src/renamed-analysis/renamed.py",
+                )
+                self.assertEqual(window.terminal_cwd.resolve(), renamed_directory.resolve())
+                self.assertEqual(
+                    window._navigation_back[-1][0].resolve(),
+                    renamed_file.resolve(),
+                )
             finally:
                 window.close()
                 self.app.processEvents()
@@ -1875,6 +2484,39 @@ class WorkspaceSearchTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_quick_open_expands_single_character_matches_without_showing_empty_folders(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-search-one-character-") as temp:
+            root = Path(temp)
+            matching_directory = root / "src"
+            matching_directory.mkdir()
+            match = matching_directory / "alpha.py"
+            match.write_text("value = 1\n", encoding="utf-8")
+            empty_match = root / "alpha-empty"
+            empty_match.mkdir()
+            window = ClientWindow(root)
+            try:
+                window.show()
+                window.command_search.setFocus()
+                QTest.qWait(80)
+                QTest.keyClicks(window.command_search, "a")
+                QTest.qWait(180)
+                self.app.processEvents()
+
+                directory_index = window.file_proxy.mapFromSource(
+                    window.file_model.index(str(matching_directory))
+                )
+                file_index = window.file_proxy.mapFromSource(window.file_model.index(str(match)))
+                empty_index = window.file_proxy.mapFromSource(
+                    window.file_model.index(str(empty_match))
+                )
+                self.assertTrue(directory_index.isValid())
+                self.assertTrue(window.file_tree.isExpanded(directory_index))
+                self.assertTrue(file_index.isValid())
+                self.assertFalse(empty_index.isValid())
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_quick_open_expands_visible_branches_for_broad_results(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-search-broad-expand-") as temp:
             root = Path(temp)
@@ -1928,6 +2570,45 @@ class WorkspaceSearchTests(unittest.TestCase):
                         window.file_proxy.mapFromSource(
                             window.file_model.index(str(directories[-1]))
                         )
+                    )
+                )
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_quick_open_resumes_broad_expansion_after_returning_from_git(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-search-return-from-git-") as temp:
+            root = Path(temp)
+            directories = []
+            for index in range(151):
+                directory = root / f"branch_{index:03d}"
+                directory.mkdir()
+                (directory / "needle_result.py").write_text("value = 1\n", encoding="utf-8")
+                directories.append(directory)
+            window = ClientWindow(root)
+            try:
+                window.show()
+                QTest.qWait(80)
+                window.show_git()
+                window.command_search.setText("needle")
+                QTest.qWait(140)
+                self.assertIs(window.workspace_stack.currentWidget(), window.git_page)
+
+                window.show_workspace()
+                QTest.qWait(100)
+                self.app.processEvents()
+
+                directory_index = window.file_proxy.mapFromSource(
+                    window.file_model.index(str(directories[0]))
+                )
+                file_index = window.file_proxy.mapFromSource(
+                    window.file_model.index(str(directories[0] / "needle_result.py"))
+                )
+                self.assertTrue(window.file_tree.isExpanded(directory_index))
+                self.assertTrue(file_index.isValid())
+                self.assertTrue(
+                    window.file_tree.visualRect(file_index).intersects(
+                        window.file_tree.viewport().rect()
                     )
                 )
             finally:
@@ -2116,43 +2797,70 @@ class WorkspaceLifecycleTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_first_launch_uses_tetris_sample_and_migrates_legacy_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-default-sample-") as temp:
+            app_root = Path(temp)
+            sample = app_root / "examples" / "tetris"
+            sample.mkdir(parents=True)
+            other_project = app_root / "other-project"
+            other_project.mkdir()
+
+            self.assertEqual(default_sample_workspace(app_root), sample.resolve())
+            self.assertEqual(resolve_startup_workspace(None, None, app_root), sample.resolve())
+            self.assertEqual(
+                resolve_startup_workspace(None, app_root, app_root),
+                sample.resolve(),
+            )
+            self.assertEqual(
+                resolve_startup_workspace(None, other_project, app_root),
+                other_project.resolve(),
+            )
+            self.assertEqual(
+                resolve_startup_workspace(other_project, None, app_root),
+                other_project.resolve(),
+            )
+
+    def test_missing_sample_falls_back_to_application_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-no-sample-") as temp:
+            app_root = Path(temp)
+
+            self.assertEqual(default_sample_workspace(app_root), app_root.resolve())
+            self.assertEqual(resolve_startup_workspace(None, None, app_root), app_root.resolve())
+
     def test_reselecting_an_open_workspace_updates_startup_restore_path(self) -> None:
-        settings = QSettings("SciDevHarness", "SciDevHarness")
-        had_previous = settings.contains("lastWorkspace")
-        previous = settings.value("lastWorkspace") if had_previous else None
         had_windows = hasattr(self.app, "_scidev_windows")
         previous_windows = getattr(self.app, "_scidev_windows", None)
         with tempfile.TemporaryDirectory(prefix="scidev-workspace-lifecycle-") as temp:
             root = Path(temp)
+            # Isolated settings: the real machine preference must not decide
+            # which workspace a freshly created window restores.
+            settings = QSettings(str(root / "ui.ini"), QSettings.Format.IniFormat)
             workspace_a = root / "workspace-a"
             workspace_b = root / "workspace-b"
             workspace_a.mkdir()
             workspace_b.mkdir()
-            first = ClientWindow(workspace_a)
-            second = ClientWindow(workspace_b)
-            try:
-                self.app._scidev_windows = [first, second]
-                settings.setValue("lastWorkspace", str(workspace_b.resolve()))
-                selected = first._open_workspace_root(workspace_a)
+            with patch("scidev_client.QSettings", return_value=settings):
+                first = ClientWindow(workspace_a)
+                second = ClientWindow(workspace_b)
+                try:
+                    self.app._scidev_windows = [first, second]
+                    settings.setValue("lastWorkspace", str(workspace_b.resolve()))
+                    selected = first._open_workspace_root(workspace_a)
 
-                self.assertIs(selected, first)
-                self.assertEqual(
-                    Path(str(settings.value("lastWorkspace"))).resolve(),
-                    workspace_a.resolve(),
-                )
-            finally:
-                first.close()
-                second.close()
-                self.app.processEvents()
-                if had_windows:
-                    self.app._scidev_windows = previous_windows
-                elif hasattr(self.app, "_scidev_windows"):
-                    del self.app._scidev_windows
-                if had_previous:
-                    settings.setValue("lastWorkspace", previous)
-                else:
-                    settings.remove("lastWorkspace")
-                settings.sync()
+                    self.assertIs(selected, first)
+                    self.assertEqual(
+                        Path(str(settings.value("lastWorkspace"))).resolve(),
+                        workspace_a.resolve(),
+                    )
+                finally:
+                    first.close()
+                    second.close()
+                    self.app.processEvents()
+                    settings.sync()
+            if had_windows:
+                self.app._scidev_windows = previous_windows
+            elif hasattr(self.app, "_scidev_windows"):
+                del self.app._scidev_windows
 
 
 class UnsavedCloseTests(unittest.TestCase):
@@ -2291,6 +2999,70 @@ class SummarySettingsUiTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_multi_agent_progress_and_report_are_visible_in_chat(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-multi-agent-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._handle_agent_event("specialist_started", {
+                    "role": "tests",
+                    "model": "specialist-v2",
+                    "focus_paths": ["src/parser.py"],
+                })
+                window._handle_agent_event("specialist_tool_used", {
+                    "tool": "read_file",
+                    "tool_calls": 1,
+                })
+                report = "src/parser.py:12: parse_value is covered by test_parse_value."
+                window._handle_agent_event("specialist_completed", {
+                    "role": "tests",
+                    "summary": report,
+                    "tool_calls": 2,
+                })
+
+                bubbles = [
+                    item.widget()
+                    for index in range(window.chat_layout.count())
+                    if (item := window.chat_layout.itemAt(index)) is not None
+                    and item.widget() is not None
+                    and item.widget().objectName() == "MetaBubble"
+                ]
+                started = next(bubble for bubble in bubbles if "开始协作任务" in bubble.body_label.text())
+                completed = next(bubble for bubble in bubbles if bubble.body_label.text() == report)
+                self.assertEqual(started.role_label.text(), "协作 Agent · 测试专员")
+                self.assertEqual(completed.role_label.text(), "协作 Agent · 测试专员")
+
+                window._handle_agent_event("specialist_failed", {
+                    "status": "unavailable",
+                    "summary": "子 Agent 不可用；主 Agent 将自行继续。",
+                })
+                all_bubbles = [
+                    item.widget()
+                    for index in range(window.chat_layout.count())
+                    if (item := window.chat_layout.itemAt(index)) is not None
+                    and item.widget() is not None
+                    and item.widget().objectName() == "MetaBubble"
+                ]
+                failed = next(bubble for bubble in all_bubbles if "调查未完成" in bubble.role_label.text())
+                self.assertIn("子 Agent 不可用", failed.body_label.text())
+
+                window._handle_agent_event("specialist_started", {
+                    "role": "coder",
+                    "model": "coder-v2",
+                    "focus_paths": ["src/parser.py"],
+                })
+                coder_bubble = next(
+                    item.widget()
+                    for index in range(window.chat_layout.count())
+                    if (item := window.chat_layout.itemAt(index)) is not None
+                    and item.widget() is not None
+                    and item.widget().objectName() == "MetaBubble"
+                    and item.widget().role_label.text() == "协作 Agent · 编码专员"
+                )
+                self.assertIn("逐块审批补丁", coder_bubble.body_label.text())
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_summary_frequency_and_enabled_state_persist_from_the_chat_controls(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-summary-settings-ui-") as temp:
             root = Path(temp)
@@ -2314,6 +3086,30 @@ class SummarySettingsUiTests(unittest.TestCase):
                 self.assertFalse(saved["summary_enabled"])
                 self.assertEqual(window.summary_chip.text(), "总结关")
 
+                window.project_memory_checkbox.setChecked(False)
+                window.project_memory_results_spin.setValue(5)
+                window.project_memory_context_spin.setValue(8000)
+                saved = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertFalse(saved["project_memory_enabled"])
+                self.assertEqual(saved["project_memory_results"], 5)
+                self.assertEqual(saved["project_memory_context_chars"], 8000)
+
+                window.acceptance_mode_combo.setCurrentIndex(window.acceptance_mode_combo.findData("required"))
+                window.acceptance_model_edit.setText("review-v2")
+                window.acceptance_model_edit.editingFinished.emit()
+                saved = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["semantic_acceptance_mode"], "required")
+                self.assertEqual(saved["semantic_acceptance_model"], "review-v2")
+
+                self.assertFalse(window.multi_agent_model_edit.isEnabled())
+                window.multi_agent_enabled_checkbox.setChecked(True)
+                window.multi_agent_model_edit.setText("specialist-v2")
+                window.multi_agent_model_edit.editingFinished.emit()
+                saved = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertTrue(saved["multi_agent_enabled"])
+                self.assertEqual(saved["multi_agent_model"], "specialist-v2")
+                self.assertTrue(window.multi_agent_model_edit.isEnabled())
+
                 window.resize(820, 600)
                 self.app.processEvents()
                 QTest.qWait(30)
@@ -2329,21 +3125,65 @@ class SummarySettingsUiTests(unittest.TestCase):
                     (window.summary_retry_label, window.summary_retry_spin),
                     (window.summary_interval_label, window.summary_interval_spin),
                     (window.summary_instruction_label, window.summary_instruction_edit),
+                    (window.project_memory_results_label, window.project_memory_results_spin),
+                    (window.project_memory_context_label, window.project_memory_context_spin),
+                    (window.acceptance_mode_label, window.acceptance_mode_combo),
+                    (window.acceptance_model_label, window.acceptance_model_edit),
+                    (window.multi_agent_model_label, window.multi_agent_model_edit),
                 ):
                     self.assertLess(label.geometry().right(), control.geometry().left())
                     self.assertLessEqual(control.geometry().right(), window.summary_settings_panel.rect().right())
+                self.assertLessEqual(window.project_memory_checkbox.geometry().right(), window.summary_settings_panel.rect().right())
+                self.assertLessEqual(window.acceptance_note.geometry().right(), window.summary_settings_panel.rect().right())
+                self.assertLessEqual(window.multi_agent_enabled_checkbox.geometry().right(), window.summary_settings_panel.rect().right())
+                self.assertLessEqual(window.multi_agent_note.geometry().right(), window.summary_settings_panel.rect().right())
 
                 window.resize(1120, 700)
                 self.app.processEvents()
                 QTest.qWait(30)
-                self.assertTrue(window._summary_settings_compact)
-                self.assertEqual(window.summary_chip.text(), "关")
+                self.assertFalse(window._summary_settings_compact)
+                self.assertEqual(window.summary_enabled_checkbox.text(), "每次编码对话结束自动总结")
+                self.assertEqual(window.summary_chip.text(), "总结关")
 
                 window.resize(1500, 920)
                 self.app.processEvents()
                 QTest.qWait(30)
                 self.assertFalse(window._summary_settings_compact)
                 self.assertEqual(window.summary_chip.text(), "总结关")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_model_usage_chip_shows_payload_retries_and_resets_for_new_session(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-model-usage-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window._handle_agent_event("model_usage_updated", {
+                    "usage": {
+                        "request_attempts": 3,
+                        "retry_attempts": 1,
+                        "failed_attempts": 1,
+                        "request_body_bytes": 4096,
+                        "response_body_bytes": 1024,
+                        "elapsed_ms": 2500,
+                        "proxy_fallback_attempts": 1,
+                        "prompt_tokens": 90,
+                        "completion_tokens": 10,
+                        "total_tokens": 100,
+                        "token_reports": 1,
+                    },
+                    "record": None,
+                })
+                self.assertEqual(window.usage_chip.text(), "LLM 3 · ↑4.0 KB ↓1.0 KB")
+                self.assertIn("重试 1 次", window.usage_chip.toolTip())
+                self.assertIn("代理回退 1 次", window.usage_chip.toolTip())
+                self.assertIn("输入 90", window.usage_chip.toolTip())
+                self.assertIn("不含 HTTP/TLS", window.usage_chip.toolTip())
+
+                window.new_coding_task()
+
+                self.assertEqual(window.usage_chip.text(), "LLM 0 · ↑0 B ↓0 B")
+                self.assertEqual(window.model_usage["request_attempts"], 0)
             finally:
                 window.close()
                 self.app.processEvents()
@@ -2438,6 +3278,25 @@ class TerminalUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
+
+    @unittest.skipUnless(os.name == "nt", "Windows terminal console handle")
+    def test_terminal_child_has_no_external_console(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-terminal-no-console-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                script = "import ctypes; print('console=' + str(ctypes.windll.kernel32.GetConsoleWindow()))"
+                window.terminal_input.setText(subprocess.list2cmdline([sys.executable, "-c", script]))
+                window._run_terminal_command()
+                deadline = time.monotonic() + 10
+                while window.terminal_process is not None and time.monotonic() < deadline:
+                    self.app.processEvents()
+                    QTest.qWait(10)
+                self.assertIsNone(window.terminal_process, "terminal process did not finish")
+                self.assertIn("console=0", window.terminal_output.toPlainText())
+                self.assertIn("[退出码 0]", window.terminal_output.toPlainText())
+            finally:
+                window.close()
+                self.app.processEvents()
 
     def test_real_terminal_collects_quoted_command_output_and_nonzero_exit(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-terminal-ui-") as temp:

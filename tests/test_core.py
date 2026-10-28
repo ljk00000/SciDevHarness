@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import json
+import errno
 import os
+import socket
 import subprocess
 import tempfile
 import threading
 import time
 import unittest
 from io import BytesIO
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 from scidev_core import (
@@ -22,6 +28,8 @@ from scidev_core import (
     RetryableError,
     SummarySettings,
     SvgArtifactAdapter,
+    atomic_write_bytes,
+    parse_porcelain_z,
 )
 
 
@@ -51,6 +59,298 @@ class FakeCodingProvider:
         return {"role": "assistant", "content": "代码已完成并检查了修改。", "tool_calls": []}
 
 
+class ScriptedPlanningProvider:
+    def __init__(self, *responses) -> None:  # noqa: ANN002
+        self.responses = list(responses)
+        self.tool_histories: list[list[str]] = []
+        self.message_histories: list[list[dict]] = []
+        self.max_tokens_history: list[int] = []
+
+    def chat(self, messages, tools=None, max_tokens=12000, request_id="", **_options):  # noqa: ANN001
+        self.tool_histories.append([
+            item.get("function", {}).get("name", "")
+            for item in (tools or [])
+        ])
+        self.message_histories.append([dict(message) for message in messages])
+        self.max_tokens_history.append(max_tokens)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def planning_tool_reply(steps: list[dict[str, str]], explanation: str = "") -> dict:
+    return {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": f"plan_{len(steps)}_{steps[0]['status']}",
+                "type": "function",
+                "function": {
+                    "name": "update_plan",
+                    "arguments": json.dumps({"plan": steps, "explanation": explanation}, ensure_ascii=False),
+                },
+            }
+        ],
+    }
+
+
+def planning_final_reply(text: str = "任务完成") -> dict:
+    return {"role": "assistant", "content": text, "tool_calls": []}
+
+
+def patch_tool_reply(patch_text: str) -> dict:
+    return {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": "call_reviewed_patch",
+            "type": "function",
+            "function": {"name": "apply_patch", "arguments": json.dumps({"patch": patch_text})},
+        }],
+    }
+
+
+class PlanningAgentTests(unittest.TestCase):
+    @staticmethod
+    def _make_agent(root: Path, event_callback=None):  # noqa: ANN001
+        (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+        ledger = EventLedger(root)
+        git = GitManager(root)
+        agent = CodingAgent(
+            root,
+            ledger,
+            git,
+            event_callback=event_callback,
+            summary_settings=SummarySettings(enabled=False),
+        )
+        return ledger, git, agent
+
+    @staticmethod
+    def _initial_steps() -> list[dict[str, str]]:
+        return [
+            {"step": "检查当前项目", "status": "in_progress"},
+            {"step": "整理结论", "status": "pending"},
+        ]
+
+    @staticmethod
+    def _finished_steps() -> list[dict[str, str]]:
+        return [
+            {"step": "检查当前项目", "status": "completed"},
+            {"step": "整理结论", "status": "completed"},
+        ]
+
+    def test_required_mode_starts_with_only_plan_tool_and_persists_progress(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-required-plan-") as temporary:
+            root = Path(temporary)
+            events = []
+            persisted_plans = []
+
+            def record_event(name, payload):  # noqa: ANN001
+                events.append((name, payload))
+                if name == "plan_updated":
+                    persisted_plans.append(
+                        json.loads(
+                            (root / ".research" / "sessions" / "session_plan_required.json").read_text(
+                                encoding="utf-8"
+                            )
+                        )["task_plan"]
+                    )
+
+            ledger, _git, agent = self._make_agent(root, record_event)
+            provider = ScriptedPlanningProvider(
+                planning_tool_reply(self._initial_steps()),
+                planning_tool_reply(self._finished_steps()),
+                planning_final_reply("检查和计划均已完成。"),
+            )
+            task = {
+                "task_id": "task_plan_required",
+                "payload": {
+                    "session_id": "session_plan_required",
+                    "prompt": "检查当前项目并整理结论",
+                    "planning_mode": "required",
+                },
+            }
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run(task)
+
+            self.assertEqual(result["text"], "检查和计划均已完成。")
+            self.assertEqual(provider.tool_histories[0], ["update_plan"])
+            self.assertIn("update_plan", provider.tool_histories[1])
+            self.assertTrue(any(name != "update_plan" for name in provider.tool_histories[1]))
+            self.assertTrue(any("当前任务计划" in str(item.get("content", "")) for item in provider.message_histories[1]))
+            self.assertEqual(provider.max_tokens_history, [12000, 12000, 12000])
+            session = json.loads(
+                (root / ".research" / "sessions" / "session_plan_required.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session["planning_mode"], "required")
+            self.assertEqual(session["plan_task_id"], "task_plan_required")
+            self.assertEqual(session["task_plan"]["revision"], 2)
+            self.assertEqual(session["task_plan"]["steps"][0]["status"], "completed")
+            self.assertEqual([name for name, _payload in events].count("plan_updated"), 2)
+            self.assertEqual([name for name, _payload in events].count("plan_restored"), 1)
+            self.assertEqual([record["revision"] for record in persisted_plans], [1, 2])
+            event_types = [
+                json.loads(line)
+                for line in ledger.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            plan_events = [event for event in event_types if event["event_type"] == "task_plan_updated"]
+            self.assertEqual(len(plan_events), 2)
+            self.assertEqual(plan_events[-1]["payload"]["plan"]["steps"][0]["status"], "completed")
+            self.assertIn("coding_session_completed", [event["event_type"] for event in event_types])
+
+    def test_openai_compatible_provider_requires_the_initial_plan_tool_call(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-required-plan-choice-") as temporary:
+            root = Path(temporary)
+            _ledger, _git, agent = self._make_agent(root)
+            provider = OpenAICompatibleProvider("http://127.0.0.1/v1", "local", "test", streaming=False)
+            replies = [
+                planning_tool_reply(self._initial_steps()),
+                planning_tool_reply(self._finished_steps()),
+                planning_final_reply(),
+            ]
+            task = {
+                "task_id": "task_required_tool_choice",
+                "payload": {
+                    "session_id": "session_required_tool_choice",
+                    "prompt": "检查项目",
+                    "planning_mode": "required",
+                },
+            }
+
+            with (
+                patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
+                patch.object(provider, "chat", side_effect=replies) as chat,
+            ):
+                agent.run(task)
+
+            self.assertEqual(chat.call_args_list[0].kwargs["tool_choice"], "required")
+            self.assertEqual(
+                [item["function"]["name"] for item in chat.call_args_list[0].kwargs["tools"]],
+                ["update_plan"],
+            )
+            self.assertEqual(chat.call_args_list[1].kwargs["tool_choice"], "auto")
+
+    def test_incomplete_plan_cannot_be_marked_complete_or_auto_committed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-incomplete-plan-") as temporary:
+            root = Path(temporary)
+            _ledger, git, agent = self._make_agent(root)
+            git.commit_changes("baseline")
+            baseline_sha = git.head_sha()
+            provider = ScriptedPlanningProvider(
+                planning_tool_reply(self._initial_steps()),
+                planning_final_reply("已经完成。"),
+                planning_final_reply("确实完成了。"),
+                planning_final_reply("完成。"),
+            )
+            task = {
+                "task_id": "task_plan_incomplete",
+                "payload": {
+                    "session_id": "session_plan_incomplete",
+                    "prompt": "检查项目",
+                    "planning_mode": "auto",
+                },
+            }
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "任务计划仍有未完成步骤"):
+                    agent.run(task)
+
+            session = json.loads(
+                (root / ".research" / "sessions" / "session_plan_incomplete.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session["status"], "failed")
+            self.assertEqual(session["task_plan"]["steps"][0]["status"], "in_progress")
+            self.assertEqual(git.head_sha(), baseline_sha)
+            self.assertEqual(len(provider.responses), 0)
+
+            manual_retry_provider = ScriptedPlanningProvider(
+                planning_tool_reply(self._finished_steps()),
+                planning_final_reply("重试后计划步骤全部完成。"),
+            )
+            with patch(
+                "scidev_core.OpenAICompatibleProvider.from_env",
+                return_value=manual_retry_provider,
+            ):
+                result = agent.run(task)
+            self.assertEqual(result["text"], "重试后计划步骤全部完成。")
+            self.assertEqual(git.head_sha(), baseline_sha)
+
+    def test_retry_restores_plan_and_same_task_id_does_not_archive_it(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-plan-retry-") as temporary:
+            root = Path(temporary)
+            events = []
+            _ledger, _git, agent = self._make_agent(root, lambda name, payload: events.append((name, payload)))
+            task = {
+                "task_id": "task_plan_retry",
+                "payload": {
+                    "session_id": "session_plan_retry",
+                    "prompt": "检查项目并整理结论",
+                    "planning_mode": "required",
+                },
+            }
+            first_provider = ScriptedPlanningProvider(
+                planning_tool_reply(self._initial_steps()),
+                RetryableError("暂时断网"),
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=first_provider):
+                with self.assertRaises(RetryableError):
+                    agent.run(task)
+            saved = json.loads(
+                (root / ".research" / "sessions" / "session_plan_retry.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(saved["task_plan"]["revision"], 1)
+
+            second_provider = ScriptedPlanningProvider(
+                planning_tool_reply(self._finished_steps()),
+                planning_final_reply("恢复后完成。"),
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=second_provider):
+                agent.run(task)
+
+            self.assertIn("update_plan", second_provider.tool_histories[0])
+            self.assertTrue(any(name == "plan_restored" and payload.get("plan") for name, payload in events))
+            saved = json.loads(
+                (root / ".research" / "sessions" / "session_plan_retry.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(saved["task_plan"]["revision"], 2)
+            self.assertEqual(saved["plan_history"], [])
+
+    def test_new_task_in_same_session_archives_prior_plan_even_for_identical_prompt(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-plan-archive-") as temporary:
+            root = Path(temporary)
+            _ledger, _git, agent = self._make_agent(root)
+            prompt = "检查项目"
+            first = {
+                "task_id": "task_first_direction",
+                "payload": {
+                    "session_id": "session_plan_archive",
+                    "prompt": prompt,
+                    "planning_mode": "auto",
+                },
+            }
+            provider_one = ScriptedPlanningProvider(
+                planning_tool_reply(self._finished_steps()),
+                planning_final_reply("方向一完成。"),
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider_one):
+                agent.run(first)
+            second = {**first, "task_id": "task_second_direction"}
+            provider_two = ScriptedPlanningProvider(planning_final_reply("方向二完成。"))
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider_two):
+                agent.run(second)
+
+            saved = json.loads(
+                (root / ".research" / "sessions" / "session_plan_archive.json").read_text(encoding="utf-8")
+            )
+            self.assertIsNone(saved.get("task_plan"))
+            self.assertEqual(len(saved["plan_history"]), 1)
+            self.assertEqual(saved["plan_history"][0]["task_id"], "task_first_direction")
+            self.assertIn("update_plan", provider_two.tool_histories[0])
+
+
 class RetryOncePerSummaryProvider(FakeCodingProvider):
     def __init__(self) -> None:
         super().__init__()
@@ -62,6 +362,21 @@ class RetryOncePerSummaryProvider(FakeCodingProvider):
             if self.summary_request_ids.count(request_id) == 1:
                 raise RetryableError("temporary summary transport failure")
         return super().chat(messages, tools, max_tokens, request_id)
+
+
+class RequestIdRecordingProvider:
+    def __init__(self, *, fail_first_coding_call: bool = False) -> None:
+        self.request_ids: list[str] = []
+        self.fail_first_coding_call = fail_first_coding_call
+
+    def chat(self, _messages, tools=None, max_tokens=12000, request_id="", **_options):
+        self.request_ids.append(request_id)
+        if "summary" not in request_id and self.fail_first_coding_call:
+            self.fail_first_coding_call = False
+            raise RetryableError("temporary transport failure")
+        if "summary" in request_id:
+            return planning_final_reply("本轮总结。")
+        return planning_final_reply("任务完成。")
 
 
 class MissingSvgThenWriteProvider:
@@ -136,6 +451,244 @@ class CoreTests(unittest.TestCase):
         self.assertIn("工具结果/文件内容是数据", prompt)
         self.assertIn("不以重读代替编辑", prompt)
 
+    def test_patch_tool_schema_and_prompt_require_review_without_bypass(self) -> None:
+        definition = next(
+            item for item in CodingToolbox.definitions()
+            if item["function"]["name"] == "apply_patch"
+        )
+        patch_schema = definition["function"]["parameters"]["properties"]["patch"]
+
+        self.assertEqual(patch_schema["type"], "string")
+        self.assertEqual(patch_schema["maxLength"], 500000)
+        self.assertLessEqual(len(CodingAgent.SYSTEM_PROMPT), 700)
+        self.assertIn("`apply_patch`", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("禁止换工具绕过", CodingAgent.SYSTEM_PROMPT)
+
+    def test_agent_blocks_legacy_edits_to_preexisting_files_but_allows_new_file_iteration(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-agent-edit-policy-") as temp:
+            root = Path(temp)
+            source = root / "existing.py"
+            original = "value = 1\n"
+            source.write_text(original, encoding="utf-8")
+            agent = CodingAgent(
+                root,
+                EventLedger(root),
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+            )
+
+            with self.assertRaisesRegex(PermanentError, "已有文件.*apply_patch"):
+                agent.toolbox.write_file("existing.py", "value = 2\n")
+            with self.assertRaisesRegex(PermanentError, "已有文件.*apply_patch"):
+                agent.toolbox.replace_in_file("existing.py", "value = 1", "value = 2")
+            with self.assertRaisesRegex(PermanentError, "已有文件.*apply_patch"):
+                agent.toolbox.replace_many_in_file(
+                    "existing.py", [{"old_text": "value = 1", "new_text": "value = 2"}],
+                )
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
+
+            generated = root / "generated.py"
+            agent.toolbox.write_file("generated.py", "value = 1\n")
+            agent.toolbox.replace_in_file("generated.py", "value = 1", "value = 2")
+            self.assertEqual(generated.read_text(encoding="utf-8"), "value = 2\n")
+
+            generated.write_text("external edit = True\n", encoding="utf-8")
+            with self.assertRaisesRegex(PermanentError, "发生变化.*apply_patch"):
+                agent.toolbox.replace_in_file("generated.py", "external edit", "agent overwrite")
+            self.assertEqual(generated.read_text(encoding="utf-8"), "external edit = True\n")
+            agent.toolbox.reset_task_write_scope()
+            with self.assertRaisesRegex(PermanentError, "已有文件.*apply_patch"):
+                agent.toolbox.replace_in_file("generated.py", "external edit", "agent overwrite")
+
+    def test_legacy_replace_failure_recovers_only_through_reviewed_apply_patch(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-agent-edit-review-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            target = root / "module.py"
+            original = "def value():\n    return 1\n"
+            target.write_text(original, encoding="utf-8")
+            git = GitManager(root)
+            git.init()
+            baseline = git.commit_changes("baseline")
+            ledger = EventLedger(root)
+            patch_text = """*** Begin Patch
+*** Update File: module.py
+@@
+ def value():
+-    return 1
++    return 2
+*** End Patch"""
+            legacy_call = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "legacy_replace",
+                    "type": "function",
+                    "function": {
+                        "name": "replace_in_file",
+                        "arguments": json.dumps({
+                            "path": "module.py", "old_text": "return 1", "new_text": "return 2",
+                        }),
+                    },
+                }],
+            }
+            provider = ScriptedPlanningProvider(
+                legacy_call,
+                patch_tool_reply(patch_text),
+                {"role": "assistant", "content": "", "tool_calls": [{
+                    "id": "inspect_patch",
+                    "type": "function",
+                    "function": {"name": "git_diff", "arguments": "{}"},
+                }]},
+                planning_final_reply("Updated the function through the reviewed patch."),
+            )
+            reviews = []
+
+            def approve_after_inspecting(preview):
+                self.assertEqual(target.read_text(encoding="utf-8"), original)
+                reviews.append(preview)
+                return {int(hunk["id"]) for hunk in preview["hunks"]}
+
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+                patch_review=approve_after_inspecting,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {"session_id": "reviewed_legacy_edit", "prompt": "Update value safely"}})
+
+            tool_error = next(
+                message["content"]
+                for message in provider.message_histories[1]
+                if message.get("role") == "tool" and message.get("tool_call_id") == "legacy_replace"
+            )
+            self.assertIn("已有文件", tool_error)
+            self.assertIn("apply_patch", tool_error)
+            self.assertEqual(len(reviews), 1)
+            self.assertEqual(reviews[0]["hunk_count"], 1)
+            self.assertEqual(target.read_text(encoding="utf-8"), "def value():\n    return 2\n")
+            self.assertNotEqual(result["git_result_sha"], baseline)
+
+    def test_rejected_patch_stops_agent_before_any_fallback_or_commit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-patch-reject-") as temp:
+            root = Path(temp)
+            target = root / "module.py"
+            target.write_text("def first():\n    return 1\n", encoding="utf-8")
+            git = GitManager(root)
+            git.init()
+            baseline = git.commit_changes("baseline")
+            ledger = EventLedger(root)
+            provider = ScriptedPlanningProvider(patch_tool_reply("""*** Begin Patch
+*** Update File: module.py
+@@
+ def first():
+-    return 1
++    return 10
+*** End Patch"""))
+            agent = CodingAgent(
+                root, ledger, git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+                patch_review=lambda _preview: None,
+            )
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaises(PermanentError):
+                    agent.run({"payload": {"session_id": "patch_rejected", "prompt": "Update first"}})
+
+            session = json.loads((root / ".research" / "sessions" / "patch_rejected.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(provider.tool_histories), 1)
+            self.assertEqual(target.read_text(encoding="utf-8"), "def first():\n    return 1\n")
+            self.assertEqual(git.head_sha(), baseline)
+            self.assertEqual(session["status"], "failed")
+            self.assertIn("拒绝", session["error"])
+
+    def test_partially_approved_patch_is_tracked_then_stops_without_commit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-patch-partial-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            target = root / "module.py"
+            target.write_text(
+                "def first():\n    return 1\n\ndef second():\n    return 2\n", encoding="utf-8"
+            )
+            git = GitManager(root)
+            git.init()
+            baseline = git.commit_changes("baseline")
+            ledger = EventLedger(root)
+            patch_text = """*** Begin Patch
+*** Update File: module.py
+@@
+ def first():
+-    return 1
++    return 10
+@@
+ def second():
+-    return 2
++    return 20
+*** End Patch"""
+            provider = ScriptedPlanningProvider(patch_tool_reply(patch_text))
+            agent = CodingAgent(
+                root, ledger, git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+                patch_review=lambda _preview: {1},
+            )
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "未获批准"):
+                    agent.run({"payload": {"session_id": "patch_partial", "prompt": "Update both functions"}})
+
+            session = json.loads((root / ".research" / "sessions" / "patch_partial.json").read_text(encoding="utf-8"))
+            source = target.read_text(encoding="utf-8")
+            self.assertEqual(len(provider.tool_histories), 1)
+            self.assertIn("return 10", source)
+            self.assertIn("return 2", source)
+            self.assertEqual(session["status"], "failed")
+            self.assertEqual(session["agent_changed_paths"], ["module.py"])
+            self.assertTrue(session["verification_code_changed"])
+            self.assertEqual(git.head_sha(), baseline)
+            self.assertEqual(git.status_paths(), {"module.py"})
+
+    def test_fully_approved_patch_can_continue_and_commit_scoped_changes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-patch-approve-") as temp:
+            root = Path(temp)
+            target = root / "module.py"
+            target.write_text("def first():\n    return 1\n", encoding="utf-8")
+            git = GitManager(root)
+            git.init()
+            baseline = git.commit_changes("baseline")
+            ledger = EventLedger(root)
+            patch_text = """*** Begin Patch
+*** Update File: module.py
+@@
+ def first():
+-    return 1
++    return 10
+*** End Patch"""
+            provider = ScriptedPlanningProvider(
+                patch_tool_reply(patch_text),
+                planning_final_reply("Patch staged; checking the resulting diff."),
+                planning_final_reply("Patch applied"),
+            )
+            agent = CodingAgent(
+                root, ledger, git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+                patch_review=lambda _preview: {1},
+            )
+
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {"session_id": "patch_approved", "prompt": "Update first"}})
+
+            self.assertEqual(len(provider.tool_histories), 3)
+            self.assertEqual(target.read_text(encoding="utf-8"), "def first():\n    return 10\n")
+            self.assertNotEqual(result["git_result_sha"], baseline)
+            committed = git._run(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]).stdout.splitlines()
+            self.assertEqual(committed, ["module.py"])
+
     def test_ledger_writes_event_and_session(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -144,6 +697,33 @@ class CoreTests(unittest.TestCase):
             ledger.create_session("session_test", "写一个 hello 文件", ".research/sessions/session_test.json")
             self.assertIn("test_event", (root / ".research" / "events.jsonl").read_text(encoding="utf-8"))
             self.assertEqual(ledger.list_sessions()[0]["session_id"], "session_test")
+
+    def test_editor_snapshot_is_not_copied_to_event_log_and_is_cleared_after_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            source_text = "UNSAVED_SOURCE_SECRET_marker = 123\n"
+            task_id = ledger.create_task("coding", {
+                "prompt": "Review module.py",
+                "context_overrides": {"module.py": source_text},
+                "context_readonly_paths": ["module.py"],
+            }, max_attempts=2)
+
+            event_lines = ledger.events_path.read_text(encoding="utf-8").splitlines()
+            created = next(json.loads(line) for line in event_lines if json.loads(line)["event_type"] == "task_created")
+            self.assertNotIn("UNSAVED_SOURCE_SECRET_marker", ledger.events_path.read_text(encoding="utf-8"))
+            self.assertEqual(created["payload"]["payload"]["context_override_paths"], ["module.py"])
+            self.assertEqual(created["payload"]["payload"]["context_override_bytes"], len(source_text.encode("utf-8")))
+
+            claimed = ledger.claim_due_task()
+            self.assertEqual(claimed["task_id"], task_id)
+            self.assertEqual(claimed["payload"]["context_overrides"]["module.py"], source_text)
+            ledger.complete_task(task_id)
+
+            stored = json.loads(next(row["payload"] for row in ledger.list_tasks() if row["task_id"] == task_id))
+            self.assertNotIn("context_overrides", stored)
+            self.assertNotIn("context_readonly_paths", stored)
+            self.assertNotIn("UNSAVED_SOURCE_SECRET_marker", json.dumps(stored))
 
     def test_retry_queue_retries_transient_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -169,6 +749,48 @@ class CoreTests(unittest.TestCase):
             queue.stop()
             self.assertEqual(len(attempts), 2)
             self.assertEqual(rows[task_id]["status"], "succeeded")
+
+    def test_retry_queue_honors_bounded_server_retry_after(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            ledger = EventLedger(Path(temp))
+            retry_scheduled = threading.Event()
+
+            def handler(_task):
+                raise RetryableError("rate limited", retry_after_seconds=30)
+
+            def notify(event, _payload):
+                if event == "task_retry":
+                    retry_scheduled.set()
+
+            queue = RetryQueue(ledger, {"test": handler}, event_callback=notify, retry_base_seconds=0.01)
+            queue.start()
+            task_id = queue.submit("test", {}, max_attempts=2)
+            try:
+                self.assertTrue(retry_scheduled.wait(timeout=2))
+                row = next(item for item in ledger.list_tasks() if item["task_id"] == task_id)
+            finally:
+                queue.stop()
+            self.assertEqual(row["status"], "retry_wait")
+            self.assertGreaterEqual(row["next_retry_at"] - time.time(), 28)
+
+    def test_retry_after_wait_is_at_least_exponential_and_capped(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            ledger = EventLedger(Path(temp))
+            task_id = ledger.create_task("test", {}, max_attempts=5)
+            self.assertEqual(ledger.claim_due_task()["task_id"], task_id)
+            now = time.time()
+            with patch("scidev_core.time.time", return_value=now):
+                ledger.retry_or_fail(task_id, "limited", retryable=True, base_delay=5, retry_after_seconds=2)
+            row = next(item for item in ledger.list_tasks() if item["task_id"] == task_id)
+            self.assertEqual(row["next_retry_at"] - now, 5.0)
+
+            second_task = ledger.create_task("test", {}, max_attempts=3)
+            self.assertEqual(ledger.claim_due_task()["task_id"], second_task)
+            with patch("scidev_core.time.time", return_value=now):
+                ledger.retry_or_fail(second_task, "unreasonable hint", retryable=True,
+                                     base_delay=5, retry_after_seconds=100_000)
+            row = next(item for item in ledger.list_tasks() if item["task_id"] == second_task)
+            self.assertEqual(row["next_retry_at"] - now, 3600.0)
 
     def test_retry_queue_start_is_idempotent_and_restartable(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -267,13 +889,233 @@ class CoreTests(unittest.TestCase):
             finally:
                 queue.stop()
 
+    def test_tool_side_effect_is_not_replayed_across_both_crash_windows(self) -> None:
+        class FixedReplyProvider:
+            def __init__(self, response):  # noqa: ANN001
+                self.response = response
+                self.histories = []
+
+            def chat(self, messages, **_kwargs):  # noqa: ANN001
+                self.histories.append([dict(message) for message in messages])
+                return self.response
+
+        tool_reply = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_write_once",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"path": "once.py", "content": "value = 1\n"}),
+                },
+            }, {
+                "id": "call_write_pending",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"path": "must_not_run.py", "content": "value = 2\n"}),
+                },
+            }],
+        }
+        final_reply = {"role": "assistant", "content": "Done", "tool_calls": []}
+
+        for crash_point in ("after_effect", "after_result_persisted"):
+            with self.subTest(crash_point=crash_point), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+                ledger = EventLedger(root)
+                git = GitManager(root)
+                git.init()
+                git.commit_changes("baseline")
+                agent = CodingAgent(
+                    root,
+                    ledger,
+                    git,
+                    summary_settings=SummarySettings(enabled=False),
+                    single_user_prompt_only=True,
+                )
+                task = {"payload": {"session_id": "tool-recovery", "prompt": "Create once.py"}}
+                execution_count = 0
+                original_execute = agent.toolbox.execute
+
+                def counted_execute(name, arguments):  # noqa: ANN001
+                    nonlocal execution_count
+                    if name == "write_file":
+                        execution_count += 1
+                    return original_execute(name, arguments)
+
+                agent.toolbox.execute = counted_execute
+                first_provider = FixedReplyProvider(tool_reply)
+                if crash_point == "after_effect":
+                    with patch.object(
+                        ledger,
+                        "complete_tool_call",
+                        side_effect=RetryableError("simulated loss after file write"),
+                    ), patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=first_provider):
+                        with self.assertRaises(RetryableError):
+                            agent.run(task)
+                else:
+                    original_save = agent._save_session
+                    crashed = False
+
+                    def fail_after_tool_result(session):  # noqa: ANN001
+                        nonlocal crashed
+                        if (
+                            not crashed
+                            and session.get("messages")
+                            and session["messages"][-1].get("role") == "tool"
+                        ):
+                            crashed = True
+                            raise RetryableError("simulated loss before transcript save")
+                        original_save(session)
+
+                    with patch.object(agent, "_save_session", side_effect=fail_after_tool_result), patch(
+                        "scidev_core.OpenAICompatibleProvider.from_env", return_value=first_provider,
+                    ):
+                        with self.assertRaises(RetryableError):
+                            agent.run(task)
+
+                self.assertEqual(execution_count, 1)
+                self.assertEqual((root / "once.py").read_text(encoding="utf-8"), "value = 1\n")
+                resumed_provider = FixedReplyProvider(final_reply)
+                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=resumed_provider):
+                    with self.assertRaises(PermanentError):
+                        agent.run(task)
+
+                resumed_tools = {
+                    message.get("tool_call_id"): message
+                    for message in resumed_provider.histories[0]
+                    if message.get("role") == "tool"
+                }
+                self.assertIn("call_write_once", resumed_tools)
+                self.assertIn("call_write_pending", resumed_tools)
+                if crash_point == "after_effect":
+                    self.assertIn("可能已经产生副作用", resumed_tools["call_write_once"]["content"])
+                else:
+                    self.assertIn("once.py", resumed_tools["call_write_once"]["content"])
+                self.assertIn("尚未启动", resumed_tools["call_write_pending"]["content"])
+                self.assertEqual(execution_count, 1)
+                self.assertFalse((root / "must_not_run.py").exists())
+                session_path = root / ".research" / "sessions" / "tool-recovery.json"
+                session = json.loads(session_path.read_text(encoding="utf-8"))
+                self.assertTrue(session["verification_code_changed"])
+                self.assertFalse(session["git_result_sha"])
+                assistant_index = next(
+                    index for index, message in enumerate(session["messages"])
+                    if any(call.get("id") == "call_write_once" for call in message.get("tool_calls", []))
+                )
+                self.assertIsNone(ledger.get_tool_call("tool-recovery", assistant_index, 0))
+
+    def test_legacy_incomplete_tool_call_is_not_replayed_without_journal(self) -> None:
+        class FinalReplyProvider:
+            def __init__(self) -> None:
+                self.history = []
+
+            def chat(self, messages, **_kwargs):  # noqa: ANN001
+                self.history = [dict(message) for message in messages]
+                return {"role": "assistant", "content": "Recovered safely", "tool_calls": []}
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            prompt = "Create legacy.py"
+            session = agent._load_session("legacy-tool-session", prompt)
+            session["messages"].append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "legacy_call",
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": json.dumps({"path": "legacy.py", "content": "value = 1\n"}),
+                    },
+                }],
+            })
+            agent._save_session(session)
+            provider = FinalReplyProvider()
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                agent.run({"payload": {"session_id": "legacy-tool-session", "prompt": prompt}})
+
+            self.assertFalse((root / "legacy.py").exists())
+            result = next(message for message in provider.history if message.get("role") == "tool")
+            self.assertIn("是否执行过无法确定", result["content"])
+
+    def test_session_save_keeps_previous_file_if_atomic_replace_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            agent = CodingAgent(root, EventLedger(root), GitManager(root))
+            original = {
+                "session_id": "atomic-save",
+                "status": "active",
+                "prompt": "before",
+                "messages": [{"role": "user", "content": "before"}],
+            }
+            agent._save_session(original)
+            session_path = root / ".research" / "sessions" / "atomic-save.json"
+            previous = session_path.read_bytes()
+            replacement = {**original, "prompt": "after"}
+
+            with patch("scidev_core.os.replace", side_effect=OSError("injected replace failure")):
+                with self.assertRaises(OSError):
+                    agent._save_session(replacement)
+
+            self.assertEqual(session_path.read_bytes(), previous)
+            self.assertEqual(list(session_path.parent.glob(".*.tmp")), [])
+
+    def test_tool_journal_never_reexecutes_started_or_completed_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            ledger = EventLedger(Path(temp))
+            ledger.prepare_tool_calls("journal", 8, [{
+                "id": "call_pending_old",
+                "function": {"name": "write_file"},
+            }])
+            # A transcript save can fail after the pending journal row is durable;
+            # a new model response may then occupy the same message slot.
+            ledger.prepare_tool_calls("journal", 8, [{
+                "id": "call_pending_new",
+                "function": {"name": "read_file"},
+            }])
+            claimed = ledger.start_tool_call("journal", 8, 0, "call_pending_new", "read_file")
+            self.assertTrue(claimed and claimed["should_execute"])
+
+            repeated = ledger.start_tool_call("journal", 8, 0, "call_pending_new", "read_file")
+            self.assertFalse(repeated and repeated["should_execute"])
+            ledger.complete_tool_call("journal", 8, 0, "contents")
+            completed = ledger.start_tool_call("journal", 8, 0, "call_pending_new", "read_file")
+            self.assertEqual(completed and completed["status"], "completed")
+            self.assertFalse(completed and completed["should_execute"])
+
+            ledger.prepare_tool_calls("journal", 9, [{
+                "id": "call_started_old",
+                "function": {"name": "run_command"},
+            }])
+            self.assertTrue(
+                ledger.start_tool_call("journal", 9, 0, "call_started_old", "run_command")["should_execute"]
+            )
+            ledger.prepare_tool_calls("journal", 9, [{
+                "id": "call_started_new",
+                "function": {"name": "run_command"},
+            }])
+            conflict = ledger.start_tool_call("journal", 9, 0, "call_started_new", "run_command")
+            self.assertFalse(conflict and conflict["should_execute"])
+            self.assertFalse(conflict and conflict["identity_matches"])
+
     def test_coding_agent_uses_tools_and_commits(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
             ledger = EventLedger(root)
             git = GitManager(root)
-            agent = CodingAgent(root, ledger, git)
+            agent = CodingAgent(root, ledger, git, require_verification=False)
             fake_provider = FakeCodingProvider()
             task = {"payload": {"session_id": "session_smoke", "prompt": "创建 hello.py"}}
             with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=fake_provider):
@@ -381,6 +1223,7 @@ class CoreTests(unittest.TestCase):
                 GitManager(root),
                 event_callback=lambda name, payload: events.append((name, payload)),
                 summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
             )
             provider = InvalidThenCorrectProvider()
             with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
@@ -450,6 +1293,7 @@ class CoreTests(unittest.TestCase):
                 GitManager(root),
                 summary_settings=SummarySettings(enabled=False),
                 single_user_prompt_only=True,
+                require_verification=False,
             )
             provider = InvalidThenCorrectProvider()
             prompt = "Create hello.py containing print(1)."
@@ -587,10 +1431,10 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(simple_names, {"write_file"})
             self.assertNotIn("run_command", simple_names)
             self.assertIn("run_command", explicit_names)
-            self.assertEqual(repair_names, {"read_file", "write_file", "replace_in_file", "git_diff"})
+            self.assertEqual(repair_names, {"read_file", "write_file", "replace_in_file", "apply_patch", "git_diff"})
             self.assertNotIn("run_command", repair_names)
-            self.assertEqual(localized_repair_names, {"read_file", "replace_in_file", "git_diff"})
-            self.assertEqual(label_only_repair_names, {"read_file", "replace_in_file", "git_diff"})
+            self.assertEqual(localized_repair_names, {"read_file", "replace_in_file", "apply_patch", "git_diff"})
+            self.assertEqual(label_only_repair_names, {"read_file", "replace_in_file", "apply_patch", "git_diff"})
             self.assertIn("replace_in_file", repair_names)
             self.assertEqual(agent._tool_choice_for_tools(simple_names), "required")
             self.assertEqual(agent._tool_choice_for_tools(localized_repair_names), "required")
@@ -706,9 +1550,9 @@ class CoreTests(unittest.TestCase):
                 [
                     {"write_file"},
                     {"read_file"},
-                    {"replace_in_file"},
-                    {"read_file"},
-                    {"replace_in_file"},
+                    {"replace_in_file", "apply_patch"},
+                    {"replace_in_file", "apply_patch"},
+                    {"replace_in_file", "apply_patch"},
                     repair_tools,
                     repair_tools,
                 ],
@@ -805,9 +1649,11 @@ class CoreTests(unittest.TestCase):
                 event_callback=lambda name, data: events.append((name, data)),
                 summary_settings=SummarySettings(enabled=False),
             )
-            ambiguous_edit_schema = agent._svg_preflight_repair_tool_definitions(
-                file_was_read=True
-            )[0]["function"]["parameters"]
+            ambiguous_edit_schema = next(
+                tool["function"]["parameters"]
+                for tool in agent._svg_preflight_repair_tool_definitions(file_was_read=True)
+                if tool["function"]["name"] == "replace_in_file"
+            )
             self.assertIn("path", ambiguous_edit_schema["required"])
             self.assertNotIn("enum", ambiguous_edit_schema["properties"]["path"])
             provider = ReadThenNoopThenEditProvider()
@@ -818,9 +1664,13 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(result["git_result_sha"])
             self.assertEqual(provider.calls, 6)
             self.assertEqual(provider.tools_by_call[1], {"read_file"})
-            self.assertEqual(provider.tools_by_call[2], {"replace_in_file"})
-            self.assertEqual(provider.tools_by_call[3], {"replace_in_file"})
-            edit_schema = provider.tool_definitions_by_call[2][0]["function"]["parameters"]
+            self.assertEqual(provider.tools_by_call[2], {"replace_in_file", "apply_patch"})
+            self.assertEqual(provider.tools_by_call[3], {"replace_in_file", "apply_patch"})
+            edit_schema = next(
+                tool["function"]["parameters"]
+                for tool in provider.tool_definitions_by_call[2]
+                if tool["function"]["name"] == "replace_in_file"
+            )
             self.assertNotIn("path", edit_schema["required"])
             self.assertEqual(edit_schema["properties"]["path"]["enum"], ["generated.svg"])
             inferred = [data for name, data in events if name == "tool_argument_inferred"]
@@ -923,7 +1773,7 @@ class CoreTests(unittest.TestCase):
 
             self.assertTrue(result["git_result_sha"])
             self.assertEqual(provider.calls, 6)
-            self.assertEqual(provider.tools_by_call[2], {"replace_in_file"})
+            self.assertEqual(provider.tools_by_call[2], {"replace_in_file", "apply_patch"})
             self.assertIn('id="subject"', (root / "generated.svg").read_text(encoding="utf-8"))
             self.assertEqual(
                 sum(name == "artifact_response_recovery_rejected" for name, _data in events),
@@ -1076,18 +1926,17 @@ class CoreTests(unittest.TestCase):
             agent = CodingAgent(root, EventLedger(root), GitManager(root))
             tools = agent._svg_artifact_repair_tool_definitions()
             names = {tool["function"]["name"] for tool in tools}
-            self.assertEqual(names, {"read_file", "replace_in_file", "git_diff"})
+            self.assertEqual(names, {"read_file", "replace_in_file", "apply_patch", "git_diff"})
             replace_tool = next(tool for tool in tools if tool["function"]["name"] == "replace_in_file")
             properties = replace_tool["function"]["parameters"]["properties"]
             self.assertNotIn("replace_all", properties)
             read_phase = agent._svg_preflight_repair_tool_definitions(file_was_read=False)
             edit_phase = agent._svg_preflight_repair_tool_definitions(file_was_read=True)
             self.assertEqual({tool["function"]["name"] for tool in read_phase}, {"read_file"})
-            self.assertEqual({tool["function"]["name"] for tool in edit_phase}, {"replace_in_file"})
+            self.assertEqual({tool["function"]["name"] for tool in edit_phase}, {"replace_in_file", "apply_patch"})
             parser = OpenAICompatibleProvider(
                 "http://127.0.0.1:11434/v1", "local", "test", text_tool_call_fallback=True
             )
-            edit_tool = edit_phase[0]
             hidden_bulk_edit = {
                 "role": "assistant",
                 "content": json.dumps(
@@ -1173,11 +2022,16 @@ class CoreTests(unittest.TestCase):
                     return self.tool_call("read_file", {"path": "drawing.svg"}, f"read_{self.calls}")
                 if self.calls == 3:
                     return self.tool_call(
-                        "replace_in_file",
+                        "apply_patch",
                         {
-                            "path": "drawing.svg",
-                            "old_text": '<circle id="subject" cx="50" cy="50" r="10"/>',
-                            "new_text": '<circle id="subject" cx="50" cy="50" r="11"/>',
+                            "patch": (
+                                "*** Begin Patch\n*** Update File: drawing.svg\n@@\n"
+                                "-<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\">"
+                                "<circle id=\"subject\" cx=\"50\" cy=\"50\" r=\"10\"/></svg>\n"
+                                "+<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\">"
+                                "<circle id=\"subject\" cx=\"50\" cy=\"50\" r=\"11\"/></svg>\n"
+                                "*** End Patch"
+                            ),
                         },
                         "edit_subject",
                     )
@@ -1202,6 +2056,7 @@ class CoreTests(unittest.TestCase):
                 git,
                 event_callback=lambda name, data: events.append((name, data)),
                 summary_settings=SummarySettings(enabled=False),
+                patch_review=lambda preview: {int(hunk["id"]) for hunk in preview["hunks"]},
             )
             provider = NoopThenEditProvider()
             prompt = (
@@ -1216,7 +2071,7 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(result["git_result_sha"])
             self.assertIn('r="11"', target.read_text(encoding="utf-8"))
             self.assertEqual(provider.tool_names_by_call[0], {"read_file"})
-            self.assertEqual(provider.tool_names_by_call[2], {"replace_in_file"})
+            self.assertEqual(provider.tool_names_by_call[2], {"replace_in_file", "apply_patch"})
             self.assertEqual(
                 sum(name == "svg_repair_retry_scheduled" for name, _data in events),
                 1,
@@ -1263,7 +2118,9 @@ class CoreTests(unittest.TestCase):
             ledger = EventLedger(root)
             git = GitManager(root)
             git.commit_changes("repair baseline")
-            agent = CodingAgent(root, ledger, git, summary_settings=SummarySettings(enabled=False))
+            agent = CodingAgent(
+                root, ledger, git, summary_settings=SummarySettings(enabled=False), require_verification=False,
+            )
             provider = NoopRepairProvider()
             with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "without changing the file after its bounded retry"):
@@ -1422,7 +2279,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(provider.user_message_counts, [1] * provider.calls)
             self.assertEqual(provider.tool_history[1], ["read_file"])
             self.assertEqual(provider.tool_history[2], ["read_file"])
-            self.assertEqual(provider.tool_history[3], ["replace_in_file"])
+            self.assertEqual(set(provider.tool_history[3]), {"replace_in_file", "apply_patch"})
             self.assertIn("SVG 结构预检提示", provider.message_histories[1][-1]["content"])
             self.assertIn("complete-artifact response was not applied", provider.message_histories[2][-1]["content"])
             self.assertIn("<svg xmlns=", provider.message_histories[3][-1]["content"])
@@ -1640,7 +2497,9 @@ class CoreTests(unittest.TestCase):
             git = GitManager(root)
             git.commit_changes("baseline")
             provider = EditAfterDiffProvider()
-            agent = CodingAgent(root, ledger, git, summary_settings=SummarySettings(enabled=False))
+            agent = CodingAgent(
+                root, ledger, git, summary_settings=SummarySettings(enabled=False), require_verification=False,
+            )
             with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "session_stale_diff", "prompt": "修改 hello.py"}})
 
@@ -1734,7 +2593,7 @@ class CoreTests(unittest.TestCase):
             staged.write_text("value = 2\n", encoding="utf-8")
             git.stage_path(staged)
             staged.write_text("value = 3\n", encoding="utf-8")
-            agent = CodingAgent(root, ledger, git)
+            agent = CodingAgent(root, ledger, git, require_verification=False)
             task = {"payload": {"session_id": "session_isolated_commit", "prompt": "创建 hello.py"}}
             with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=FakeCodingProvider()):
                 result = agent.run(task)
@@ -1860,7 +2719,9 @@ class CoreTests(unittest.TestCase):
             (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
             ledger = EventLedger(root)
             git = GitManager(root)
-            agent = CodingAgent(root, ledger, git, summary_settings=SummarySettings(enabled=False))
+            agent = CodingAgent(
+                root, ledger, git, summary_settings=SummarySettings(enabled=False), require_verification=False,
+            )
             old_prompt = "Generate an SVG of a pelican riding a bicycle"
             agent._load_session("session_guidance_refresh", old_prompt)
             provider = FakeCodingProvider()
@@ -1868,7 +2729,10 @@ class CoreTests(unittest.TestCase):
             with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
                 agent.run({"payload": {"session_id": "session_guidance_refresh", "prompt": "创建 hello.py"}})
 
-            self.assertEqual(provider.message_histories[0][0]["content"], CodingAgent.SYSTEM_PROMPT)
+            refreshed_prompt = provider.message_histories[0][0]["content"]
+            self.assertTrue(refreshed_prompt.startswith(CodingAgent.SYSTEM_PROMPT))
+            self.assertIn("当前项目上下文", refreshed_prompt)
+            self.assertNotIn("图像与 SVG", refreshed_prompt)
 
     def test_summary_checkpoint_runs_every_configured_turns(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1877,7 +2741,7 @@ class CoreTests(unittest.TestCase):
             ledger = EventLedger(root)
             git = GitManager(root)
             settings = SummarySettings(interval_turns=1, retries=1)
-            agent = CodingAgent(root, ledger, git, summary_settings=settings)
+            agent = CodingAgent(root, ledger, git, summary_settings=settings, require_verification=False)
             provider = RetryOncePerSummaryProvider()
             with (
                 patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
@@ -1893,6 +2757,113 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(checkpoint_retry_ids[0], checkpoint_retry_ids[1])
             self.assertEqual(final_retry_ids[0], final_retry_ids[1])
             self.assertNotEqual(checkpoint_retry_ids[0], final_retry_ids[0])
+
+    def test_summary_retry_obeys_short_retry_after_hint(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-summary-retry-after-short-") as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=True, retries=1),
+                require_verification=False,
+            )
+            session = agent._load_session("summary_retry_after_short", "summarize this task")
+            provider = ScriptedPlanningProvider(
+                RetryableError("rate limited", retry_after_seconds=2),
+                planning_final_reply("已总结。"),
+            )
+            with patch("scidev_core.time.sleep") as sleep:
+                result = agent._summarize_session(provider, session)
+
+            self.assertEqual(result, "已总结。")
+            sleep.assert_called_once_with(2.0)
+            self.assertEqual(len(provider.message_histories), 2)
+
+    def test_auxiliary_summary_defers_long_retry_after_without_blocking_completion(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-summary-retry-after-long-") as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=True, retries=3),
+                require_verification=False,
+            )
+            session = agent._load_session("summary_retry_after_long", "summarize this task")
+            provider = ScriptedPlanningProvider(
+                RetryableError("rate limited", retry_after_seconds=60),
+                planning_final_reply("这条响应不应立即发送。"),
+            )
+            with patch("scidev_core.time.sleep") as sleep:
+                result = agent._summarize_session(provider, session)
+
+            self.assertEqual(result, "")
+            sleep.assert_not_called()
+            self.assertEqual(len(provider.message_histories), 1)
+            failure = next(
+                json.loads(line)["payload"]
+                for line in ledger.events_path.read_text(encoding="utf-8").splitlines()
+                if json.loads(line)["event_type"] == "conversation_summary_failed"
+            )
+            self.assertEqual(failure["attempts"], 1)
+            self.assertTrue(failure["retry_deferred"])
+
+    def test_request_idempotency_keys_are_unique_per_task_but_stable_on_retry(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-request-id-scope-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            provider = RequestIdRecordingProvider()
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=True, retries=0, interval_turns=0),
+                require_verification=False,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                agent.run({
+                    "task_id": "task_first_request_scope",
+                    "payload": {"session_id": "shared_session", "prompt": "第一项工作"},
+                })
+                agent.run({
+                    "task_id": "task_second_request_scope",
+                    "payload": {"session_id": "shared_session", "prompt": "第二项工作"},
+                })
+
+            coding_ids = [request_id for request_id in provider.request_ids if "summary" not in request_id]
+            summary_ids = [request_id for request_id in provider.request_ids if "summary" in request_id]
+            self.assertEqual(len(coding_ids), 2)
+            self.assertEqual(len(summary_ids), 2)
+            self.assertNotEqual(coding_ids[0], coding_ids[1])
+            self.assertNotEqual(summary_ids[0], summary_ids[1])
+
+        with tempfile.TemporaryDirectory(prefix="scidev-request-id-retry-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            provider = RequestIdRecordingProvider(fail_first_coding_call=True)
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            task = {
+                "task_id": "task_stable_retry_scope",
+                "payload": {"session_id": "retry_session", "prompt": "暂时断网后恢复"},
+            }
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaises(RetryableError):
+                    agent.run(task)
+                agent.run(task)
+
+            self.assertEqual(len(provider.request_ids), 2)
+            self.assertEqual(provider.request_ids[0], provider.request_ids[1])
 
     def test_git_diff_includes_tracked_and_untracked_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -2049,6 +3020,7 @@ class CoreTests(unittest.TestCase):
                 git,
                 event_callback=lambda event, data: ui_events.append((event, data)),
                 summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
             )
             provider = ArtifactProvider()
             with patch.object(GitManager, "MAX_AUTO_COMMIT_FILE_BYTES", 16):
@@ -2354,6 +3326,8 @@ class CoreTests(unittest.TestCase):
             events = [json.loads(line) for line in ledger.events_path.read_text(encoding="utf-8").splitlines()]
             self.assertIn("command_approval_requested", [event["event_type"] for event in events])
             self.assertIn("command_approval_denied", [event["event_type"] for event in events])
+            self.assertIn("command_execution_recorded", [event["event_type"] for event in events])
+            self.assertEqual(toolbox.last_command_execution["status"], "not_run")
 
     def test_run_command_executes_only_after_approval(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -2371,8 +3345,46 @@ class CoreTests(unittest.TestCase):
             process.assert_called_once()
             self.assertEqual(approvals, [("python -V", 300)])
             self.assertIn("退出码：0", result)
+            self.assertIn("执行状态：passed", result)
+            self.assertEqual(toolbox.last_command_execution["exit_code"], 0)
             events = [json.loads(line) for line in ledger.events_path.read_text(encoding="utf-8").splitlines()]
             self.assertIn("command_approval_granted", [event["event_type"] for event in events])
+
+    def test_run_command_records_timeout_and_process_start_failure(self) -> None:
+        class TimedOutProcess:
+            returncode = None
+            calls = 0
+
+            def communicate(self, timeout=None):
+                self.calls += 1
+                if self.calls == 1:
+                    raise subprocess.TimeoutExpired("pytest", timeout)
+                return "partial output", None
+
+            def kill(self):
+                self.returncode = -9
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            toolbox = CodingToolbox(root, ledger, command_approval=lambda _command, _timeout: True)
+            timed_out = TimedOutProcess()
+            with patch("scidev_core.subprocess.Popen", return_value=timed_out):
+                result = toolbox.run_command("pytest -q", timeout_seconds=1)
+            self.assertIn("执行状态：timed_out", result)
+            self.assertEqual(toolbox.last_command_execution["status"], "timed_out")
+            self.assertEqual(toolbox.last_command_execution["exit_code"], -9)
+
+            with patch("scidev_core.subprocess.Popen", side_effect=OSError("executable unavailable")):
+                with self.assertRaisesRegex(PermanentError, "命令启动失败"):
+                    toolbox.run_command("pytest -q")
+            self.assertEqual(toolbox.last_command_execution["status"], "start_failed")
+            recorded = [
+                json.loads(line)["payload"]
+                for line in ledger.events_path.read_text(encoding="utf-8").splitlines()
+                if json.loads(line)["event_type"] == "command_execution_recorded"
+            ]
+            self.assertEqual([row["status"] for row in recorded], ["timed_out", "start_failed"])
 
     def test_text_tool_call_fallback_only_accepts_declared_tools(self) -> None:
         provider = OpenAICompatibleProvider(
@@ -2628,6 +3640,104 @@ class CoreTests(unittest.TestCase):
                 with self.assertRaisesRegex(PermanentError, "5 到 600 秒"):
                     OpenAICompatibleProvider.from_env()
 
+    def test_provider_reads_delta_and_http_date_retry_after_without_unbounded_waits(self) -> None:
+        provider = OpenAICompatibleProvider("http://127.0.0.1:11434/v1", "test-key", "model", streaming=False)
+        self.assertEqual(provider._retry_after_seconds("23"), 23.0)
+        future_header = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=45), usegmt=True)
+        self.assertGreaterEqual(provider._retry_after_seconds(future_header), 0.0)
+        self.assertLessEqual(provider._retry_after_seconds(future_header), 45.0)
+        self.assertEqual(provider._retry_after_seconds("999999"), 3600.0)
+        self.assertIsNone(provider._retry_after_seconds("not-a-date"))
+
+        error_stream = BytesIO(b"slow down")
+        error = HTTPError(
+            "http://127.0.0.1:11434/v1/chat/completions",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "23"},
+            error_stream,
+        )
+        with (
+            patch("scidev_core.urlopen", side_effect=error),
+            patch("scidev_core.getproxies") as proxy_settings,
+            patch("scidev_core.build_opener") as proxy_opener,
+        ):
+            with self.assertRaises(RetryableError) as caught:
+                provider.chat([{"role": "user", "content": "test"}], request_id="rate-limit")
+        proxy_settings.assert_not_called()
+        proxy_opener.assert_not_called()
+        self.assertEqual(caught.exception.retry_after_seconds, 23.0)
+        self.assertTrue(error_stream.closed)
+
+    def test_provider_ignores_ambient_proxy_settings_when_direct_connection_succeeds(self) -> None:
+        provider = OpenAICompatibleProvider("https://api.example.com/v1", "test-key", "model", streaming=False)
+        response = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).encode()
+        with (
+            patch.dict(os.environ, {
+                "HTTP_PROXY": "http://127.0.0.1:8123",
+                "HTTPS_PROXY": "http://127.0.0.1:8123",
+                "http_proxy": "http://127.0.0.1:8123",
+                "https_proxy": "http://127.0.0.1:8123",
+            }),
+            patch("scidev_core.build_opener") as build_opener_mock,
+        ):
+            build_opener_mock.return_value.open.return_value = BytesIO(response)
+            message = provider.chat([{"role": "user", "content": "direct-first"}], request_id="direct-success")
+
+        self.assertEqual(message["content"], "ok")
+        direct_handler = build_opener_mock.call_args.args[0]
+        self.assertEqual(direct_handler.proxies, {})
+
+    def test_provider_uses_one_proxy_fallback_only_for_public_preconnect_failures(self) -> None:
+        response = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).encode()
+        configured_proxies = {"https": "http://127.0.0.1:8123"}
+        direct_failures = (
+            URLError(socket.gaierror("name lookup failed")),
+            URLError(ConnectionRefusedError(errno.ECONNREFUSED, "connection refused")),
+        )
+        for index, direct_error in enumerate(direct_failures):
+            with self.subTest(index=index):
+                provider = OpenAICompatibleProvider("https://api.example.com/v1", "test-key", "model", streaming=False)
+                metrics = []
+                with (
+                    patch("scidev_core.urlopen", side_effect=direct_error) as direct,
+                    patch("scidev_core.getproxies", return_value=configured_proxies),
+                    patch("scidev_core.proxy_bypass", return_value=False),
+                    patch("scidev_core.build_opener") as build_opener_mock,
+                ):
+                    build_opener_mock.return_value.open.return_value = BytesIO(response)
+                    message = provider.chat(
+                        [{"role": "user", "content": "fallback"}],
+                        request_id=f"direct-preconnect-{index}",
+                        on_metrics=metrics.append,
+                    )
+
+                self.assertEqual(message["content"], "ok")
+                direct.assert_called_once()
+                self.assertEqual(build_opener_mock.call_count, 1)
+                self.assertEqual(build_opener_mock.call_args.args[0].proxies, configured_proxies)
+                self.assertEqual(metrics[0]["transport_route"], "proxy_fallback")
+
+    def test_provider_does_not_proxy_timeouts_http_responses_or_local_targets(self) -> None:
+        public_provider = OpenAICompatibleProvider("https://api.example.com/v1", "test-key", "model", streaming=False)
+        local_provider = OpenAICompatibleProvider("http://127.0.0.1:11434/v1", "test-key", "model", streaming=False)
+        direct_failures = (
+            (public_provider, URLError(socket.timeout("read timed out"))),
+            (public_provider, URLError(OSError(errno.ENETUNREACH, "network unreachable"))),
+            (local_provider, URLError(socket.gaierror("local resolution failed"))),
+        )
+        for index, (provider, direct_error) in enumerate(direct_failures):
+            with (
+                self.subTest(index=index),
+                patch("scidev_core.urlopen", side_effect=direct_error),
+                patch("scidev_core.getproxies", return_value={"https": "http://127.0.0.1:8123"}) as proxies,
+                patch("scidev_core.build_opener") as build_opener_mock,
+            ):
+                with self.assertRaises(RetryableError):
+                    provider.chat([{"role": "user", "content": "no fallback"}])
+                proxies.assert_not_called()
+                build_opener_mock.assert_not_called()
+
     def test_provider_applies_optional_presence_penalty_from_process_environment(self) -> None:
         provider_environment = {
             "SCIDEV_API_BASE": "http://127.0.0.1:11434/v1",
@@ -2688,6 +3798,290 @@ class CoreTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(PermanentError, "SCIDEV_TEMPERATURE"):
                     OpenAICompatibleProvider.from_env()
+
+    def test_provider_reports_exact_json_body_sizes_and_optional_usage(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://127.0.0.1:11434/v1", "test-key", "usage-model", streaming=False,
+        )
+        body = json.dumps({
+            "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 19, "completion_tokens": 3, "total_tokens": 22},
+        }).encode("utf-8")
+        records = []
+        with patch("scidev_core.urlopen", return_value=BytesIO(body)) as opener:
+            message = provider.chat(
+                [{"role": "user", "content": "local-only-test"}],
+                request_id="telemetry-test",
+                on_metrics=records.append,
+            )
+
+        self.assertEqual(message["content"], "ok")
+        self.assertEqual(len(records), 1)
+        request_metrics = records[0]
+        self.assertEqual(request_metrics["request_body_bytes"], len(opener.call_args.args[0].data))
+        self.assertEqual(request_metrics["response_body_bytes"], len(body))
+        self.assertTrue(request_metrics["response_body_complete"])
+        self.assertTrue(request_metrics["success"])
+        self.assertEqual(request_metrics["prompt_tokens"], 19)
+        self.assertEqual(request_metrics["completion_tokens"], 3)
+        self.assertNotIn("messages", request_metrics)
+        self.assertNotIn("local-only-test", repr(request_metrics))
+
+    def test_provider_idempotency_key_tracks_logical_id_and_exact_request_body(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://127.0.0.1:11434/v1", "test-key", "usage-model", streaming=False,
+        )
+        response = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).encode()
+        first_messages = [{"role": "user", "content": "first prompt"}]
+        changed_messages = [{"role": "user", "content": "resumed prompt with tool result"}]
+        with patch("scidev_core.urlopen", side_effect=[BytesIO(response), BytesIO(response), BytesIO(response)]) as opener:
+            provider.chat(first_messages, request_id="stable-logical-request")
+            provider.chat(first_messages, request_id="stable-logical-request")
+            provider.chat(changed_messages, request_id="stable-logical-request")
+
+        keys = [
+            dict((name.casefold(), value) for name, value in call.args[0].header_items())["idempotency-key"]
+            for call in opener.call_args_list
+        ]
+        self.assertEqual(keys[0], keys[1], "an identical retry must retain its provider idempotency key")
+        self.assertNotEqual(keys[0], keys[2], "a changed transcript must not reuse the previous body key")
+        self.assertNotIn("stable-logical-request", keys[0], "provider header should not disclose local IDs")
+
+    def test_provider_reports_stream_bytes_usage_and_failed_attempts(self) -> None:
+        provider = OpenAICompatibleProvider("http://127.0.0.1:11434/v1", "test-key", "stream-model")
+        chunks = [
+            {"choices": [{"delta": {"content": "streamed"}, "finish_reason": "stop"}]},
+            {"choices": [], "usage": {"prompt_tokens": 11, "completion_tokens": 2, "total_tokens": 13}},
+        ]
+        body = b"".join(b"data: " + json.dumps(chunk).encode("utf-8") + b"\n\n" for chunk in chunks)
+        body += b"data: [DONE]\n\n"
+        records = []
+        with patch("scidev_core.urlopen", return_value=BytesIO(body)):
+            message = provider.chat([{"role": "user", "content": "local-only"}], on_metrics=records.append)
+        self.assertEqual(message["content"], "streamed")
+        # The stream parser stops at the protocol's [DONE] line and does not
+        # consume the trailing blank-line byte.
+        self.assertEqual(records[0]["response_body_bytes"], len(body) - 1)
+        self.assertEqual(records[0]["total_tokens"], 13)
+        self.assertTrue(records[0]["success"])
+
+        failed_records = []
+        with patch("scidev_core.urlopen", side_effect=URLError("offline")):
+            with self.assertRaises(RetryableError):
+                provider.chat(
+                    [{"role": "user", "content": "local-only"}],
+                    request_id="retryable-request",
+                    on_metrics=failed_records.append,
+                )
+        self.assertFalse(failed_records[0]["success"])
+        self.assertGreater(failed_records[0]["request_body_bytes"], 0)
+        self.assertEqual(failed_records[0]["response_body_bytes"], 0)
+
+    def test_agent_persists_metrics_for_a_real_provider_call_without_prompt_content(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-model-usage-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            events = []
+            provider = OpenAICompatibleProvider(
+                "http://127.0.0.1:11434/v1", "test-key", "usage-model", streaming=False,
+            )
+            response_body = json.dumps({
+                "choices": [{"message": {"role": "assistant", "content": "Task reviewed."}}],
+                "usage": {"prompt_tokens": 25, "completion_tokens": 4, "total_tokens": 29},
+            }).encode("utf-8")
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                event_callback=lambda name, payload: events.append((name, payload)),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            with (
+                patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
+                patch("scidev_core.urlopen", return_value=BytesIO(response_body)) as opener,
+            ):
+                agent.run({"payload": {"session_id": "usage_session", "prompt": "Inspect this local workspace"}})
+
+            session = json.loads((root / ".research" / "sessions" / "usage_session.json").read_text(encoding="utf-8"))
+            self.assertEqual(session["model_usage"]["request_attempts"], 1)
+            self.assertEqual(session["model_usage"]["prompt_tokens"], 25)
+            self.assertEqual(
+                session["model_usage"]["request_body_bytes"],
+                len(opener.call_args.args[0].data),
+            )
+            self.assertTrue(any(name == "model_usage_updated" for name, _payload in events))
+            usage_events = [
+                json.loads(line)["payload"]
+                for line in ledger.events_path.read_text(encoding="utf-8").splitlines()
+                if json.loads(line)["event_type"] == "model_request_metrics_recorded"
+            ]
+            self.assertEqual(len(usage_events), 1)
+            self.assertNotIn("messages", usage_events[0]["record"])
+            self.assertNotIn("Inspect this local workspace", repr(usage_events[0]))
+
+    def test_checkpoint_summary_compacts_model_context_but_keeps_full_local_transcript(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-context-compaction-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            source = root / "module.py"
+            source.write_text("def calculate():\n    return 'needle-secret-line'\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            provider = ScriptedPlanningProvider(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_search",
+                        "type": "function",
+                        "function": {"name": "search_code", "arguments": json.dumps({"query": "needle-secret-line"})},
+                    }],
+                },
+                planning_final_reply("本轮已定位 calculate 函数。"),
+                planning_final_reply("检查完成。"),
+                planning_final_reply("本次检查已完成。"),
+            )
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=True, retries=0, interval_turns=1),
+                require_verification=False,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                agent.run({"payload": {"session_id": "compact_session", "prompt": "Find the calculate implementation"}})
+
+            resumed_request = provider.message_histories[2]
+            self.assertIn("历史对话压缩摘要", resumed_request[0]["content"])
+            self.assertIn("本轮已定位 calculate 函数", resumed_request[0]["content"])
+            self.assertNotIn("needle-secret-line", json.dumps(resumed_request, ensure_ascii=False))
+            session = json.loads((root / ".research" / "sessions" / "compact_session.json").read_text(encoding="utf-8"))
+            self.assertIn("needle-secret-line", json.dumps(session["messages"], ensure_ascii=False))
+            self.assertGreater(session["context_compactions"], 0)
+            self.assertGreaterEqual(session["context_compacted_through"], 4)
+
+            baseline_session = json.loads(json.dumps(session, ensure_ascii=False))
+            baseline_session["conversation_context_summary"] = ""
+            baseline_session["context_compacted_through"] = 0
+            baseline_session["messages"][0]["content"] = agent._compose_system_prompt(
+                baseline_session, str(baseline_session.get("last_prompt") or baseline_session["prompt"]),
+            )
+            next_turn = {"role": "user", "content": "Continue the same coding task."}
+            baseline_messages = CodingAgent._messages_for_model(baseline_session) + [next_turn]
+            compacted_messages = CodingAgent._messages_for_model(session) + [next_turn]
+            wire_provider = OpenAICompatibleProvider(
+                "http://127.0.0.1:11434/v1", "test-key", "wire-size-test", streaming=False,
+            )
+            response_body = json.dumps({
+                "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }).encode("utf-8")
+            request_metrics = []
+            with patch(
+                "scidev_core.urlopen",
+                side_effect=[BytesIO(response_body), BytesIO(response_body)],
+            ) as opener:
+                wire_provider.chat(baseline_messages, max_tokens=12000, on_metrics=request_metrics.append)
+                wire_provider.chat(compacted_messages, max_tokens=12000, on_metrics=request_metrics.append)
+
+            baseline_body = opener.call_args_list[0].args[0].data
+            compacted_body = opener.call_args_list[1].args[0].data
+            self.assertEqual(request_metrics[0]["request_body_bytes"], len(baseline_body))
+            self.assertEqual(request_metrics[1]["request_body_bytes"], len(compacted_body))
+            self.assertGreater(len(baseline_body), len(compacted_body))
+
+    def test_summary_compaction_recovers_from_malformed_saved_counters(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-context-malformed-state-") as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            agent = CodingAgent(
+                root,
+                ledger,
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=True, retries=0),
+                require_verification=False,
+            )
+            session = {
+                "session_id": "malformed_context_state",
+                "status": "active",
+                "prompt": "keep working",
+                "last_prompt": "keep working",
+                "messages": [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": "keep working"},
+                ],
+                "context_compacted_through": "corrupt",
+                "context_compactions": {"unexpected": "shape"},
+            }
+            provider = ScriptedPlanningProvider(planning_final_reply("Saved compact summary."))
+
+            self.assertEqual(agent._summarize_session(provider, session, phase="checkpoint", turn=1), "Saved compact summary.")
+            self.assertEqual(session["context_compacted_through"], 2)
+            self.assertEqual(session["context_compactions"], 1)
+            self.assertEqual(session["conversation_context_summary"], "Saved compact summary.")
+
+    def test_checkpoint_summary_source_uses_only_messages_after_prior_compaction(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-incremental-summary-source-") as temp:
+            root = Path(temp)
+            agent = CodingAgent(
+                root,
+                EventLedger(root),
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=True, context_chars=4000),
+                require_verification=False,
+            )
+            old_transcript = "OLD_LARGE_TOOL_OUTPUT " * 2000
+            session = {
+                "session_id": "incremental_summary_source",
+                "conversation_context_summary": "Prior checkpoint: found the parser in parser.py.",
+                "context_compacted_through": 4,
+                "messages": [
+                    {"role": "system", "content": "system prompt"},
+                    {"role": "user", "content": "Find the parser."},
+                    {"role": "assistant", "content": old_transcript},
+                    {"role": "tool", "content": old_transcript},
+                    {"role": "assistant", "content": "The latest change fixed the parser edge case."},
+                    {"role": "tool", "content": "parser.py:42 now handles the empty input."},
+                ],
+            }
+
+            summary_source = agent._summary_source(session)
+
+            self.assertIn("Prior checkpoint: found the parser in parser.py.", summary_source)
+            self.assertIn("The latest change fixed the parser edge case.", summary_source)
+            self.assertIn("parser.py:42 now handles the empty input.", summary_source)
+            self.assertNotIn("OLD_LARGE_TOOL_OUTPUT", summary_source)
+            self.assertLess(len(summary_source), len(old_transcript))
+            baseline_session = {
+                **session,
+                "conversation_context_summary": "",
+                "context_compacted_through": 0,
+            }
+            baseline_source = agent._summary_source(baseline_session)
+            self.assertLess(len(summary_source), len(baseline_source) // 10)
+
+            session["context_compacted_through"] = "corrupt"
+            fallback_source = agent._summary_source(session)
+            self.assertIn("OLD_LARGE_TOOL_OUTPUT", fallback_source)
+
+    def test_summary_source_never_exceeds_the_configured_character_budget(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-summary-source-budget-") as temp:
+            root = Path(temp)
+            settings = SummarySettings(enabled=True, context_chars=4000)
+            agent = CodingAgent(root, EventLedger(root), GitManager(root), summary_settings=settings)
+            session = {
+                "messages": [
+                    {"role": "system", "content": "system prompt"},
+                    {"role": "user", "content": "large transcript"},
+                    {"role": "assistant", "content": "TRANSCRIPT " * 3000},
+                ],
+            }
+
+            summary_source = agent._summary_source(session)
+
+            self.assertEqual(len(summary_source), settings.context_chars)
+            self.assertIn("[中间内容已折叠]", summary_source)
 
     def test_bare_json_tool_call_is_parsed_only_when_opted_in(self) -> None:
         tools = [
@@ -2788,6 +4182,144 @@ class CoreTests(unittest.TestCase):
             with patch("scidev_core.subprocess.run", side_effect=FileNotFoundError("git not found")):
                 self.assertFalse(git.is_repo())
                 self.assertEqual(git.status(), "Git 不可用：请安装 Git CLI")
+
+
+class GitWorkspaceBoundaryTests(unittest.TestCase):
+    """A workspace that is only a subfolder must never drive the outer repository."""
+
+    def test_workspace_inside_an_outer_repository_is_not_treated_as_a_repo(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-git-boundary-") as temp:
+            outer = Path(temp) / "outer"
+            workspace = outer / "workspace"
+            workspace.mkdir(parents=True)
+            (outer / "shared.py").write_text("value = 1\n", encoding="utf-8")
+            (workspace / "app.py").write_text("print(1)\n", encoding="utf-8")
+            outer_git = GitManager(outer)
+            outer_git.init()
+            outer_git.commit_changes("baseline")
+            baseline_sha = outer_git.head_sha()
+
+            git = GitManager(workspace)
+            self.assertFalse(git.is_repo())
+            self.assertEqual(git.enclosing_repo_root(), outer.resolve())
+            self.assertIn("更大的 Git 仓库内", git.status())
+            self.assertEqual(git.head_sha(), "")
+            self.assertEqual(git.status_paths(), set())
+
+            with self.assertRaisesRegex(PermanentError, "外层仓库"):
+                git.init()
+            with self.assertRaisesRegex(PermanentError, "外层仓库"):
+                git.stage_all()
+            with self.assertRaisesRegex(PermanentError, "外层仓库"):
+                git.commit_changes("probe")
+
+            self.assertFalse((workspace / ".git").exists())
+            self.assertEqual(outer_git.head_sha(), baseline_sha)
+            self.assertEqual(outer_git.status_paths(), set())
+
+    def test_own_repository_root_still_works(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-git-own-") as temp:
+            root = Path(temp)
+            (root / "app.py").write_text("print(1)\n", encoding="utf-8")
+            git = GitManager(root)
+            git.init()
+            sha = git.commit_changes("baseline")
+            self.assertTrue(git.is_repo())
+            self.assertIsNone(git.enclosing_repo_root())
+            self.assertTrue(sha)
+
+
+class GitTimeoutAndParserTests(unittest.TestCase):
+    def test_git_commands_are_bounded_and_timeouts_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-git-timeout-") as temp:
+            manager = GitManager(Path(temp))
+            expired = subprocess.TimeoutExpired(cmd=["git"], timeout=10)
+            with patch("scidev_core.subprocess.run", side_effect=expired) as run:
+                self.assertIn("超时", manager.status())
+                kwargs = run.call_args.kwargs
+                self.assertEqual(kwargs["timeout"], GitManager.COMMAND_TIMEOUT_SECONDS)
+            with patch("scidev_core.subprocess.run", side_effect=expired):
+                with self.assertRaisesRegex(PermanentError, "超时"):
+                    manager._run(["status"], check=True)
+
+    def test_porcelain_parser_keeps_renames_and_spaces_together(self) -> None:
+        payload = "R  new name.py\x00old name.py\x00?? plain.txt\x00"
+        entries = parse_porcelain_z(payload)
+        self.assertEqual([entry.path for entry in entries], ["new name.py", "plain.txt"])
+        self.assertEqual(entries[0].original, "old name.py")
+        self.assertIsNone(entries[1].original)
+
+    def test_snapshot_uses_one_status_query_and_reports_entries(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-git-snapshot-") as temp:
+            root = Path(temp)
+            (root / "app.py").write_text("print(1)\n", encoding="utf-8")
+            manager = GitManager(root)
+            manager.init()
+            manager.commit_changes("baseline")
+            (root / "app.py").write_text("print(2)\n", encoding="utf-8")
+            real_run = subprocess.run
+            commands: list[list[str]] = []
+
+            def counting(command, **kwargs):
+                commands.append(list(command))
+                return real_run(command, **kwargs)
+
+            with patch("scidev_core.subprocess.run", side_effect=counting):
+                snapshot = manager.snapshot()
+            status_calls = [
+                item for item in commands
+                if "status" in item and "--porcelain=v1" in item
+            ]
+            self.assertEqual(len(status_calls), 1)
+            self.assertEqual(snapshot["state"], "changes")
+            self.assertEqual([entry["path"] for entry in snapshot["entries"]], ["app.py"])
+            self.assertTrue(snapshot["head"])
+
+    def test_atomic_write_keeps_the_original_when_the_replace_cannot_happen(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-atomic-") as temp:
+            target = Path(temp) / "app.py"
+            target.write_text("old\n", encoding="utf-8")
+            with patch("scidev_core.os.replace", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    atomic_write_bytes(target, b"new\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+            self.assertEqual([p.name for p in Path(temp).iterdir()], ["app.py"])
+            atomic_write_bytes(target, b"new\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "new\n")
+
+
+class ObservabilityTests(unittest.TestCase):
+    def test_usage_accounting_failure_is_recorded_without_failing_the_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            agent = CodingAgent(root, ledger, GitManager(root))
+            session = {"session_id": "usage-failure", "messages": []}
+            with patch("scidev_core.ModelRequestUsage.record", side_effect=ValueError("bad usage")):
+                agent._record_model_request(
+                    session, "logical-key", "coding", {"request_attempts": 1}
+                )
+            events = ledger.events_path.read_text(encoding="utf-8")
+            self.assertIn("model_usage_recording_failed", events)
+            self.assertIn("ValueError", events)
+
+    def test_provider_keeps_the_reason_when_metrics_callback_fails(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://localhost:11434/v1", "ollama", "qwen-test", streaming=False
+        )
+        response = json.dumps(
+            {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+        ).encode("utf-8")
+
+        def broken_metrics(_metrics: dict) -> None:
+            raise RuntimeError("telemetry down")
+
+        with patch("scidev_core.urlopen", return_value=BytesIO(response)):
+            message = provider.chat(
+                [{"role": "user", "content": "hi"}], on_metrics=broken_metrics
+            )
+        self.assertEqual(message["content"], "ok")
+        self.assertIn("RuntimeError", provider.last_metrics_error)
 
 
 if __name__ == "__main__":
