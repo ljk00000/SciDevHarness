@@ -21,10 +21,10 @@ import sys
 import threading
 import time
 import tokenize
+import webbrowser
 from functools import partial
 from pathlib import Path
 from typing import Any
-
 from PySide6.QtCore import (
     QDir,
     QEvent,
@@ -32,10 +32,7 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPointF,
-    QProcess,
-    QProcessEnvironment,
     QRect,
-    QRegularExpression,
     QSize,
     QSettings,
     QStringListModel,
@@ -45,10 +42,11 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QBrush, QColor, QFont, QKeyEvent, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QShortcut, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QKeyEvent, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QShortcut, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QCompleter,
     QDialog,
     QFileDialog,
@@ -59,10 +57,12 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QLayout,
     QMainWindow,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -83,6 +83,11 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtQuickWidgets import QQuickWidget
 
+from scidev_planning import TaskPlan, planning_mode
+from scidev_preferences import AppearancePreferences
+from scidev_process import StreamingCommand
+from scidev_settings import SettingsPage
+from scidev_acceptance import SemanticAcceptance
 from scidev_core import (
     CodingAgent,
     CodingToolbox,
@@ -93,11 +98,19 @@ from scidev_core import (
     new_id,
 )
 from scidev_icons import activity_icon
+from scidev_highlighting import LanguageHighlighter, PythonHighlighter
+from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
+from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
+from scidev_verification import VerificationTracker
 from scidev_ui import (
+    ACTIVITY_ICON_SIZE,
     DEFAULT_UI_PROFILE,
     UI_PROFILES,
+    create_ui_font,
+    editor_font_family,
     stylesheet_for_profile,
     ui_profile_for_key,
+    ui_font_family,
     ui_scale_for_resolution,
 )
 
@@ -121,7 +134,6 @@ def _is_link_or_junction(path: Path) -> bool:
 
 THEME = """
 * {
-    font-family: "Segoe UI", "Noto Sans SC", "DengXian", "Microsoft YaHei", sans-serif;
     font-size: 11pt;
 }
 QMainWindow, QWidget#Root {
@@ -163,6 +175,37 @@ QFrame#SummarySettings {
     background: #17212b;
     border-bottom: 1px solid #2b3947;
 }
+QFrame#TaskPlan {
+    background: #141c25;
+    border-bottom: 1px solid #263442;
+}
+QLabel#TaskPlanTitle { color: #dce6f1; font-weight: 600; }
+QLabel#TaskPlanProgress, QLabel#TaskPlanEmpty { color: #97a8ba; }
+QFrame#TaskPlanStep {
+    background: #19232e;
+    border: 1px solid #253443;
+    border-radius: 7px;
+}
+QLabel#TaskPlanNumber {
+    color: #b9c7d7;
+    background: #293746;
+    border-radius: 10px;
+    font-size: 9pt;
+    font-weight: 600;
+}
+QLabel#TaskPlanStepText { color: #dce4ed; }
+QLabel#TaskPlanStepStatus { color: #aab8c8; font-size: 9pt; }
+QLabel#TaskPlanStepStatus[status="completed"] { color: #76d59b; }
+QLabel#TaskPlanStepStatus[status="in_progress"] { color: #75b6ff; }
+QLabel#TaskPlanStepStatus[status="blocked"] { color: #ff9a8d; }
+QToolButton#TaskPlanMode, QToolButton#TaskPlanCollapse {
+    color: #b8c8d8;
+    background: transparent;
+    border: 1px solid #334455;
+    border-radius: 6px;
+    padding: 3px 7px;
+}
+QToolButton#TaskPlanMode:hover, QToolButton#TaskPlanCollapse:hover { background: #202d3a; }
 QLabel#SummarySettingsTitle { color: #e6e6e6; font-weight: 600; }
 QLabel#SummaryState { color: #73c991; }
 QCheckBox { color: #cccccc; spacing: 6px; }
@@ -200,6 +243,9 @@ QScrollArea#GitDetailsScroll {
 QScrollArea#GitDetailsScroll > QWidget {
     background: #141b23;
 }
+QFrame#GitDetailContent {
+    background: #141b23;
+}
 QFrame#GitPageHeader {
     background: #11171e;
     border-bottom: 1px solid #26313d;
@@ -207,6 +253,10 @@ QFrame#GitPageHeader {
 QFrame#GitDetails {
     background: #141b23;
     border-left: 1px solid #273441;
+}
+QFrame#GitCommitFooter {
+    background: #11171e;
+    border-top: 1px solid #273441;
 }
 QFrame#MetricCard {
     background: #171f28;
@@ -323,6 +373,13 @@ QPlainTextEdit#TerminalOutput, QPlainTextEdit#ProblemsOutput {
     padding: 9px 12px;
     font-family: "Consolas", "Courier New", monospace;
     font-size: 9pt;
+}
+QPlainTextEdit#ProjectContextOutput {
+    background: #0d1218;
+    color: #dce4ed;
+    border: none;
+    padding: 6px 10px;
+    font-size: 11pt;
 }
 QLineEdit#TerminalInput {
     background: #17212b;
@@ -512,6 +569,10 @@ QFrame#AgentBubble { background: #18212b; border: 1px solid #2a3744; border-radi
 QFrame#ToolBubble { background: #172720; border: 1px solid #2e493a; border-radius: 8px; }
 QFrame#MetaBubble { background: transparent; border: none; }
 QFrame#SummaryBubble { background: #172934; border: 1px solid #2a4c5b; border-radius: 9px; }
+QFrame#PatchReviewCard { background: #19232e; border: 1px solid #38516a; border-radius: 10px; }
+QLabel#PatchReviewTitle { color: #eef4fa; font-size: 11pt; font-weight: 650; }
+QLabel#PatchReviewSummary, QLabel#PatchReviewHunkText { color: #aab8c7; }
+QPlainTextEdit#PatchReviewDiff { background: #0d1218; color: #dce4ed; border: 1px solid #2b3947; border-radius: 6px; padding: 7px; font-family: "Consolas", "Courier New", monospace; font-size: 9pt; }
 QFrame#NotificationToast { background: #202832; border: 1px solid #493b40; border-left: 3px solid #df7478; border-radius: 10px; }
 QLabel#BubbleRole { color: #91a0af; font-size: 9pt; font-weight: 600; }
 QLabel#BubbleText { color: #e2e9f0; font-size: 11pt; }
@@ -555,6 +616,32 @@ def resolve_initial_workspace(
     if not default.is_dir():
         raise ValueError(f"默认工作区目录不存在：{default}")
     return default
+
+
+def default_sample_workspace(application_dir: str | Path) -> Path:
+    """Return the bundled Tetris sample, falling back to the app directory."""
+    base = Path(application_dir).expanduser().resolve()
+    sample = base / "examples" / "tetris"
+    return sample.resolve() if sample.is_dir() else base
+
+
+def resolve_startup_workspace(
+    explicit_workspace: str | Path | None,
+    last_workspace: str | Path | None,
+    application_dir: str | Path,
+) -> Path:
+    """Prefer explicit and remembered projects, migrating the legacy app-root default."""
+    base = Path(application_dir).expanduser().resolve()
+    default = default_sample_workspace(base)
+    if explicit_workspace is not None:
+        return resolve_initial_workspace(explicit_workspace, None, default)
+
+    remembered = last_workspace
+    if remembered:
+        remembered_path = Path(remembered).expanduser()
+        if remembered_path.is_dir() and remembered_path.resolve() == base and default != base:
+            remembered = default
+    return resolve_initial_workspace(None, remembered, default)
 
 
 def application_base_dir() -> Path:
@@ -660,6 +747,9 @@ class AppSignals(QObject):
     agent_event = Signal(str, object)
     worker_event = Signal(str, object)
     command_approval_requested = Signal(object)
+    browser_approval_requested = Signal(object)
+    patch_review_requested = Signal(object)
+    git_status_ready = Signal(object)
 
 
 class ElidedLabel(QLabel):
@@ -667,20 +757,38 @@ class ElidedLabel(QLabel):
 
     def __init__(self, full_text: str, parent: QWidget | None = None):
         super().__init__(full_text, parent)
+        self.setTextFormat(Qt.TextFormat.PlainText)
         self.full_text = str(full_text)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setAccessibleName(self.full_text)
 
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        if hasattr(self, "full_text"):
+            hint.setWidth(max(hint.width(), self.fontMetrics().horizontalAdvance(self.full_text) + 2))
+        return hint
+
     def resizeEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         super().resizeEvent(event)
+        self.setText(self.full_text)
+
+    def changeEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange) and hasattr(self, "full_text"):
+            self.setText(self.full_text)
+
+    def setText(self, text: str) -> None:
+        self.full_text = str(text)
+        self.setAccessibleName(self.full_text)
         available_width = max(0, self.contentsRect().width())
         if available_width == 0:
+            QLabel.setText(self, self.full_text)
             return
         visible_text = self.fontMetrics().elidedText(
             self.full_text,
-            Qt.TextElideMode.ElideMiddle,
-            available_width,
+            Qt.TextElideMode.ElideRight,
+            max(0, available_width - 2),
         )
         if visible_text != self.text():
             QLabel.setText(self, visible_text)
@@ -703,7 +811,7 @@ class LineNumberArea(QWidget):
         self.editor = editor
 
     def sizeHint(self):  # noqa: ANN201 - Qt API has no useful narrow type here.
-        return self.editor.line_number_area_width(), 0
+        return QSize(self.editor.line_number_area_width(), 0)
 
     def paintEvent(self, event):  # noqa: ANN001 - Qt event signature.
         self.editor.line_number_area_paint_event(event)
@@ -715,6 +823,7 @@ class CodeEditor(QPlainTextEdit):
         self.setObjectName("CodeEditor")
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._ui_scale = 1.0
+        self.appearance_preferences = AppearancePreferences()
         editor_font = QFont("Consolas", 12)
         editor_font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(editor_font)
@@ -739,12 +848,22 @@ class CodeEditor(QPlainTextEdit):
 
     def set_ui_scale(self, ui_scale: float) -> None:
         """Scale the fixed-pitch editor font with the rest of the workbench."""
-        self._ui_scale = min(1.5, max(1.0, float(ui_scale)))
-        editor_font = QFont("Consolas")
+        self._ui_scale = min(1.5, max(0.9, float(ui_scale)))
+        preferences = self.appearance_preferences
+        editor_font = QFont(editor_font_family(preferences.editor_font_family))
         editor_font.setStyleHint(QFont.StyleHint.Monospace)
-        editor_font.setPointSizeF(12 * self._ui_scale)
+        editor_font.setPointSizeF(preferences.editor_font_size * self._ui_scale)
         self.setFont(editor_font)
-        self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
+        self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * preferences.editor_tab_size)
+
+    def set_appearance(self, preferences: AppearancePreferences) -> None:
+        self.appearance_preferences = preferences
+        self.set_ui_scale(self._ui_scale)
+        if not self.property("welcomeMode"):
+            self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth if preferences.editor_wrap else QPlainTextEdit.LineWrapMode.NoWrap)
+        self.line_number_area.setVisible(preferences.line_numbers and not self.property("welcomeMode"))
+        self.update_line_number_area_width(0)
+        self.highlight_current_line()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Space and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -809,11 +928,15 @@ class CodeEditor(QPlainTextEdit):
         self.completer.popup().hide()
 
     def line_number_area_width(self) -> int:
+        if self.property("welcomeMode") or not self.appearance_preferences.line_numbers:
+            return 0
         digits = max(2, len(str(max(1, self.blockCount()))))
         return 16 + self.fontMetrics().horizontalAdvance("9") * digits
 
     def update_line_number_area_width(self, _new_block_count: int) -> None:
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+        rect = self.contentsRect()
+        self.line_number_area.setGeometry(QRect(rect.left(), rect.top(), self.line_number_area_width(), rect.height()))
 
     def update_line_number_area(self, rect: QRect, dy: int) -> None:
         if dy:
@@ -845,6 +968,9 @@ class CodeEditor(QPlainTextEdit):
             block_number += 1
 
     def highlight_current_line(self) -> None:
+        if not self.appearance_preferences.highlight_line:
+            self.setExtraSelections([])
+            return
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(self._current_line_background)
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
@@ -860,41 +986,6 @@ class CodeEditor(QPlainTextEdit):
         self._current_line_background = QColor(profile.current_line_background)
         self.line_number_area.update()
         self.highlight_current_line()
-
-
-class PythonHighlighter(QSyntaxHighlighter):
-    _PATTERNS = (
-        r"\b(and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|match|not|or|pass|raise|return|try|while|with|yield)\b",
-        r"\b(True|False|None|self)\b",
-        r"\b\d+(\.\d+)?\b",
-        r"#[^\n]*",
-        r'"[^"\n]*"|\'[^\'\n]*\'',
-    )
-
-    def __init__(self, document, profile_key: str = DEFAULT_UI_PROFILE):  # noqa: ANN001 - document type varies by binding.
-        super().__init__(document)
-        self.rules: list[tuple[QRegularExpression, QTextCharFormat]] = []
-        self.profile_key = DEFAULT_UI_PROFILE
-        self.set_ui_profile(profile_key)
-
-    def set_ui_profile(self, profile_key: str) -> None:
-        profile = ui_profile_for_key(profile_key)
-        self.profile_key = profile.key
-        self.rules.clear()
-        for index, (pattern, color) in enumerate(zip(self._PATTERNS, profile.syntax_colors, strict=True)):
-            fmt = QTextCharFormat()
-            fmt.setForeground(QColor(color))
-            if index == 0:
-                fmt.setFontWeight(QFont.Weight.Bold)
-            self.rules.append((QRegularExpression(pattern), fmt))
-        self.rehighlight()
-
-    def highlightBlock(self, text: str) -> None:
-        for expression, fmt in self.rules:
-            iterator = expression.globalMatch(text)
-            while iterator.hasNext():
-                match = iterator.next()
-                self.setFormat(match.capturedStart(), match.capturedLength(), fmt)
 
 
 class ProjectFilterProxy(QSortFilterProxyModel):
@@ -1423,7 +1514,7 @@ class _LegacyDevelopmentTreeView(QFrame):
                 "retry": "重试",
                 "active": "进行中",
             }.get(node.get("status"), "尝试")
-            badge_font = QFont("Segoe UI", 9)
+            badge_font = create_ui_font(9)
             painter.setFont(badge_font)
             badge_width = max(34, painter.fontMetrics().horizontalAdvance(status_label) + 14)
             badge_rect = QRect(rect.right() - badge_width - 10, rect.top() + 8, badge_width, 18)
@@ -1435,13 +1526,13 @@ class _LegacyDevelopmentTreeView(QFrame):
 
             text_rect = QRect(rect.left() + 13, rect.top() + 7, max(40, badge_rect.left() - rect.left() - 20), rect.height() - 14)
             painter.setPen(QColor("#f2f2f2"))
-            title_font = QFont("Segoe UI", 10)
+            title_font = create_ui_font(10)
             title_font.setWeight(QFont.Weight.DemiBold)
             painter.setFont(title_font)
             title = painter.fontMetrics().elidedText(str(node.get("title", "")), Qt.TextElideMode.ElideRight, text_rect.width())
             painter.drawText(text_rect.left(), text_rect.top() + 14, title)
             painter.setPen(accent)
-            status_font = QFont("Segoe UI", 9)
+            status_font = create_ui_font(9)
             painter.setFont(status_font)
             painter.drawText(text_rect.left(), text_rect.top() + 33, self._status_text(node))
             painter.setPen(QColor("#aab5ba"))
@@ -1456,12 +1547,12 @@ class _LegacyDevelopmentTreeView(QFrame):
 
         painter.restore()
         painter.setPen(QColor("#d8f5ed"))
-        header_font = QFont("Segoe UI", 11)
+        header_font = create_ui_font(11)
         header_font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(header_font)
         painter.drawText(18, 24, "开发尝试树")
         painter.setPen(QColor("#858585"))
-        painter.setFont(QFont("Segoe UI", 10))
+        painter.setFont(create_ui_font(10))
         helper_rect = QRect(18, 10, max(100, self.width() - 36), 20)
         painter.drawText(
             helper_rect,
@@ -1595,10 +1686,11 @@ class DevelopmentTreeView(QQuickWidget):
             root.setProperty("layoutOffsets", self._qml_offsets())
             root.setProperty("visualTheme", self._visual_theme)
             root.setProperty("uiScale", self._ui_scale)
+            root.setProperty("uiFontFamily", ui_font_family())
 
     def set_ui_scale(self, ui_scale: float) -> None:
         """Keep version-tree labels and cards aligned with screen UI scaling."""
-        self._ui_scale = min(1.5, max(1.0, float(ui_scale)))
+        self._ui_scale = min(2.2, max(0.9, float(ui_scale)))
         self._update_minimum_height()
         if self._root_item is not None:
             self._root_item.setProperty("uiScale", self._ui_scale)
@@ -1721,13 +1813,13 @@ class DevelopmentTreeView(QQuickWidget):
             if node.get("lane") == "attempt":
                 parent_id = str(node.get("parent_id") or "root")
                 attempts_by_parent[parent_id] = attempts_by_parent.get(parent_id, 0) + 1
-        extra_height = sum(max(0, count - 1) * 90 for count in attempts_by_parent.values())
+        extra_height = sum(max(0, count - 1) * 100 for count in attempts_by_parent.values())
         offset_bottom = max(
             (max(0.0, offset.y()) for offset in self._node_offsets.values()),
             default=0.0,
         )
         scale = self._ui_scale
-        content_height = (140 + main_count * 122 + extra_height + offset_bottom) * scale
+        content_height = (160 + main_count * 140 + extra_height + offset_bottom) * scale
         self.setMinimumHeight(max(math.ceil(420 * scale), math.ceil(content_height)))
 
     def set_nodes(self, nodes: list[dict[str, Any]]) -> None:
@@ -1760,16 +1852,16 @@ class DevelopmentTreeView(QQuickWidget):
         main_nodes = [node for node in self.nodes if node.get("lane") == "main"]
         if not main_nodes:
             return {}, {}
-        card_width = min(270, max(180, int(self.width() * 0.31)))
+        card_width = min(300, max(190, int(self.width() * 0.31)))
         if self.width() < 620:
-            card_width = min(card_width, max(132, int((self.width() - 48) / 2)))
+            card_width = min(300, max(150, int((self.width() - 44) / 2)))
         trunk_x = self.width() // 2
-        card_height = 68
+        card_height = 90
         compact_layout = self.width() < 520 or self.height() < 360
-        top = 48 if compact_layout else 88
-        row_height = 80 if compact_layout else 122
-        attempt_offset = 40 if compact_layout else 54
-        attempt_slot_height = 90
+        top = 56 if compact_layout else 104
+        row_height = 104 if compact_layout else 140
+        attempt_offset = 52 if compact_layout else 62
+        attempt_slot_height = 100
         cards: dict[str, tuple[int, int, QRect]] = {}
         dots: dict[str, tuple[int, int]] = {}
         attempts_by_parent: dict[str, int] = {}
@@ -1796,7 +1888,7 @@ class DevelopmentTreeView(QQuickWidget):
             offset = self._node_offsets.get(str(node["id"]), QPointF())
             dot_x = int(parent_x + 78 + offset.x())
             dot_y = max(90, int(parent_y + attempt_offset + slot * attempt_slot_height + offset.y()))
-            card_x = min(self.width() - card_width - 12, dot_x + 24)
+            card_x = int(min(self.width() - card_width - 12, parent_x + 102) + offset.x())
             cards[node["id"]] = (dot_x, dot_y, QRect(card_x, dot_y - card_height // 2, card_width, card_height))
             dots[node["id"]] = (dot_x, dot_y)
         return cards, dots
@@ -1836,6 +1928,251 @@ class MessageBubble(QFrame):
 
     def append_message(self, text: str) -> None:
         self.body_label.setText(self.body_label.text() + text)
+
+
+class ExecutionGroup(QFrame):
+    """Collapsible, per-task history of model/tool activity in the conversation."""
+
+    def __init__(self, session_id: str):
+        super().__init__()
+        self.session_id = session_id
+        self.state = "running"
+        self.activity = "正在准备请求"
+        self.model_call_count = 0
+        self.tool_call_count = 0
+        self.item_count = 0
+        self.setObjectName("ExecutionGroup")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(6, 3, 6, 4)
+        root.setSpacing(3)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(7)
+        self.toggle = QToolButton()
+        self.toggle.setObjectName("ExecutionToggle")
+        self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.toggle.setText("执行过程")
+        self.toggle.setCheckable(True)
+        self.toggle.setToolTip("展开查看 Agent 回复、工具调用参数和结果")
+        self.toggle.setAccessibleName("展开执行过程")
+        self.toggle.toggled.connect(self.set_expanded)
+        header.addWidget(self.toggle)
+
+        self.status_label = QLabel(self.activity)
+        self.status_label.setObjectName("ExecutionStatus")
+        self.status_label.setProperty("state", self.state)
+        header.addWidget(self.status_label, 1)
+
+        self.count_label = QLabel("0 条记录")
+        self.count_label.setObjectName("ExecutionCount")
+        header.addWidget(self.count_label, 0, Qt.AlignmentFlag.AlignRight)
+        root.addLayout(header)
+
+        self.body = QWidget()
+        self.body.setObjectName("ExecutionBody")
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(4, 2, 4, 3)
+        self.body_layout.setSpacing(6)
+        self.body.hide()
+        root.addWidget(self.body)
+        self._refresh_header()
+
+    def set_expanded(self, expanded: bool) -> None:
+        expanded = bool(expanded)
+        self.body.setVisible(expanded)
+        self.toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self.toggle.setAccessibleName("收起执行过程" if expanded else "展开执行过程")
+        self.toggle.setToolTip("收起执行过程" if expanded else "展开查看 Agent 回复、工具调用参数和结果")
+
+    def add_item(self, widget: QWidget) -> None:
+        self.body_layout.addWidget(widget)
+        self.item_count += 1
+        self._refresh_header()
+
+    def record_model_call(self, turn: object) -> None:
+        self.model_call_count += 1
+        try:
+            turn_number = max(1, int(turn))
+        except (TypeError, ValueError, OverflowError):
+            turn_number = self.model_call_count
+        self.activity = f"模型请求 · 第 {turn_number} 轮"
+        self._refresh_header()
+
+    def record_tool_call(self, name: str) -> None:
+        self.tool_call_count += 1
+        self.activity = f"正在调用 {name or '工具'}"
+        self._refresh_header()
+
+    def set_activity(self, activity: str) -> None:
+        if activity:
+            self.activity = activity[:100]
+            self._refresh_header()
+
+    def set_state(self, state: str) -> None:
+        self.state = state if state in {"running", "waiting", "completed", "failed"} else "running"
+        self.status_label.setProperty("state", self.state)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+        self._refresh_header()
+
+    def _refresh_header(self) -> None:
+        status_text = {
+            "running": self.activity,
+            "waiting": "等待网络重试",
+            "completed": "已完成",
+            "failed": "执行失败",
+        }[self.state]
+        self.status_label.setText(status_text)
+        if self.status_label.property("state") != self.state:
+            self.status_label.setProperty("state", self.state)
+            self.status_label.style().unpolish(self.status_label)
+            self.status_label.style().polish(self.status_label)
+        self.count_label.setText(f"{self.tool_call_count} 次工具 · {self.item_count} 条记录")
+        self.setToolTip(
+            f"模型请求 {self.model_call_count} 次 · 工具调用 {self.tool_call_count} 次 · "
+            f"过程记录 {self.item_count} 条"
+        )
+
+
+class PatchReviewCard(QFrame):
+    """Inline, non-modal review surface for per-hunk code changes."""
+
+    decision = Signal(object)
+
+    def __init__(self, preview: dict[str, Any]):
+        super().__init__()
+        self.setObjectName("PatchReviewCard")
+        self._decided = False
+        self.hunk_checks: dict[int, QCheckBox] = {}
+
+        hunks = [item for item in preview.get("hunks", []) if isinstance(item, dict)]
+        file_count = int(preview.get("file_count", 0) or 0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 11, 12, 11)
+        layout.setSpacing(7)
+
+        self.title_label = QLabel("审核代码补丁")
+        self.title_label.setObjectName("PatchReviewTitle")
+        layout.addWidget(self.title_label)
+        self.summary_label = QLabel(
+            f"{file_count} 个文件 · {len(hunks)} 个修改块。勾选要应用的块；拒绝或部分批准会停止当前任务。"
+        )
+        self.summary_label.setObjectName("PatchReviewSummary")
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+
+        hunk_scroll = QScrollArea()
+        hunk_scroll.setObjectName("PatchReviewHunkScroll")
+        hunk_scroll.setWidgetResizable(True)
+        hunk_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        hunk_scroll.setMaximumHeight(170)
+        hunk_container = QWidget()
+        hunk_layout = QVBoxLayout(hunk_container)
+        hunk_layout.setContentsMargins(2, 2, 2, 2)
+        hunk_layout.setSpacing(4)
+
+        diff_sections = []
+        operation_names = {"update": "修改", "add": "新增", "delete": "删除"}
+        for item in hunks:
+            try:
+                hunk_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if isinstance(item.get("id"), bool) or hunk_id in self.hunk_checks:
+                continue
+            path = str(item.get("path") or "（未知路径）")
+            operation = operation_names.get(str(item.get("operation") or ""), "变更")
+            added = int(item.get("added_lines", 0) or 0)
+            removed = int(item.get("removed_lines", 0) or 0)
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(1, 2, 1, 2)
+            row_layout.setSpacing(7)
+            check = QCheckBox()
+            check.setObjectName("PatchReviewHunk")
+            check.setAccessibleName(f"选择补丁块 {hunk_id}：{path}")
+            check.setToolTip(f"选择是否应用此修改块：{path}")
+            self.hunk_checks[hunk_id] = check
+            check.toggled.connect(self._sync_selection)
+            row_layout.addWidget(check, 0, Qt.AlignmentFlag.AlignTop)
+            description = QLabel(f"#{hunk_id} · {path}\n{operation} · +{added} / −{removed} 行")
+            description.setObjectName("PatchReviewHunkText")
+            description.setTextFormat(Qt.TextFormat.PlainText)
+            description.setWordWrap(True)
+            row_layout.addWidget(description, 1)
+            hunk_layout.addWidget(row)
+            diff_sections.append(
+                f"### 修改块 {hunk_id} · {path} · {operation}\n{str(item.get('diff') or '[无文本差异]')}"
+            )
+        hunk_layout.addStretch(1)
+        hunk_scroll.setWidget(hunk_container)
+        layout.addWidget(hunk_scroll)
+
+        self.diff_view = QPlainTextEdit()
+        self.diff_view.setObjectName("PatchReviewDiff")
+        self.diff_view.setReadOnly(True)
+        self.diff_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.diff_view.setPlaceholderText("补丁没有可显示的差异")
+        self.diff_view.setPlainText("\n\n".join(diff_sections))
+        self.diff_view.setMinimumHeight(110)
+        self.diff_view.setMaximumHeight(210)
+        layout.addWidget(self.diff_view)
+
+        action_row = QHBoxLayout()
+        action_row.addStretch(1)
+        self.select_all_button = QPushButton("全选")
+        self.select_all_button.setObjectName("Quiet")
+        self.select_all_button.setEnabled(bool(self.hunk_checks))
+        self.select_all_button.clicked.connect(lambda: self._set_all(True))
+        action_row.addWidget(self.select_all_button)
+        self.apply_button = QPushButton("应用已选修改")
+        self.apply_button.setObjectName("Primary")
+        self.apply_button.setEnabled(False)
+        self.apply_button.clicked.connect(self._accept_selected)
+        action_row.addWidget(self.apply_button)
+        self.reject_button = QPushButton("拒绝全部")
+        self.reject_button.setObjectName("Quiet")
+        self.reject_button.clicked.connect(self._reject_all)
+        action_row.addWidget(self.reject_button)
+        layout.addLayout(action_row)
+
+    def selected_hunks(self) -> set[int]:
+        return {hunk_id for hunk_id, check in self.hunk_checks.items() if check.isChecked()}
+
+    def _set_all(self, checked: bool) -> None:
+        for check in self.hunk_checks.values():
+            check.setChecked(checked)
+
+    def _sync_selection(self, _checked: bool = False) -> None:
+        if not self._decided:
+            self.apply_button.setEnabled(bool(self.selected_hunks()))
+            self.select_all_button.setEnabled(bool(self.hunk_checks))
+
+    def _accept_selected(self) -> None:
+        selected = self.selected_hunks()
+        if selected:
+            self._finish(selected)
+
+    def _reject_all(self) -> None:
+        self._finish(None)
+
+    def _finish(self, selected: set[int] | None) -> None:
+        if self._decided:
+            return
+        self._decided = True
+        count = len(selected or ())
+        self.summary_label.setText(
+            f"已批准 {count} 个修改块。" if selected is not None else "已拒绝全部修改。"
+        )
+        for check in self.hunk_checks.values():
+            check.setEnabled(False)
+        self.select_all_button.setEnabled(False)
+        self.apply_button.setEnabled(False)
+        self.reject_button.setEnabled(False)
+        self.decision.emit(selected)
 
 
 class NotificationToast(QFrame):
@@ -1908,13 +2245,240 @@ class NotificationToast(QFrame):
         self.dismissed.emit()
 
 
+class TaskPlanPanel(QFrame):
+    """Compact, persistent-in-session view of the active task's steps."""
+
+    MODE_LABELS = {"auto": "自动", "required": "必需", "off": "关闭"}
+    MODE_DESCRIPTIONS = {
+        "auto": "自动规划：多步骤任务显示计划，简单任务直接执行",
+        "required": "必须先规划：Agent 创建计划后才能调用其他工具",
+        "off": "关闭规划：不提供计划工具，也不显示步骤计划",
+    }
+    STATUS_LABELS = {
+        "pending": "待处理",
+        "in_progress": "进行中",
+        "completed": "已完成",
+        "blocked": "受阻",
+        "skipped": "已跳过",
+    }
+
+    def __init__(self, mode: str, settings: QSettings, mode_changed, parent: QWidget | None = None):  # noqa: ANN001
+        super().__init__(parent)
+        self.setObjectName("TaskPlan")
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self.settings = settings
+        self.mode_changed = mode_changed
+        self.mode = planning_mode(mode)
+        self.plan: TaskPlan | None = None
+        self.run_state = "idle"
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 6, 10, 7)
+        outer.setSpacing(5)
+        header = QHBoxLayout()
+        header.setSpacing(7)
+        self.title_label = QLabel("任务计划")
+        self.title_label.setObjectName("TaskPlanTitle")
+        header.addWidget(self.title_label)
+        self.progress_label = QLabel()
+        self.progress_label.setObjectName("TaskPlanProgress")
+        header.addWidget(self.progress_label, 1)
+        self.mode_button = QToolButton()
+        self.mode_button.setObjectName("TaskPlanMode")
+        self.mode_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.mode_menu = QMenu(self.mode_button)
+        self.mode_actions = {}
+        for value, label in (("auto", "自动规划"), ("required", "必须先规划"), ("off", "关闭规划")):
+            action = self.mode_menu.addAction(label)
+            action.setCheckable(True)
+            action.triggered.connect(lambda _checked=False, selected=value: self.set_mode(selected, persist=True))
+            self.mode_actions[value] = action
+        self.mode_button.setMenu(self.mode_menu)
+        header.addWidget(self.mode_button)
+        self.collapse_button = QToolButton()
+        self.collapse_button.setObjectName("TaskPlanCollapse")
+        self.collapse_button.setFixedWidth(27)
+        self.collapse_button.clicked.connect(self.toggle_collapsed)
+        header.addWidget(self.collapse_button)
+        outer.addLayout(header)
+
+        self.scroll = QScrollArea()
+        self.scroll.setObjectName("TaskPlanScroll")
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll.setMaximumHeight(240)
+        self.body = QWidget()
+        self.body.setObjectName("TaskPlanBody")
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(4)
+        self.scroll.setWidget(self.body)
+        outer.addWidget(self.scroll)
+        self.collapsed = bool(settings.value("taskPlanCollapsed", False))
+        self._sync_controls()
+        self._render_plan()
+
+    def set_mode(self, mode: str, *, persist: bool = False) -> None:
+        self.mode = planning_mode(mode)
+        if persist:
+            self.settings.setValue("planningMode", self.mode)
+            self.settings.sync()
+            self.mode_changed(self.mode)
+        self._sync_controls()
+        self._render_empty()
+
+    def set_plan(self, record: Any, *, run_state: str | None = None) -> None:
+        self.plan = TaskPlan.from_record(record)
+        if run_state is not None:
+            self.run_state = run_state
+        self._sync_controls()
+        self._render_plan()
+
+    def set_run_state(self, state: str) -> None:
+        self.run_state = state
+        self._render_plan()
+
+    def toggle_collapsed(self) -> None:
+        self.collapsed = not self.collapsed
+        self.settings.setValue("taskPlanCollapsed", self.collapsed)
+        self.settings.sync()
+        self._sync_controls()
+
+    def _sync_controls(self) -> None:
+        self.mode_button.setText(self.MODE_LABELS[self.mode])
+        description = f"{self.MODE_DESCRIPTIONS[self.mode]}；仅影响之后提交的新任务，当前任务配置不会改变"
+        self.mode_button.setToolTip(description)
+        self.mode_button.setAccessibleName(description)
+        for key, action in self.mode_actions.items():
+            action.setChecked(key == self.mode)
+        self.scroll.setVisible(not self.collapsed)
+        self.collapse_button.setText("›" if self.collapsed else "⌄")
+        self.collapse_button.setToolTip("展开任务计划" if self.collapsed else "收起任务计划")
+        self.collapse_button.setAccessibleName(self.collapse_button.toolTip())
+
+    def _render_plan(self) -> None:
+        while self.body_layout.count():
+            item = self.body_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        if self.plan is None:
+            self._render_empty()
+            return
+        completed, total = self.plan.progress
+        prefix = {
+            "running": "执行中",
+            "waiting": "等待重试",
+            "failed": "未完成",
+            "incomplete": "需继续",
+            "completed": "全部完成",
+            "idle": "已保存",
+        }.get(self.run_state, "进行中")
+        self._progress_text = f"{prefix} · {completed}/{total}"
+        self.progress_label.setText(self._progress_text)
+        for index, step in enumerate(self.plan.steps, 1):
+            row = QFrame()
+            row.setObjectName("TaskPlanStep")
+            row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(7, 5, 7, 5)
+            row_layout.setSpacing(7)
+            number = QLabel(str(index))
+            number.setObjectName("TaskPlanNumber")
+            number.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            number.setFixedSize(21, 21)
+            row_layout.addWidget(number, 0, Qt.AlignmentFlag.AlignTop)
+            label = ElidedLabel(step.step)
+            label.setObjectName("TaskPlanStepText")
+            label.setToolTip(step.step)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            row_layout.addWidget(label, 1)
+            status = QLabel(self.STATUS_LABELS[step.status])
+            status.setObjectName("TaskPlanStepStatus")
+            status.setProperty("status", step.status)
+            status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+            row_layout.addWidget(status)
+            self.body_layout.addWidget(row)
+        if self.plan.explanation:
+            explanation = QLabel(self.plan.explanation)
+            explanation.setObjectName("TaskPlanEmpty")
+            explanation.setWordWrap(True)
+            self.body_layout.addWidget(explanation)
+        self.body_layout.addStretch(1)
+        # Reserve real space for nearby steps rather than trusting the scroll
+        # area's tiny default hint. Longer plans remain independently scrollable.
+        self.update_viewport_height()
+
+    def update_viewport_height(self) -> None:
+        count = len(self.plan.steps) if self.plan else 0
+        desired = min(240, count * 44 + (36 if self.plan and self.plan.explanation else 0)) if count else 30
+        if self.window().height() < 600:
+            desired = min(desired, 84)
+        self.scroll.setFixedHeight(round(max(30, desired)))
+        if self.plan:
+            completed, total = self.plan.progress
+            compact_header = self.window().width() < 1000 or (self.isVisible() and self.width() < 300)
+            self.title_label.setText("计划" if compact_header else "任务计划")
+            self.progress_label.setToolTip(f"{self.run_state} · {completed}/{total}")
+            if compact_header:
+                self.progress_label.setText(f"{completed}/{total}")
+            else:
+                self.progress_label.setText(self._progress_text)
+        QTimer.singleShot(0, self._reveal_current_step)
+
+    def _reveal_current_step(self) -> None:
+        if self.plan is None:
+            return
+        for index, step in enumerate(self.plan.steps):
+            if step.status == "in_progress":
+                item = self.body_layout.itemAt(index)
+                if item and item.widget():
+                    self.scroll.ensureWidgetVisible(item.widget(), 0, 0)
+                    self.scroll.verticalScrollBar().setValue(item.widget().y())
+                break
+
+    def _render_empty(self) -> None:
+        if self.plan is not None:
+            return
+        while self.body_layout.count():
+            item = self.body_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        empty = QLabel(
+            "等待 Agent 创建计划" if self.mode == "required"
+            else "计划已关闭" if self.mode == "off"
+            else "多步骤任务计划会显示在这里"
+        )
+        empty.setObjectName("TaskPlanEmpty")
+        empty.setWordWrap(False)
+        empty.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.body_layout.addWidget(empty)
+        state_label = {
+            "running": "正在执行",
+            "waiting": "等待网络重试",
+            "failed": "失败 · 可重试",
+            "incomplete": "计划未完成",
+            "completed": "已结束",
+        }.get(self.run_state, "")
+        self.progress_label.setText(state_label)
+        self.update_viewport_height()
+
+
 class ClientWindow(QMainWindow):
     WORKBENCH_COMPACT_BREAKPOINT = 1000
     EXPLORER_COLLAPSE_BREAKPOINT = 900
     QUICK_SEARCH_BULK_EXPANSION_LIMIT = 150
     QUICK_SEARCH_VISIBLE_EXPANSION_BATCH_SIZE = 20
-    WORKBENCH_WIDE_MINIMUMS = (240, 360, 280)
-    WORKBENCH_COMPACT_MINIMUMS = (200, 320, 232)
+    WORKBENCH_WIDE_MINIMUMS = (260, 360, 280)
+    WORKBENCH_COMPACT_MINIMUMS = (220, 320, 232)
+    # Narrow windows keep the code editor at a usable width before the Agent
+    # pane takes its percentage share.
+    WORKBENCH_COMPACT_EDITOR_MINIMUM = 480
+    CODE_INTEL_DEBOUNCE_MS = 250
+    CODE_INTEL_MAX_PARSE_CHARS = 400_000
 
     def __init__(self, project_root: Path):
         super().__init__()
@@ -1924,7 +2488,8 @@ class ClientWindow(QMainWindow):
         self.setMinimumSize(780, 480)
         self._base_minimum_size = QSize(self.minimumSize())
         self._ui_scale = 1.0
-        self._base_ui_font = QFont(self.font())
+        self._base_ui_font = create_ui_font()
+        self.setFont(self._base_ui_font)
         self._screen_window_handle = None
         self._screen_metric_signal_screen = None
         self._screen_metric_connections = []
@@ -1951,19 +2516,44 @@ class ClientWindow(QMainWindow):
             # workbench tests into the compact layout and hide the explorer.
             self.resize(1500, 920)
         self.ui_settings = QSettings("SciDevHarness", "SciDevHarness")
+        self.appearance_preferences = AppearancePreferences.load(self.ui_settings)
+        self._base_ui_font = create_ui_font(self.appearance_preferences.font_size,
+                                          self.appearance_preferences.font_family,
+                                          self.appearance_preferences.font_weight)
+        self.setFont(self._base_ui_font)
+        self._screen_dimensions = (initial_screen.geometry().width(), initial_screen.geometry().height()) if initial_screen is not None and not self._offscreen_platform else (1280, 720)
+        self._ui_scale = self._resolved_ui_scale(*self._screen_dimensions)
+        try:
+            self.planning_mode = planning_mode(self.ui_settings.value("planningMode", "auto"))
+        except ValueError:
+            self.planning_mode = "auto"
         self.ui_profile = ui_profile_for_key(
             self.ui_settings.value("uiProfile", DEFAULT_UI_PROFILE)
         ).key
-        self.setStyleSheet(stylesheet_for_profile(THEME, self.ui_profile, self._ui_scale))
+        self.setStyleSheet(stylesheet_for_profile(THEME, self.ui_profile, self._ui_scale, self.appearance_preferences))
         self.ledger = EventLedger(self.project_root)
         self.git = GitManager(self.project_root)
         self.toolbox = CodingToolbox(self.project_root, self.ledger)
         self.summary_settings = SummarySettings.load(self.project_root)
+        self.model_usage = ModelRequestUsage.empty()
+        self._context_usage_estimated_tokens = 0
+        self._context_usage_actual_tokens: int | None = None
+        self._context_usage_session_id = ""
         self.signals = AppSignals()
         self.current_session_id: str | None = None
         self.active_task_id: str | None = None
         self._streaming_bubbles: dict[tuple[str, int], MessageBubble] = {}
+        self._execution_group_active = False
+        self._execution_group_session_id = ""
+        self._active_execution_group: ExecutionGroup | None = None
+        self._pending_patch_reviews: dict[int, dict[str, Any]] = {}
         self._active_notification: NotificationToast | None = None
+        self.project_context_snapshot: dict[str, Any] = {}
+        self._project_environment_report = ""
+        self._environment_check_running = False
+        self._context_preview_pending = False
+        self._context_generation = 0
+        self._last_context_query = ""
         self.current_file: Path | None = None
         self._editor_paths: dict[QWidget, Path] = {}
         # QTextDocument normalizes newline encodings; retain each file's EOL for save.
@@ -1979,9 +2569,17 @@ class ClientWindow(QMainWindow):
         self.task_dialog: QDialog | None = None
         self.task_history_tree: QTreeWidget | None = None
         self.window_max_button: QToolButton | None = None
-        self.terminal_process: QProcess | None = None
+        self.terminal_process: StreamingCommand | None = None
         self._terminal_buffer = ""
         self._terminal_decoders: dict[str, Any] = {}
+        self._terminal_started_at = 0.0
+        self._terminal_timer = QTimer(self)
+        self._terminal_timer.setInterval(40)
+        self._terminal_timer.timeout.connect(self._poll_terminal_output)
+        self._code_intel_timer = QTimer(self)
+        self._code_intel_timer.setSingleShot(True)
+        self._code_intel_timer.setInterval(self.CODE_INTEL_DEBOUNCE_MS)
+        self._code_intel_timer.timeout.connect(self._refresh_code_intel)
         self.terminal_cwd = self.project_root
         self._entry_parent = self.project_root
         self._explorer_entry_mode = "create"
@@ -1993,9 +2591,14 @@ class ClientWindow(QMainWindow):
         self._workbench_user_ratios: tuple[float, float] | None = UI_PROFILES[
             self.ui_profile
         ].layout_ratios
+        self._workbench_user_ratios = self._saved_workbench_ratios(self.ui_profile)
         self._workbench_adapting = False
         self._workbench_adapt_pending = False
-        self._explorer_visibility_override: bool | None = None
+        self._explorer_visibility_override: bool | None = {"show": True, "hide": False}.get(self.appearance_preferences.explorer_mode)
+        self._git_focus = False
+        self._git_details_expanded = False
+        self._git_details_forced = False
+        self._git_chat_visible = False
         self._titlebar_compact: bool | None = None
         self._summary_settings_compact: bool | None = None
         self._git_tree_compact_restore: tuple[float, float, float] | None = None
@@ -2009,6 +2612,9 @@ class ClientWindow(QMainWindow):
             event_callback=self._emit_agent,
             summary_settings=self.summary_settings,
             command_approval=self._request_command_approval,
+            browser_approval=self._request_browser_approval,
+            require_verification=True,
+            patch_review=self._request_patch_review,
         )
         self.worker = RetryQueue(
             self.ledger,
@@ -2019,8 +2625,17 @@ class ClientWindow(QMainWindow):
         self.signals.agent_event.connect(self._handle_agent_event)
         self.signals.worker_event.connect(self._handle_worker_event)
         self.signals.command_approval_requested.connect(self._handle_command_approval_request)
+        self.signals.browser_approval_requested.connect(self._handle_browser_approval_request)
+        self.signals.patch_review_requested.connect(self._handle_patch_review_request)
+        self.signals.git_status_ready.connect(self._apply_git_snapshot)
+        self._git_status_lock = threading.Lock()
+        self._git_status_busy = False
+        self._git_status_dirty = False
+        self._git_status_seq = 0
+        self._git_status_applied = 0
         self._build_ui()
         self.set_ui_profile(self.ui_profile, persist=False)
+        self._apply_screen_resolution(*self._screen_dimensions)
         self._install_shortcuts()
         self.worker.start()
         self.refresh_all()
@@ -2046,8 +2661,22 @@ class ClientWindow(QMainWindow):
         self.git_page = self._build_git_page()
         self.workspace_stack.addWidget(self.workspace_page)
         self.workspace_stack.addWidget(self.git_page)
+        self.settings_page = SettingsPage()
+        self.settings_page.value_changed.connect(self._on_appearance_setting_changed)
+        self.settings_page.reset_requested.connect(self._reset_appearance)
+        self.settings_page.reset_layout_requested.connect(self._reset_workbench_layout)
+        self.settings_page.close_requested.connect(self._close_settings)
+        self.settings_page.agent_requested.connect(self._open_agent_settings_from_preferences)
+        self.workspace_stack.addWidget(self.settings_page)
+        self.workspace_stack.currentChanged.connect(self._on_workspace_stack_page_changed)
         workbench.addWidget(self.workspace_stack)
-        workbench.addWidget(self._build_chat_panel())
+        self.chat_panel = self._build_chat_panel()
+        workbench.addWidget(self.chat_panel)
+        self.summary_settings_scroll.takeWidget()
+        self.settings_page.attach_agent_settings(
+            self.summary_settings_panel,
+            lambda: self.summary_settings != SummarySettings(),
+        )
         profile = UI_PROFILES[self.ui_profile]
         workbench.setSizes(
             [
@@ -2087,6 +2716,7 @@ class ClientWindow(QMainWindow):
         self.status_label = QLabel("就绪")
         self.status_label.setObjectName("StatusText")
         status.addWidget(self.status_label, 1)
+        status.messageChanged.connect(lambda message: self.status_label.setVisible(not bool(message)))
         self.status_branch = QLabel("Git · 未初始化")
         self.status_branch.setObjectName("StatusBranch")
         self.status_branch.setMinimumWidth(0)
@@ -2094,6 +2724,7 @@ class ClientWindow(QMainWindow):
         self.status_branch.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         status.addPermanentWidget(self.status_branch)
         self.status_position = QLabel("Ln 1, Col 1")
+        self.status_position.setVisible(False)
         status.addPermanentWidget(self.status_position)
         status.addPermanentWidget(QLabel("UTF-8"))
         self.status_language = QLabel("Plain Text")
@@ -2154,8 +2785,13 @@ class ClientWindow(QMainWindow):
         self.close_find_shortcut = QShortcut(QKeySequence("Escape"), self)
         self.close_find_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self.close_find_shortcut.activated.connect(
-            lambda: self._close_find_bar() if self.find_bar.isVisible() else None
+            lambda: self._close_settings() if self.workspace_stack.currentWidget() is self.settings_page
+            else self._close_find_bar() if self.find_bar.isVisible() else None
         )
+
+        self.settings_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
+        self.settings_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.settings_shortcut.activated.connect(self.show_settings)
 
         self.terminal_shortcut = QShortcut(QKeySequence("Ctrl+`"), self)
         self.terminal_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -2163,6 +2799,7 @@ class ClientWindow(QMainWindow):
 
     def _build_title_bar(self) -> QFrame:
         title_bar = WindowTitleBar(self)
+        self.title_bar = title_bar
         title_bar.setFixedHeight(42)
         layout = QHBoxLayout(title_bar)
         layout.setContentsMargins(12, 0, 12, 0)
@@ -2173,25 +2810,29 @@ class ClientWindow(QMainWindow):
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo.setFixedSize(25, 25)
         layout.addWidget(logo)
-        title = QLabel("SciDevHarness")
+        title = ElidedLabel("SciDevHarness")
+        self.title_brand = title
         title.setObjectName("WindowTitle")
+        title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        title.setMinimumWidth(64)
+        title.setMaximumWidth(160)
         layout.addWidget(title)
         layout.addWidget(self._vertical_rule())
         project = ElidedLabel(self.project_root.name)
         project.setObjectName("Subtle")
         project.setToolTip(str(self.project_root))
         project.setMinimumWidth(96)
-        project.setMaximumWidth(220)
-        project.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        project.setMaximumWidth(380)
+        project.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.title_project_label = project
-        layout.addWidget(project)
+        layout.addWidget(project, 1)
 
         search = QLineEdit()
         self.command_search = search
         search.setObjectName("CommandSearch")
         search.setPlaceholderText("搜索文件、命令或跳转到…")
         search.setMinimumWidth(190)
-        search.setMaximumWidth(340)
+        search.setMaximumWidth(820)
         search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.command_completer = QCompleter(self)
         self.command_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -2208,14 +2849,14 @@ class ClientWindow(QMainWindow):
                     "> git",
                     "> explorer",
                     "> appearance",
+                    "> settings",
                 ],
                 self.command_completer,
             )
         )
         self.command_completer.setWidget(search)
         self.command_completer.activated.connect(self._run_command_completion)
-        layout.addStretch(1)
-        layout.addWidget(search)
+        layout.addWidget(search, 3)
         layout.addStretch(1)
 
         new_button = QPushButton("新会话")
@@ -2256,8 +2897,12 @@ class ClientWindow(QMainWindow):
         self.ui_theme_button.setMenu(self.ui_theme_menu)
         layout.addWidget(self.ui_theme_button)
 
-        self.connection_label = QLabel(self._provider_state())
-        self.connection_label.setObjectName("StateReady")
+        self.connection_label = ElidedLabel(self._provider_state())
+        self.connection_label.setObjectName("StateReady" if self._provider_configured() else "StateWorking")
+        self.connection_label.setMaximumWidth(220)
+        self.connection_label.setToolTip("已配置模型（尚未验证连接）" if self._provider_configured() else "尚未配置 LLM；打开 Agent 设置查看配置方式")
+        self.connection_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.connection_label.installEventFilter(self)
         layout.addSpacing(4)
         layout.addWidget(self.connection_label)
 
@@ -2289,7 +2934,7 @@ class ClientWindow(QMainWindow):
         profile = ui_profile_for_key(profile_key)
         changed = profile.key != self.ui_profile
         self.ui_profile = profile.key
-        self.setStyleSheet(stylesheet_for_profile(THEME, profile, self._ui_scale))
+        self.setStyleSheet(stylesheet_for_profile(THEME, profile, self._ui_scale, self.appearance_preferences))
 
         if persist:
             self.ui_settings.setValue("uiProfile", profile.key)
@@ -2305,6 +2950,9 @@ class ClientWindow(QMainWindow):
             highlighter.set_ui_profile(profile.key)
         if hasattr(self, "git_tree"):
             self.git_tree.set_visual_theme(profile.key)
+            selected = next((node for node in self.git_tree.nodes if str(node.get("id")) == self.git_tree.selected_id), None)
+            if selected is not None:
+                self._handle_git_node_selected(selected)
 
         if hasattr(self, "ui_theme_actions"):
             for key, action in self.ui_theme_actions.items():
@@ -2316,10 +2964,14 @@ class ClientWindow(QMainWindow):
             getattr(self, "activity_buttons", ()),
             ("explorer", "search", "git"),
         ):
-            button.setIcon(activity_icon(icon_name, *profile.activity_icon_colors))
+            button.setIcon(activity_icon(icon_name, profile.activity_icon_colors[0], self.appearance_preferences.accent_color or profile.activity_icon_colors[1]))
+        if hasattr(self, "settings_button"):
+            self.settings_button.setIcon(activity_icon("settings", profile.activity_icon_colors[0], self.appearance_preferences.accent_color or profile.activity_icon_colors[1]))
+        if hasattr(self, "settings_page"):
+            self.settings_page.sync_values(self.appearance_preferences, self.ui_profile)
 
         if changed:
-            self._workbench_user_ratios = profile.layout_ratios
+            self._workbench_user_ratios = self._saved_workbench_ratios(profile.key)
             if hasattr(self, "workbench"):
                 QTimer.singleShot(0, self._adapt_workbench_layout)
 
@@ -2345,7 +2997,7 @@ class ClientWindow(QMainWindow):
         self._bind_screen_metric_signals(screen)
         geometry = screen.geometry()
         previous_scale = self._ui_scale
-        target_scale = ui_scale_for_resolution(geometry.width(), geometry.height())
+        target_scale = self._resolved_ui_scale(geometry.width(), geometry.height())
         self._apply_screen_resolution(geometry.width(), geometry.height())
         if not self._offscreen_platform:
             self._fit_window_to_screen(screen, previous_scale, target_scale)
@@ -2391,18 +3043,99 @@ class ClientWindow(QMainWindow):
         self.setGeometry(QRect(x, y, width, height))
 
     def _apply_screen_resolution(self, width: int, height: int) -> None:
-        scale = ui_scale_for_resolution(width, height)
+        self._screen_dimensions = (width, height)
+        scale = self._resolved_ui_scale(width, height)
         self._ui_scale = scale
-        self.setStyleSheet(stylesheet_for_profile(THEME, self.ui_profile, scale))
+        self.setStyleSheet(stylesheet_for_profile(THEME, self.ui_profile, scale, self.appearance_preferences))
         scaled_font = QFont(self._base_ui_font)
         if scaled_font.pointSizeF() > 0:
             scaled_font.setPointSizeF(scaled_font.pointSizeF() * scale)
             self.setFont(scaled_font)
         for editor in self.findChildren(CodeEditor):
+            editor.set_appearance(self.appearance_preferences)
             editor.set_ui_scale(scale)
         if hasattr(self, "git_tree"):
-            self.git_tree.set_ui_scale(scale)
+            self.git_tree.set_ui_scale(scale * self.appearance_preferences.font_size / 11)
+            root = self.git_tree.rootObject()
+            if root is not None:
+                root.setProperty("uiFontFamily", ui_font_family(preferred=self.appearance_preferences.font_family))
+        self._update_activity_rail_metrics()
+        self._refresh_appearance_geometry()
+        if hasattr(self, "workbench"):
+            self._adapt_workbench_layout()
         self.updateGeometry()
+
+    def _resolved_ui_scale(self, width: int, height: int) -> float:
+        zoom = self.appearance_preferences.zoom
+        return zoom / 100 if zoom else ui_scale_for_resolution(width, height)
+
+    def _on_appearance_setting_changed(self, key: str, value: Any) -> None:
+        if key == "profile":
+            self.set_ui_profile(value)
+            self._refresh_appearance_geometry()
+            return
+        preferences = self.appearance_preferences.with_value(key, value)
+        self._set_appearance_preferences(preferences)
+
+    def _set_appearance_preferences(self, preferences: AppearancePreferences, *, persist: bool = True) -> None:
+        previous_mode = self.appearance_preferences.explorer_mode
+        self.appearance_preferences = preferences
+        if persist:
+            preferences.save(self.ui_settings)
+        self._base_ui_font = create_ui_font(preferences.font_size, preferences.font_family, preferences.font_weight)
+        if preferences.explorer_mode != previous_mode:
+            self._explorer_visibility_override = {"show": True, "hide": False}.get(preferences.explorer_mode)
+        self._apply_screen_resolution(*self._screen_dimensions)
+        self.set_ui_profile(self.ui_profile, persist=False)
+        if hasattr(self, "settings_page"):
+            self.settings_page.sync_values(preferences, self.ui_profile)
+        if persist:
+            for sibling in getattr(QApplication.instance(), "_scidev_windows", ()):
+                if sibling is not self:
+                    sibling._set_appearance_preferences(preferences, persist=False)
+
+    def _refresh_appearance_geometry(self) -> None:
+        if hasattr(self, "title_bar"):
+            self._adapt_title_bar_layout()
+            self.title_brand.setVisible(not getattr(self, "_titlebar_compact", False))
+            self.ui_theme_button.setFixedHeight(max(28, self.ui_theme_button.fontMetrics().height() + 8))
+            self.title_bar.setFixedHeight(max(42, self.title_bar.layout().sizeHint().height()))
+        if hasattr(self, "chat_header"):
+            self.chat_header.setFixedHeight(max(58, self.agent_title.fontMetrics().lineSpacing() + self.chat_status.fontMetrics().lineSpacing() + 12))
+        if hasattr(self, "workspace_toolbar"):
+            self.workspace_toolbar.setFixedHeight(max(40, self.workspace_toolbar.layout().sizeHint().height()))
+        if hasattr(self, "welcome_content"):
+            QTimer.singleShot(0, self._update_welcome_text_sizes)
+
+    def _reset_appearance(self) -> None:
+        self._set_appearance_preferences(AppearancePreferences())
+        self.set_ui_profile(DEFAULT_UI_PROFILE)
+
+    def _reset_workbench_layout(self) -> None:
+        self.ui_settings.remove(f"workbenchRatios/v2/{self.ui_profile}")
+        self.ui_settings.remove(f"workbenchRatios/{self.ui_profile}")
+        self.ui_settings.sync()
+        self._workbench_user_ratios = UI_PROFILES[self.ui_profile].layout_ratios
+        self._adapt_workbench_layout()
+
+    def show_settings(self) -> None:
+        if self.workspace_stack.currentWidget() is not self.settings_page:
+            self._settings_return_was_git = self._git_focus
+            self.show_workspace()
+            self.workspace_stack.setCurrentWidget(self.settings_page)
+        self.settings_page.sync_values(self.appearance_preferences, self.ui_profile)
+        self.settings_page.search.setFocus()
+
+    def _close_settings(self) -> None:
+        if getattr(self, "_settings_return_was_git", False):
+            self.show_git()
+        else:
+            self.show_workspace()
+
+    def _open_agent_settings_from_preferences(self) -> None:
+        self.show_settings()
+        self.settings_page.set_category("Agent")
+        self.summary_enabled_checkbox.setFocus()
 
     def _choose_workspace(self) -> None:
         selected = _choose_workspace_directory(self.project_root, self)
@@ -2505,7 +3238,7 @@ class ClientWindow(QMainWindow):
 
     def _build_left_panel(self) -> QWidget:
         shell = QWidget()
-        shell.setMinimumWidth(58)
+        shell.setMinimumWidth(self._activity_rail_width())
         shell.setMaximumWidth(480)
         shell.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout = QHBoxLayout(shell)
@@ -2513,11 +3246,12 @@ class ClientWindow(QMainWindow):
         layout.setSpacing(0)
 
         rail = QFrame()
+        self.activity_rail = rail
         rail.setObjectName("ActivityRail")
-        rail.setFixedWidth(58)
+        rail.setFixedWidth(self._activity_rail_width())
         rail_layout = QVBoxLayout(rail)
-        rail_layout.setContentsMargins(0, 10, 0, 8)
-        rail_layout.setSpacing(2)
+        rail_layout.setContentsMargins(0, 10, 0, 10)
+        rail_layout.setSpacing(8)
         self.activity_buttons: list[QToolButton] = []
         for index, (icon_name, tip, command) in enumerate((
             ("explorer", "资源管理器", self.focus_explorer),
@@ -2529,7 +3263,7 @@ class ClientWindow(QMainWindow):
             button.setIcon(
                 activity_icon(icon_name, *UI_PROFILES[self.ui_profile].activity_icon_colors)
             )
-            button.setIconSize(QSize(20, 20))
+            button.setIconSize(QSize(ACTIVITY_ICON_SIZE, ACTIVITY_ICON_SIZE))
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
             button.setText("")
             button.setToolTip(tip)
@@ -2537,16 +3271,24 @@ class ClientWindow(QMainWindow):
             button.setCheckable(True)
             button.setAutoExclusive(True)
             button.setChecked(index == 0)
-            button.setFixedHeight(46)
             button.clicked.connect(command)
-            rail_layout.addWidget(button)
+            rail_layout.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
             self.activity_buttons.append(button)
         rail_layout.addStretch(1)
+        self.settings_button = QToolButton()
+        self.settings_button.setObjectName("ActivityButton")
+        self.settings_button.setIcon(activity_icon("settings", *UI_PROFILES[self.ui_profile].activity_icon_colors))
+        self.settings_button.setCheckable(True)
+        self.settings_button.setToolTip("设置  (Ctrl+,)")
+        self.settings_button.setAccessibleName("打开设置")
+        self.settings_button.clicked.connect(self.show_settings)
+        rail_layout.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignHCenter)
         logo_bottom = QLabel("S")
         logo_bottom.setObjectName("Logo")
         logo_bottom.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo_bottom.setFixedSize(30, 30)
         rail_layout.addWidget(logo_bottom, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._update_activity_rail_metrics()
 
         explorer = QFrame()
         explorer.setObjectName("ExplorerPane")
@@ -2565,6 +3307,11 @@ class ClientWindow(QMainWindow):
             action.setToolTip(tip)
             action.clicked.connect(self.start_new_file_entry if symbol == "+" else self.refresh_file_tree)
             heading.addWidget(action)
+            if not hasattr(self, "explorer_header_actions"):
+                self.explorer_header_actions = []
+            self.explorer_header_actions.append(action)
+        self.explorer_heading_label = overline
+        self.explorer_header_layout = heading
         explorer_layout.addLayout(heading)
 
         self.new_file_entry = QLineEdit()
@@ -2579,7 +3326,6 @@ class ClientWindow(QMainWindow):
         project.setObjectName("AppTitle")
         self.project_label = project
         project_row.addWidget(project, 1)
-        project_row.addStretch(1)
         open_workspace = QToolButton()
         open_workspace.setObjectName("IconButton")
         open_workspace.setText("⋯")
@@ -2590,18 +3336,12 @@ class ClientWindow(QMainWindow):
         project_row.addWidget(open_workspace)
         explorer_layout.addLayout(project_row)
 
-        git_entry = QFrame()
-        git_entry.setObjectName("GitEntry")
-        git_entry_layout = QHBoxLayout(git_entry)
-        git_entry_layout.setContentsMargins(0, 0, 0, 0)
-        git_entry_button = QPushButton("开发版本树\n查看主线与尝试方向")
-        git_entry_button.setObjectName("GitEntryButton")
+        # Git stays prominent in the title bar and activity rail; no duplicate
+        # promotional card taking up space above the project files.
+        git_entry_button = self.title_git_button
         git_entry_button.setToolTip("查看主线与成功、失败、取消中的尝试方向；这是 Harness 开发树，不是 Git 分支")
         git_entry_button.setAccessibleName("开发版本树：查看主线与尝试方向")
-        git_entry_button.clicked.connect(self.show_git)
         self.git_entry_button = git_entry_button
-        git_entry_layout.addWidget(git_entry_button)
-        explorer_layout.addWidget(git_entry)
 
         self.file_model = QFileSystemModel(self)
         self.file_model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
@@ -2643,6 +3383,21 @@ class ClientWindow(QMainWindow):
         self.left_panel = shell
         self.explorer = explorer
         return shell
+
+    def _activity_rail_width(self) -> int:
+        return round(self.appearance_preferences.rail_width * self._ui_scale)
+
+    def _update_activity_rail_metrics(self) -> None:
+        rail = getattr(self, "activity_rail", None)
+        if rail is None:
+            return
+        rail.setFixedWidth(self._activity_rail_width())
+        rail.layout().setSpacing(round((4 if self.appearance_preferences.density == "compact" else 8) * self._ui_scale))
+        target = round(self.appearance_preferences.button_size * self._ui_scale)
+        icon = round(self.appearance_preferences.effective_icon_size * self._ui_scale)
+        for button in self.activity_buttons + [self.settings_button]:
+            button.setFixedSize(target, target)
+            button.setIconSize(QSize(icon, icon))
 
     def _create_editor_group(self) -> QTabWidget:
         tabs = QTabWidget()
@@ -2728,6 +3483,7 @@ class ClientWindow(QMainWindow):
         workspace_toolbar = QFrame()
         workspace_toolbar.setObjectName("WorkspaceToolbar")
         workspace_toolbar.setFixedHeight(40)
+        self.workspace_toolbar = workspace_toolbar
         toolbar_layout = QHBoxLayout(workspace_toolbar)
         toolbar_layout.setContentsMargins(14, 0, 12, 0)
         self.breadcrumb = QLabel("项目  /  欢迎页")
@@ -2737,17 +3493,9 @@ class ClientWindow(QMainWindow):
         self.workspace_state = QLabel("● 就绪")
         self.workspace_state.setObjectName("StateReady")
         toolbar_layout.addWidget(self.workspace_state)
-        layout.addWidget(workspace_toolbar)
-
-        editor_toolbar = QFrame()
-        editor_toolbar.setObjectName("EditorToolbar")
-        editor_toolbar.setFixedHeight(42)
-        editor_layout = QHBoxLayout(editor_toolbar)
-        editor_layout.setContentsMargins(14, 0, 8, 0)
-        editor_label = QLabel("编辑器")
-        editor_label.setObjectName("Overline")
-        editor_layout.addWidget(editor_label)
-        editor_layout.addStretch(1)
+        # A single contextual toolbar replaces two redundant header rows.
+        self.workspace_state.setVisible(False)
+        editor_layout = toolbar_layout
         save = QPushButton("保存")
         save.setObjectName("Quiet")
         save.setToolTip("保存当前文件（Ctrl+S）")
@@ -2774,7 +3522,7 @@ class ClientWindow(QMainWindow):
         editor_menu.addAction("在右侧分栏打开", self._toggle_editor_split)
         more.setMenu(editor_menu)
         editor_layout.addWidget(more)
-        layout.addWidget(editor_toolbar)
+        layout.addWidget(workspace_toolbar)
 
         self.find_bar = self._build_find_bar()
         layout.addWidget(self.find_bar)
@@ -2783,10 +3531,14 @@ class ClientWindow(QMainWindow):
         self._active_editor_group = self.editor_tabs
         self.secondary_editor_tabs: QTabWidget | None = None
         self.welcome_editor = CodeEditor()
+        self.welcome_editor.setProperty("welcomeMode", True)
         self.welcome_editor.setReadOnly(True)
         self.welcome_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.welcome_editor.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._configure_editor(self.welcome_editor)
+        self.welcome_editor.line_number_area.hide()
+        self.welcome_editor.setViewportMargins(0, 0, 0, 0)
+        self._build_welcome_content()
         self.code_editor = self.welcome_editor
         welcome_index = self.editor_tabs.addTab(self.welcome_editor, "欢迎页")
         self.editor_tabs.tabBar().setTabButton(welcome_index, QTabBar.ButtonPosition.RightSide, None)
@@ -2801,8 +3553,126 @@ class ClientWindow(QMainWindow):
         self._show_welcome()
         return workspace
 
+    def _build_welcome_content(self) -> None:
+        # This empty read-only editor keeps the tab/document lifecycle uniform,
+        # but its viewport contains real widgets, not fake line-numbered code.
+        editor = self.welcome_editor
+        viewport_layout = QVBoxLayout(editor.viewport())
+        viewport_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setObjectName("WelcomeScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        surface = QWidget()
+        surface.setObjectName("WelcomeSurface")
+        outer = QVBoxLayout(surface)
+        self.welcome_outer_layout = outer
+        self._welcome_compact = None
+        outer.setContentsMargins(24, 18, 24, 18)
+        outer.addStretch(1)
+        card = QFrame()
+        card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        card.setObjectName("WelcomeCard")
+        card.setFont(self._base_ui_font)
+        card.setMaximumWidth(530)
+        body = QVBoxLayout(card)
+        body.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        body.setContentsMargins(20, 18, 20, 18)
+        body.setSpacing(14)
+        brand = QLabel("SciDevHarness")
+        brand.setObjectName("WelcomeTitle")
+        self.welcome_brand_label = brand
+        body.addWidget(brand)
+        project = ElidedLabel(self.project_root.name)
+        project.setObjectName("SectionTitle")
+        project.setToolTip(str(self.project_root))
+        body.addWidget(project)
+        description = QLabel("打开文件，专注编码。\n右侧 Agent 能读取项目、修改代码并保留开发过程。")
+        description.setObjectName("Subtle")
+        description.setWordWrap(True)
+        self.welcome_description = description
+        body.addWidget(description)
+        open_file = QPushButton("打开文件    Ctrl + P")
+        open_file.setObjectName("Primary")
+        open_file.clicked.connect(lambda: self.command_search.setFocus())
+        body.addWidget(open_file)
+        sample = self.project_root / "index.html"
+        self.welcome_sample_button = None
+        if sample.is_file():
+            open_sample = QPushButton("打开 index.html")
+            open_sample.setObjectName("Quiet")
+            open_sample.clicked.connect(lambda: self._open_file(sample))
+            body.addWidget(open_sample)
+            self.welcome_sample_button = open_sample
+        shortcuts_layout = QVBoxLayout()
+        shortcuts_layout.setContentsMargins(0, 0, 0, 0)
+        shortcuts_layout.setSpacing(2)
+        shortcut_labels = []
+        for text in ("保存  Ctrl + S", "项目搜索  Ctrl + Shift + F", "发送指令  Ctrl + Enter"):
+            shortcut = QLabel(text)
+            shortcut.setObjectName("WelcomeShortcut")
+            shortcut.setWordWrap(False)
+            shortcut.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+            shortcuts_layout.addWidget(shortcut)
+            shortcut_labels.append(shortcut)
+        body.addLayout(shortcuts_layout)
+        outer.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer.addStretch(1)
+        scroll.setWidget(surface)
+        viewport_layout.addWidget(scroll)
+        self.welcome_scroll = scroll
+        self._welcome_text_labels = (description, *shortcut_labels)
+        self.welcome_shortcut_labels = tuple(shortcut_labels)
+        self.welcome_content = card
+        card.installEventFilter(self)
+        QTimer.singleShot(0, self._update_welcome_text_sizes)
+
+    def _update_welcome_text_sizes(self) -> None:
+        if self._closing:
+            return
+        # A centered QFrame inside a scroll area otherwise takes its vertical
+        # minimum before Qt has accounted for the labels' wrapped text.
+        for label in self._welcome_text_labels:
+            wrapped = isinstance(label, QLabel) and label.wordWrap()
+            required = max(
+                label.fontMetrics().lineSpacing(),
+                label.heightForWidth(max(1, label.width())) if wrapped else 0,
+            )
+            if label.minimumHeight() != required:
+                label.setMinimumHeight(required)
+        compact = self.height() < 600
+        if compact != self._welcome_compact:
+            self._welcome_compact = compact
+            outer = self.welcome_outer_layout
+            for index in reversed(range(outer.count())):
+                if outer.itemAt(index).widget() is None:
+                    outer.takeAt(index)
+            if compact:
+                outer.setContentsMargins(12, 8, 12, 8)
+                outer.insertSpacing(0, 4)
+                self.welcome_content.layout().setContentsMargins(16, 12, 16, 12)
+                self.welcome_content.layout().setSpacing(8)
+                self.welcome_description.setText("打开文件开始编码。Agent 可直接读取和修改项目代码。")
+            else:
+                outer.setContentsMargins(24, 18, 24, 18)
+                outer.insertStretch(0, 1)
+                outer.addStretch(1)
+                self.welcome_content.layout().setContentsMargins(20, 18, 20, 18)
+                self.welcome_content.layout().setSpacing(14)
+                self.welcome_description.setText(
+                    "打开文件，专注编码。\n右侧 Agent 能读取项目、修改代码并保留开发过程。"
+                )
+            self.welcome_content.setProperty("compact", compact)
+            self.welcome_content.style().unpolish(self.welcome_content)
+            self.welcome_content.style().polish(self.welcome_content)
+            if self.welcome_sample_button is not None:
+                self.welcome_sample_button.setVisible(not compact)
+            QTimer.singleShot(0, self._update_welcome_text_sizes)
+
     def _on_workbench_splitter_moved(self, _position: int, _index: int) -> None:
-        if not self._workbench_adapting:
+        settings_focus = self.workspace_stack.currentWidget() is getattr(self, "settings_page", None)
+        if not self._workbench_adapting and not self._git_focus and not settings_focus:
             sizes = self.workbench.sizes()
             total = sum(sizes)
             if total > 0 and len(sizes) == 3:
@@ -2815,6 +3685,20 @@ class ClientWindow(QMainWindow):
                 else:
                     left_ratio = sizes[0] / total
                 self._workbench_user_ratios = (left_ratio, sizes[2] / total)
+                self.ui_settings.setValue(f"workbenchRatios/v2/{self.ui_profile}", list(self._workbench_user_ratios))
+                # Keep the legacy key readable by older packaged clients.
+                self.ui_settings.setValue(f"workbenchRatios/{self.ui_profile}", list(self._workbench_user_ratios))
+                self.ui_settings.sync()
+
+    def _saved_workbench_ratios(self, profile_key: str) -> tuple[float, float]:
+        value = self.ui_settings.value(f"workbenchRatios/v2/{profile_key}")
+        try:
+            left, chat = map(float, value)
+            if 0.10 <= left <= 0.40 and 0.10 <= chat <= 0.62 and left + chat < 0.85:
+                return left, chat
+        except (ValueError, TypeError):
+            pass
+        return UI_PROFILES[profile_key].layout_ratios
 
     def _workbench_minimum_widths(self) -> tuple[int, int, int]:
         minimums = (
@@ -2823,7 +3707,7 @@ class ClientWindow(QMainWindow):
             else self.WORKBENCH_WIDE_MINIMUMS
         )
         if hasattr(self, "explorer") and self.explorer.isHidden():
-            return (58, minimums[1], minimums[2])
+            return (self._activity_rail_width(), minimums[1], minimums[2])
         return minimums
 
     def _apply_responsive_explorer_visibility(self) -> bool:
@@ -2832,6 +3716,9 @@ class ClientWindow(QMainWindow):
         should_show = self._explorer_visibility_override
         if should_show is None:
             should_show = self.width() >= self.EXPLORER_COLLAPSE_BREAKPOINT
+        settings_focus = self.workspace_stack.currentWidget() is getattr(self, "settings_page", None)
+        if self._git_focus or settings_focus:
+            should_show = False
         if (not self.explorer.isHidden()) != should_show:
             self.explorer.setVisible(should_show)
         if hasattr(self, "left_panel"):
@@ -2842,7 +3729,7 @@ class ClientWindow(QMainWindow):
                     else self.WORKBENCH_WIDE_MINIMUMS[0]
                 )
             else:
-                minimum = 58
+                minimum = self._activity_rail_width()
             self.left_panel.setMinimumWidth(minimum)
         if getattr(self, "activity_buttons", None):
             label = "隐藏资源管理器" if should_show else "显示资源管理器"
@@ -2855,13 +3742,15 @@ class ClientWindow(QMainWindow):
         self._workbench_adapt_pending = False
         if not hasattr(self, "workbench"):
             return
+        settings_focus = self.workspace_stack.currentWidget() is getattr(self, "settings_page", None)
         explorer_visible = self._apply_responsive_explorer_visibility()
+        self.chat_panel.setVisible(not settings_focus and (not self._git_focus or self._git_chat_visible))
         total = self.workbench.width() - self.workbench.handleWidth() * 2
         if total <= 0:
             return
         if self._workbench_user_ratios is None:
-            left = int(total * 0.245)
-            chat = int(total * 0.275)
+            left = int(total * 0.20)
+            chat = int(total * 0.50)
         else:
             left_ratio, chat_ratio = self._workbench_user_ratios
             left = int(total * left_ratio)
@@ -2870,8 +3759,16 @@ class ClientWindow(QMainWindow):
         if explorer_visible:
             left = min(440, max(left_minimum, left))
         else:
-            left = 58
-        chat = min(460, max(chat_minimum, chat))
+            left = self._activity_rail_width()
+        chat_maximum = max(chat_minimum, round(total * 0.62))
+        chat = min(chat_maximum, max(chat_minimum, chat)) if self.chat_panel.isVisible() else 0
+        editor_floor = 0
+        if self.width() < self.WORKBENCH_COMPACT_BREAKPOINT and self.chat_panel.isVisible():
+            editor_floor = min(
+                self.WORKBENCH_COMPACT_EDITOR_MINIMUM,
+                max(center_minimum, total - left - chat_minimum),
+            )
+            chat = min(chat, max(chat_minimum, total - left - editor_floor))
         center = total - left - chat
         if center < center_minimum:
             deficit = center_minimum - center
@@ -2884,6 +3781,19 @@ class ClientWindow(QMainWindow):
         self._workbench_adapting = True
         try:
             self.workbench.setSizes([left, max(1, center), chat])
+            # QSplitter rounds its handle budget, so verify the editor really
+            # received its floor and take the difference from the Agent pane.
+            actual = self.workbench.sizes()
+            if (
+                editor_floor
+                and len(actual) == 3
+                and 0 < actual[1] < editor_floor
+                and actual[2] - (editor_floor - actual[1]) >= chat_minimum
+            ):
+                shortfall = editor_floor - actual[1]
+                self.workbench.setSizes(
+                    [actual[0], actual[1] + shortfall, actual[2] - shortfall]
+                )
         finally:
             self._workbench_adapting = False
         self._adapt_explorer_density()
@@ -2892,10 +3802,27 @@ class ClientWindow(QMainWindow):
 
     def _adapt_explorer_density(self) -> None:
         git_entry = getattr(self, "git_entry_button", None)
-        if git_entry is None:
+        if git_entry is not None:
+            git_entry.setText("版本树")
+        explorer = getattr(self, "explorer", None)
+        heading = getattr(self, "explorer_heading_label", None)
+        actions = getattr(self, "explorer_header_actions", ())
+        if explorer is None or heading is None:
             return
-        compact = self.width() < self.WORKBENCH_COMPACT_BREAKPOINT
-        git_entry.setText("开发版本树\n主线 · 尝试" if compact else "开发版本树\n查看主线与尝试方向")
+        available = explorer.width()
+        full_title_width = heading.fontMetrics().horizontalAdvance("资源管理器")
+        action_width = sum(button.sizeHint().width() for button in actions)
+        margins = explorer.layout().contentsMargins()
+        full_heading_width = full_title_width + action_width + margins.left() + margins.right() + 12
+        if len(actions) > 1:
+            actions[1].setVisible(available >= full_heading_width)
+        compact_title_width = heading.fontMetrics().horizontalAdvance("资源")
+        primary_width = actions[0].sizeHint().width() if actions else 0
+        if available < compact_title_width + primary_width + margins.left() + margins.right() + 12:
+            heading.setText("资源")
+        else:
+            heading.setText("资源管理器")
+        heading.setToolTip("资源管理器")
 
     def _adapt_chat_composer_density(self) -> None:
         composer_layout = getattr(self, "chat_composer_layout", None)
@@ -2903,20 +3830,71 @@ class ClientWindow(QMainWindow):
         if composer_layout is None or composer_top is None:
             return
         compact = self._is_chat_compact()
+        short_window = self.height() < 600
         horizontal_margin = 8 if compact else 12
-        composer_layout.setContentsMargins(horizontal_margin, 10, horizontal_margin, 10)
-        composer_top.setSpacing(2 if compact else 6)
+        composer_layout.setContentsMargins(horizontal_margin, 6 if short_window else 10,
+                                           horizontal_margin, 6 if short_window else 10)
+        composer_layout.setSpacing(4 if short_window else 7)
+        self.chat_input.setFixedHeight(62 if short_window else 76)
         if hasattr(self, "summary_chip"):
             self.summary_chip.setText(self._summary_chip_text())
             self.summary_chip.setToolTip(self._summary_status_text())
             self.summary_chip.setAccessibleName(self._summary_status_text())
+        if hasattr(self, "usage_chip"):
+            self._display_model_usage({"usage": self.model_usage, "record": None})
+        if hasattr(self, "context_usage_bar"):
+            self.context_usage_bar.setVisible(not compact)
+            self._render_context_meter()
+        self._reflow_composer_meta(compact)
         self._adapt_summary_settings_layout()
+        if hasattr(self, "task_plan_panel"):
+            self.task_plan_panel.update_viewport_height()
+
+    def _summary_settings_available_width(self) -> int:
+        panel = getattr(self, "summary_settings_panel", None)
+        page = getattr(self, "settings_page", None)
+        if panel is not None and page is not None and panel.parentWidget() is page.scroll.widget():
+            return page.scroll.viewport().width()
+        if panel is not None and panel.width() > 0:
+            return panel.width()
+        chat = getattr(self, "chat_panel", None)
+        return chat.width() if chat is not None else 0
+
+    def _reflow_composer_meta(self, compact: bool) -> None:
+        """Keep usage metadata from crowding the composer on narrow panes."""
+        top = getattr(self, "chat_composer_top", None)
+        meta = getattr(self, "chat_composer_meta", None)
+        if top is None or meta is None or not hasattr(self, "usage_chip"):
+            return
+        moving = [self.usage_chip]
+        for name in ("context_usage_label", "context_usage_bar"):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                moving.append(widget)
+        target = meta if compact else top
+        for widget in moving:
+            (top if target is meta else meta).removeWidget(widget)
+        if target is meta:
+            for widget in moving:
+                meta.insertWidget(max(0, meta.count() - 1), widget)
+            return
+        anchor_widget = getattr(self, "context_button", None)
+        for widget in moving:
+            anchor = top.indexOf(anchor_widget) if anchor_widget is not None else -1
+            if anchor >= 0:
+                top.insertWidget(anchor, widget)
+            else:
+                top.addWidget(widget)
 
     def _adapt_summary_settings_layout(self) -> None:
         layout = getattr(self, "summary_settings_layout", None)
         if layout is None:
             return
-        compact = self._is_chat_compact()
+        # A four-column form needs ~640 px, more than the normal Agent pane.
+        # Reflow independently from the composer's compact-text threshold, and
+        # measure the space the panel is given rather than its clamped width so
+        # a wide grid cannot lock itself out of the compact layout.
+        compact = self._summary_settings_available_width() < 720
         if self._summary_settings_compact == compact:
             return
         self._summary_settings_compact = compact
@@ -2939,14 +3917,33 @@ class ClientWindow(QMainWindow):
             self.summary_frequency_note,
             self.summary_instruction_label,
             self.summary_instruction_edit,
+            self.project_memory_checkbox,
+            self.project_memory_results_label,
+            self.project_memory_results_spin,
+            self.project_memory_context_label,
+            self.project_memory_context_spin,
+            self.acceptance_mode_label,
+            self.acceptance_mode_combo,
+            self.acceptance_model_label,
+            self.acceptance_model_edit,
+            self.acceptance_note,
+            self.multi_agent_enabled_checkbox,
+            self.multi_agent_model_label,
+            self.multi_agent_model_edit,
+            self.multi_agent_note,
+            self.context_window_label,
+            self.context_window_spin,
+            self.context_window_note,
         )
         for widget in widgets:
             layout.removeWidget(widget)
 
         if compact:
-            layout.setContentsMargins(9, 7, 9, 7)
+            self.summary_settings_title.setText("Agent 设置")
+            self.multi_agent_enabled_checkbox.setText("启用协作 Agent")
+            layout.setContentsMargins(10, 16, 10, 16)
             layout.setHorizontalSpacing(6)
-            layout.setVerticalSpacing(4)
+            layout.setVerticalSpacing(10)
             placements = (
                 (self.summary_settings_title, 0, 0, 1, 1),
                 (self.summary_state_label, 0, 1, 1, 1),
@@ -2963,6 +3960,23 @@ class ClientWindow(QMainWindow):
                 (self.summary_interval_spin, 6, 1, 1, 1),
                 (self.summary_instruction_label, 7, 0, 1, 1),
                 (self.summary_instruction_edit, 7, 1, 1, 1),
+                (self.project_memory_checkbox, 8, 0, 1, 2),
+                (self.project_memory_results_label, 9, 0, 1, 1),
+                (self.project_memory_results_spin, 9, 1, 1, 1),
+                (self.project_memory_context_label, 10, 0, 1, 1),
+                (self.project_memory_context_spin, 10, 1, 1, 1),
+                (self.acceptance_mode_label, 11, 0, 1, 1),
+                (self.acceptance_mode_combo, 11, 1, 1, 1),
+                (self.acceptance_model_label, 12, 0, 1, 1),
+                (self.acceptance_model_edit, 12, 1, 1, 1),
+                (self.acceptance_note, 13, 0, 1, 2),
+                (self.multi_agent_enabled_checkbox, 14, 0, 1, 2),
+                (self.multi_agent_model_label, 15, 0, 1, 1),
+                (self.multi_agent_model_edit, 15, 1, 1, 1),
+                (self.multi_agent_note, 16, 0, 1, 2),
+                (self.context_window_label, 17, 0, 1, 1),
+                (self.context_window_spin, 17, 1, 1, 1),
+                (self.context_window_note, 18, 0, 1, 2),
             )
             self.summary_enabled_checkbox.setText("对话结束自动总结")
             self.summary_state_label.setText(self._summary_compact_status_text())
@@ -2971,9 +3985,11 @@ class ClientWindow(QMainWindow):
             state_alignment = Qt.AlignmentFlag.AlignLeft
             column_stretches = (0, 1, 0, 0)
         else:
-            layout.setContentsMargins(12, 9, 12, 9)
+            self.summary_settings_title.setText("总结、记忆、协作与验收")
+            self.multi_agent_enabled_checkbox.setText("允许主 Agent 委派协作 Agent")
+            layout.setContentsMargins(14, 16, 14, 16)
             layout.setHorizontalSpacing(8)
-            layout.setVerticalSpacing(6)
+            layout.setVerticalSpacing(10)
             placements = (
                 (self.summary_settings_title, 0, 0, 1, 4),
                 (self.summary_enabled_checkbox, 1, 0, 1, 2),
@@ -2992,6 +4008,23 @@ class ClientWindow(QMainWindow):
                 (self.summary_frequency_note, 5, 2, 1, 2),
                 (self.summary_instruction_label, 6, 0, 1, 1),
                 (self.summary_instruction_edit, 6, 1, 1, 3),
+                (self.project_memory_checkbox, 7, 0, 1, 2),
+                (self.project_memory_results_label, 7, 2, 1, 1),
+                (self.project_memory_results_spin, 7, 3, 1, 1),
+                (self.project_memory_context_label, 8, 0, 1, 1),
+                (self.project_memory_context_spin, 8, 1, 1, 1),
+                (self.acceptance_mode_label, 9, 0, 1, 1),
+                (self.acceptance_mode_combo, 9, 1, 1, 3),
+                (self.acceptance_model_label, 10, 0, 1, 1),
+                (self.acceptance_model_edit, 10, 1, 1, 3),
+                (self.acceptance_note, 11, 0, 1, 4),
+                (self.multi_agent_enabled_checkbox, 12, 0, 1, 4),
+                (self.multi_agent_model_label, 13, 0, 1, 1),
+                (self.multi_agent_model_edit, 13, 1, 1, 3),
+                (self.multi_agent_note, 14, 0, 1, 4),
+                (self.context_window_label, 15, 0, 1, 1),
+                (self.context_window_spin, 15, 1, 1, 1),
+                (self.context_window_note, 16, 0, 1, 4),
             )
             self.summary_enabled_checkbox.setText("每次编码对话结束自动总结")
             self.summary_state_label.setText(self._summary_status_text())
@@ -3008,11 +4041,23 @@ class ClientWindow(QMainWindow):
                 layout.addWidget(widget, row, column, row_span, column_span, alignment=state_alignment)
             else:
                 layout.addWidget(widget, row, column, row_span, column_span)
+        for widget in widgets:
+            if isinstance(widget, (QLineEdit, QSpinBox, QComboBox)):
+                widget.setMinimumHeight(round(32 * self._ui_scale))
+                widget.setMinimumWidth(0)
+                widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            if isinstance(widget, QCheckBox):
+                widget.setMinimumHeight(round(28 * self._ui_scale))
+        # Keep the panel's natural height without letting the grid force a
+        # minimum width larger than the space a narrow scroll viewport offers.
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
+        self.summary_settings_panel.setMinimumWidth(0)
 
     def resizeEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
         super().resizeEvent(event)
         if hasattr(self, "command_search"):
             self._adapt_title_bar_layout()
+            self._refresh_appearance_geometry()
         if hasattr(self, "workbench") and not self._workbench_adapt_pending:
             self._workbench_adapt_pending = True
             QTimer.singleShot(0, self._adapt_workbench_layout)
@@ -3023,16 +4068,26 @@ class ClientWindow(QMainWindow):
 
     def _adapt_title_bar_layout(self) -> None:
         compact = self.width() < 1120
-        if self._titlebar_compact == compact:
-            return
+        compact_changed = self._titlebar_compact != compact
         self._titlebar_compact = compact
-        self.title_project_label.setVisible(not compact)
-        self.command_search.setMinimumWidth(120 if compact else 190)
-        self.command_search.setPlaceholderText("Ctrl+P 搜索或跳转" if compact else "搜索文件、命令或跳转到…")
-        self.title_new_button.setText("新建" if compact else "新会话")
-        self.title_refresh_button.setText("↻" if compact else "刷新")
+        scale = self._ui_scale
+        self.title_brand.setVisible(not compact)
+        self.title_project_label.setVisible(True)
+        self.title_project_label.setMinimumWidth(round((64 if compact else 96) * scale))
+        self.title_project_label.setMaximumWidth(round((160 if compact else 380) * scale))
+        self.command_search.setMinimumWidth(round((110 if compact else 190) * scale))
+        self.command_search.setMaximumWidth(round((820 if compact else 1500) * scale))
+        self.connection_label.setMaximumWidth(round((112 if compact else 220) * scale))
+        self.title_new_button.setMaximumWidth(round((96 if compact else 148) * scale))
+        self.title_git_button.setMaximumWidth(round((96 if compact else 132) * scale))
+        self.title_refresh_button.setMaximumWidth(round((58 if compact else 88) * scale))
+        self.ui_theme_button.setMaximumWidth(round(104 * scale))
+        if compact_changed:
+            self.command_search.setPlaceholderText("Ctrl+P 搜索或跳转" if compact else "搜索文件、命令或跳转到…")
+            self.title_new_button.setText("新建" if compact else "新会话")
+            self.title_refresh_button.setText("↻" if compact else "刷新")
         self.ui_theme_button.setText("主题")
-        self.ui_theme_button.setMinimumWidth(50)
+        self.ui_theme_button.setMinimumWidth(round(50 * scale))
         self.title_new_button.setToolTip("新建编码会话")
         self.title_refresh_button.setToolTip("刷新项目、任务与 Git 状态")
         self.title_git_button.setToolTip("打开开发版本树")
@@ -3040,12 +4095,20 @@ class ClientWindow(QMainWindow):
     def _adapt_git_layout(self) -> None:
         if not hasattr(self, "git_tree_splitter"):
             return
-        narrow = self.git_tree_splitter.width() < 700
+        narrow = self.git_tree_splitter.width() < 900
         short_layout = self.height() < 560
         short_layout_changed = self._git_tree_short_layout != short_layout
         self._git_tree_short_layout = short_layout
         self.git_page_header.setFixedHeight(56 if short_layout else 68)
         self.git_metrics_panel.setVisible(not narrow and not short_layout)
+        self.git_fit_button.setText("全图" if narrow else "适应全图")
+        details_visible = self._git_details_expanded and (not short_layout or self._git_details_forced)
+        self.git_details_scroll.setVisible(details_visible)
+        # Collapsing details must release the whole dock, otherwise the hidden
+        # scroll area still reserves its 260-360 px beside the canvas.
+        self.git_details.setVisible(details_visible)
+        self.git_details_button.setChecked(details_visible)
+        self.git_chat_button.setChecked(self._git_chat_visible)
         if hasattr(self, "git_page_subtitle"):
             self.git_page_subtitle.setText(
                 "主线与尝试方向"
@@ -3091,7 +4154,7 @@ class ClientWindow(QMainWindow):
                 self.git_page.layout().activate()
                 split_height = max(1, self.git_tree_splitter.height())
                 # Keep a useful selected-node summary beside the compact canvas.
-                details_ratio = 0.43 if short_layout else 0.42
+                details_ratio = 0.38
                 self.git_tree_splitter.setSizes(
                     [int(split_height * (1 - details_ratio)), int(split_height * details_ratio)]
                 )
@@ -3108,6 +4171,42 @@ class ClientWindow(QMainWindow):
                 self.git_tree_splitter.setSizes([1, 300])
         if narrow:
             QTimer.singleShot(0, self._fit_git_tree_compact_layout)
+
+    def _fit_development_tree(self) -> None:
+        root = self.git_tree.rootObject()
+        cards, _dots = self.git_tree._positions()
+        viewport = self.git_tree_scroll.viewport().size()
+        if root is None or not cards or viewport.width() <= 0 or viewport.height() <= 0:
+            return
+        bounds = QRect()
+        for _x, _y, rect in cards.values():
+            bounds = rect if not bounds.isValid() else bounds.united(rect)
+        ui_scale = max(0.1, float(root.property("uiScale")))
+        available_width = max(1, viewport.width() - 36)
+        available_height = max(1, viewport.height() - 78)
+        zoom = min(
+            1.8,
+            max(0.65, min(
+                available_width / max(1, bounds.width() * ui_scale),
+                available_height / max(1, bounds.height() * ui_scale),
+            )),
+        )
+        render_scale = zoom * ui_scale
+        root.setProperty("zoom", zoom)
+        root.setProperty("panX", (viewport.width() - bounds.width() * render_scale) / 2 - bounds.left() * render_scale)
+        root.setProperty("panY", 48 + (available_height - bounds.height() * render_scale) / 2 - bounds.top() * render_scale)
+        self._git_tree_compact_restore = None
+        self._git_tree_compact_auto_view = None
+
+    def _toggle_git_details(self) -> None:
+        self._git_details_expanded = not self.git_details_scroll.isVisible()
+        self._git_details_forced = True
+        self._adapt_git_layout()
+
+    def _toggle_git_chat(self) -> None:
+        self._git_chat_visible = not self._git_chat_visible
+        self._adapt_workbench_layout()
+        self._adapt_git_layout()
 
     def _fit_git_tree_compact_layout(self) -> None:
         if (
@@ -3303,6 +4402,35 @@ class ClientWindow(QMainWindow):
         self.outline_tree.itemDoubleClicked.connect(self._open_outline_result)
         outline_layout.addWidget(self.outline_tree, 1)
         tabs.addTab(outline_page, "大纲")
+
+        context_page = QWidget()
+        context_layout = QVBoxLayout(context_page)
+        context_layout.setContentsMargins(10, 8, 10, 8)
+        context_layout.setSpacing(6)
+        context_header = QHBoxLayout()
+        self.project_context_meta = QLabel("发送任务时自动检索相关代码与项目指令")
+        self.project_context_meta.setObjectName("Hint")
+        self.project_context_meta.setWordWrap(True)
+        context_header.addWidget(self.project_context_meta, 1)
+        self.project_context_refresh = QPushButton("刷新")
+        self.project_context_refresh.setObjectName("Quiet")
+        self.project_context_refresh.setToolTip("按输入框中的任务或当前文件重新检索；不调用 LLM")
+        self.project_context_refresh.clicked.connect(self.refresh_project_context)
+        context_header.addWidget(self.project_context_refresh)
+        self.project_environment_check = QPushButton("核验环境")
+        self.project_environment_check.setObjectName("Quiet")
+        self.project_environment_check.setToolTip(
+            "按项目清单核验 Python 虚拟环境及 Node/Rust/Go 工具链；需一次批准，不联网、不安装依赖"
+        )
+        self.project_environment_check.clicked.connect(self.check_project_environment)
+        context_header.addWidget(self.project_environment_check)
+        context_layout.addLayout(context_header)
+        self.project_context_output = QPlainTextEdit()
+        self.project_context_output.setObjectName("ProjectContextOutput")
+        self.project_context_output.setReadOnly(True)
+        self.project_context_output.setPlaceholderText("这里显示提供给 Agent 的项目概况、指令、相关文件与片段")
+        context_layout.addWidget(self.project_context_output, 1)
+        self.project_context_tab_index = tabs.addTab(context_page, "上下文")
         return tabs
 
     def _build_git_page(self) -> QWidget:
@@ -3345,6 +4473,28 @@ class ClientWindow(QMainWindow):
         refresh.clicked.connect(self._refresh_development_tree)
         self.git_refresh_button = refresh
         header_layout.addWidget(refresh)
+        fit_tree = QPushButton("适应全图")
+        fit_tree.setObjectName("Quiet")
+        fit_tree.setToolTip("缩放并居中显示全部主线与尝试分支")
+        fit_tree.clicked.connect(self._fit_development_tree)
+        self.git_fit_button = fit_tree
+        header_layout.addWidget(fit_tree)
+        details_toggle = QToolButton()
+        details_toggle.setObjectName("Quiet")
+        details_toggle.setText("详情")
+        details_toggle.setCheckable(True)
+        details_toggle.setToolTip("展开 / 收起节点详情；工作区提交区始终固定显示")
+        details_toggle.clicked.connect(self._toggle_git_details)
+        self.git_details_button = details_toggle
+        header_layout.addWidget(details_toggle)
+        chat_toggle = QToolButton()
+        chat_toggle.setObjectName("Quiet")
+        chat_toggle.setText("Agent")
+        chat_toggle.setCheckable(True)
+        chat_toggle.setToolTip("显示 / 隐藏对话面板，为版本树留出空间")
+        chat_toggle.clicked.connect(self._toggle_git_chat)
+        self.git_chat_button = chat_toggle
+        header_layout.addWidget(chat_toggle)
         init = QPushButton("初始化 Git")
         init.setObjectName("GitPrimary")
         init.clicked.connect(self.init_git)
@@ -3355,7 +4505,7 @@ class ClientWindow(QMainWindow):
         metrics_panel = QWidget()
         metrics_panel.setObjectName("GitMetricsPanel")
         metrics = QHBoxLayout(metrics_panel)
-        metrics.setContentsMargins(18, 12, 18, 12)
+        metrics.setContentsMargins(18, 6, 18, 6)
         metrics.setSpacing(10)
         self.git_metrics_panel = metrics_panel
         self.git_main_value = self._metric_card(metrics, "主线", "0")
@@ -3380,9 +4530,9 @@ class ClientWindow(QMainWindow):
         tree_splitter.addWidget(tree_scroll)
 
         details = QFrame()
-        details.setObjectName("GitDetails")
-        details.setMinimumWidth(260)
-        details.setMaximumWidth(360)
+        details.setObjectName("GitDetailContent")
+        details.setMinimumWidth(0)
+        details.setMaximumWidth(16777215)
         detail_layout = QVBoxLayout(details)
         detail_layout.setContentsMargins(18, 20, 18, 16)
         detail_layout.setSpacing(9)
@@ -3425,21 +4575,21 @@ class ClientWindow(QMainWindow):
         self.git_changes_tree.setToolTip("双击文件查看 Git diff")
         self.git_changes_tree.itemDoubleClicked.connect(self._open_git_change)
         detail_layout.addWidget(self.git_changes_tree)
-        change_actions = QHBoxLayout()
+        change_actions = QGridLayout()
         change_actions.setContentsMargins(0, 0, 0, 0)
         change_actions.setSpacing(6)
         stage_selected = QPushButton("暂存选中")
         stage_selected.setObjectName("Quiet")
         stage_selected.clicked.connect(self.stage_selected_change)
-        change_actions.addWidget(stage_selected)
+        change_actions.addWidget(stage_selected, 0, 0)
         unstage_selected = QPushButton("取消暂存")
         unstage_selected.setObjectName("Quiet")
         unstage_selected.clicked.connect(self.unstage_selected_change)
-        change_actions.addWidget(unstage_selected)
+        change_actions.addWidget(unstage_selected, 0, 1)
         stage_all = QPushButton("暂存全部")
         stage_all.setObjectName("Quiet")
         stage_all.clicked.connect(self.stage_all_changes)
-        change_actions.addWidget(stage_all)
+        change_actions.addWidget(stage_all, 1, 0, 1, 2)
         detail_layout.addLayout(change_actions)
         workspace_label = QLabel("Git 状态")
         workspace_label.setObjectName("Overline")
@@ -3468,9 +4618,30 @@ class ClientWindow(QMainWindow):
         details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         details_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         details_scroll.setWidget(details)
-        self.git_details = details
+        detail_layout.removeWidget(self.git_commit_input)
+        detail_layout.removeWidget(commit)
+        commit_footer = QFrame()
+        commit_footer.setObjectName("GitCommitFooter")
+        commit_layout = QVBoxLayout(commit_footer)
+        commit_layout.setContentsMargins(12, 10, 12, 12)
+        commit_layout.setSpacing(7)
+        self.git_commit_input.setParent(commit_footer)
+        commit.setParent(commit_footer)
+        commit_layout.addWidget(self.git_commit_input)
+        commit_layout.addWidget(commit)
+        details_dock = QFrame()
+        details_dock.setObjectName("GitDetails")
+        details_dock.setMinimumWidth(260)
+        details_dock.setMaximumWidth(360)
+        dock_layout = QVBoxLayout(details_dock)
+        dock_layout.setContentsMargins(0, 0, 0, 0)
+        dock_layout.setSpacing(0)
+        dock_layout.addWidget(details_scroll, 1)
+        dock_layout.addWidget(commit_footer)
+        self.git_details = details_dock
         self.git_details_scroll = details_scroll
-        tree_splitter.addWidget(details_scroll)
+        self.git_commit_footer = commit_footer
+        tree_splitter.addWidget(details_dock)
         tree_splitter.setSizes([1, 300])
         tree_splitter.setStretchFactor(0, 1)
         tree_splitter.setStretchFactor(1, 0)
@@ -3483,7 +4654,7 @@ class ClientWindow(QMainWindow):
         card = QFrame()
         card.setObjectName("MetricCard")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(12, 9, 12, 9)
+        card_layout.setContentsMargins(12, 6, 12, 6)
         card_layout.setSpacing(2)
         value = QLabel(value_text)
         value.setObjectName("MetricValue")
@@ -3563,13 +4734,20 @@ class ClientWindow(QMainWindow):
         self.git_main_value.setText(str(max(0, main_count)))
         self.git_attempt_value.setText(str(len(attempts)))
         self.git_failed_value.setText(str(failed_count))
-        head = self.git.head_sha()
+        head = getattr(self, "_cached_head_sha", "")
+        if head is None:
+            head = self.git.head_sha()
         self.git_head_value.setText(head[:8] if head else "暂无")
 
     def _handle_git_node_selected(self, node: dict[str, Any]) -> None:
         self.git_detail_title.setText(str(node.get("title", "未命名节点")))
         self.git_detail_status.setText(DevelopmentTreeView._status_text(node))
-        self.git_detail_status.setStyleSheet(f"color: {DevelopmentTreeView._accent(node).name()};")
+        color = DevelopmentTreeView._accent(node).name()
+        if self.ui_profile == "paper":
+            color = {"main": "#13836b", "failed": "#b7473c", "retry": "#91600c", "active": "#266dc0"}.get(
+                "main" if node.get("lane") == "main" else str(node.get("status")), "#65758a"
+            )
+        self.git_detail_status.setStyleSheet(f"color: {color};")
         self.git_detail_description.setText(str(node.get("description", "暂无说明")))
         self.git_detail_meta.setText(str(node.get("meta", "暂无记录")))
         can_retry = node.get("lane") == "attempt" and node.get("status") in {"failed", "retry"}
@@ -3577,6 +4755,9 @@ class ClientWindow(QMainWindow):
         self.git_retry_button.setProperty("task_id", node.get("id", ""))
 
     def retry_selected_node(self) -> None:
+        if self._environment_check_running:
+            self._append_chat("系统", "项目环境核验进行中，请完成后再重试开发方向。", "meta")
+            return
         if self.active_task_id:
             self._append_chat("系统", "当前任务仍在执行，请等待 Agent 完成后再重试其他方向。", "meta")
             return
@@ -3595,13 +4776,14 @@ class ClientWindow(QMainWindow):
         self.chat_panel = chat
         chat.setObjectName("ChatPane")
         chat.setMinimumWidth(self.WORKBENCH_COMPACT_MINIMUMS[2])
-        chat.setMaximumWidth(500)
+        chat.setMaximumWidth(16777215)
         layout = QVBoxLayout(chat)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         header = QFrame()
         header.setObjectName("ChatHeader")
+        self.chat_header = header
         header.setFixedHeight(58)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(14, 0, 12, 0)
@@ -3612,31 +4794,44 @@ class ClientWindow(QMainWindow):
         header_layout.addWidget(agent_logo)
         title_box = QVBoxLayout()
         title_box.setSpacing(1)
-        title = QLabel("Codex Agent")
+        title = ElidedLabel(self._provider_model() if self._provider_configured() else "Coding Agent")
+        self.agent_title = title
         title.setObjectName("AppTitle")
-        self.chat_status = QLabel("就绪 · 等待任务")
-        self.chat_status.setObjectName("StateReady")
+        title.setToolTip(self._provider_model() if self._provider_configured() else "配置模型后开始编码")
+        self.chat_status = ElidedLabel("就绪 · 等待任务" if self._provider_configured() else "未配置模型")
+        self.chat_status.setObjectName("StateReady" if self._provider_configured() else "StateWorking")
         title_box.addWidget(title)
         title_box.addWidget(self.chat_status)
-        header_layout.addLayout(title_box)
-        header_layout.addStretch(1)
+        header_layout.addLayout(title_box, 1)
         more = QToolButton()
         more.setObjectName("IconButton")
         more.setText("…")
         more.setToolTip("Agent 设置")
         header_layout.addWidget(more)
         more.clicked.connect(self.toggle_summary_settings)
+        self.agent_settings_button = more
         layout.addWidget(header)
 
+        self.chat_body_stack = QStackedWidget()
+        layout.addWidget(self.chat_body_stack, 1)
+        conversation = QWidget()
+        self.conversation_page = conversation
+        layout = QVBoxLayout(conversation)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.chat_body_stack.addWidget(conversation)
         self.summary_settings_panel = QFrame()
         self.summary_settings_panel.setObjectName("SummarySettings")
-        self.summary_settings_panel.setVisible(False)
+        self.summary_settings_panel.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         settings_layout = QGridLayout(self.summary_settings_panel)
+        settings_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.summary_settings_layout = settings_layout
         settings_layout.setContentsMargins(12, 9, 12, 9)
         settings_layout.setHorizontalSpacing(8)
         settings_layout.setVerticalSpacing(6)
-        self.summary_settings_title = QLabel("会话总结")
+        self.summary_settings_title = QLabel("总结、记忆、协作与验收")
         self.summary_settings_title.setObjectName("SummarySettingsTitle")
         settings_layout.addWidget(self.summary_settings_title, 0, 0, 1, 4)
         self.summary_enabled_checkbox = QCheckBox("每次编码对话结束自动总结")
@@ -3659,7 +4854,7 @@ class ClientWindow(QMainWindow):
         self.summary_tokens_spin.setRange(200, 32000)
         self.summary_tokens_spin.setSingleStep(1000)
         self.summary_tokens_spin.setValue(self.summary_settings.max_tokens)
-        self.summary_tokens_spin.setSuffix(" tokens")
+        self.summary_tokens_spin.setSuffix(" tok")
         self.summary_tokens_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
         settings_layout.addWidget(self.summary_tokens_spin, 3, 1)
         self.summary_context_label = QLabel("上下文")
@@ -3668,7 +4863,7 @@ class ClientWindow(QMainWindow):
         self.summary_context_spin.setRange(4000, 50000)
         self.summary_context_spin.setSingleStep(1000)
         self.summary_context_spin.setValue(self.summary_settings.context_chars)
-        self.summary_context_spin.setSuffix(" chars")
+        self.summary_context_spin.setSuffix(" 字符")
         self.summary_context_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
         settings_layout.addWidget(self.summary_context_spin, 3, 3)
         self.summary_retry_label = QLabel("失败重试")
@@ -3676,7 +4871,7 @@ class ClientWindow(QMainWindow):
         self.summary_retry_spin = QSpinBox()
         self.summary_retry_spin.setRange(0, 3)
         self.summary_retry_spin.setValue(self.summary_settings.retries)
-        self.summary_retry_spin.setSuffix(" times")
+        self.summary_retry_spin.setSuffix(" 次")
         self.summary_retry_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
         settings_layout.addWidget(self.summary_retry_spin, 4, 1)
         self.summary_failure_note = QLabel("总结失败不会影响代码任务")
@@ -3687,7 +4882,7 @@ class ClientWindow(QMainWindow):
         self.summary_interval_spin = QSpinBox()
         self.summary_interval_spin.setRange(0, 32)
         self.summary_interval_spin.setValue(self.summary_settings.interval_turns)
-        self.summary_interval_spin.setSuffix(" turns")
+        self.summary_interval_spin.setSuffix(" 轮")
         self.summary_interval_spin.setSpecialValueText("仅结束")
         self.summary_interval_spin.setToolTip("每 N 轮 Agent 调用生成一次阶段总结；0 表示只在对话结束时总结")
         self.summary_interval_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
@@ -3697,11 +4892,126 @@ class ClientWindow(QMainWindow):
         settings_layout.addWidget(self.summary_frequency_note, 5, 2, 1, 2)
         self.summary_instruction_label = QLabel("指令")
         settings_layout.addWidget(self.summary_instruction_label, 6, 0)
-        self.summary_instruction_edit = QLineEdit(self.summary_settings.instruction)
+        self.summary_instruction_edit = QPlainTextEdit(self.summary_settings.instruction)
+        self.summary_instruction_edit.setObjectName("AgentInstruction")
         self.summary_instruction_edit.setPlaceholderText("要求总结包含哪些内容")
-        self.summary_instruction_edit.editingFinished.connect(self._persist_summary_settings)
+        self.summary_instruction_edit.setMinimumHeight(66)
+        self.summary_instruction_edit.setMaximumHeight(118)
+        self.summary_instruction_edit.setTabChangesFocus(True)
+        self.summary_instruction_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.summary_instruction_save_timer = QTimer(self)
+        self.summary_instruction_save_timer.setSingleShot(True)
+        self.summary_instruction_save_timer.timeout.connect(self._persist_summary_settings)
+        self.summary_instruction_edit.textChanged.connect(
+            lambda: self.summary_instruction_save_timer.start(500)
+        )
         settings_layout.addWidget(self.summary_instruction_edit, 6, 1, 1, 3)
-        layout.addWidget(self.summary_settings_panel)
+        self.project_memory_checkbox = QCheckBox("检索本项目历史总结")
+        self.project_memory_checkbox.setChecked(self.summary_settings.memory_enabled)
+        self.project_memory_checkbox.setToolTip("每个新任务从本项目的旧会话最终总结中检索相关内容；仅保存在本机 .research，不调用额外模型")
+        self.project_memory_checkbox.toggled.connect(lambda _checked: self._persist_summary_settings())
+        settings_layout.addWidget(self.project_memory_checkbox, 7, 0, 1, 2)
+        self.project_memory_results_label = QLabel("引用条数")
+        settings_layout.addWidget(self.project_memory_results_label, 7, 2)
+        self.project_memory_results_spin = QSpinBox()
+        self.project_memory_results_spin.setRange(1, 8)
+        self.project_memory_results_spin.setValue(self.summary_settings.memory_results)
+        self.project_memory_results_spin.setSuffix(" 条")
+        self.project_memory_results_spin.setToolTip("单个新任务最多注入的历史总结数")
+        self.project_memory_results_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
+        settings_layout.addWidget(self.project_memory_results_spin, 7, 3)
+        self.project_memory_context_label = QLabel("上下文上限")
+        settings_layout.addWidget(self.project_memory_context_label, 8, 0)
+        self.project_memory_context_spin = QSpinBox()
+        self.project_memory_context_spin.setRange(500, 16000)
+        self.project_memory_context_spin.setSingleStep(1000)
+        self.project_memory_context_spin.setValue(self.summary_settings.memory_context_chars)
+        self.project_memory_context_spin.setSuffix(" 字符")
+        self.project_memory_context_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
+        settings_layout.addWidget(self.project_memory_context_spin, 8, 1)
+        self.acceptance_mode_label = QLabel("语义验收")
+        settings_layout.addWidget(self.acceptance_mode_label, 9, 0)
+        self.acceptance_mode_combo = QComboBox()
+        self.acceptance_mode_combo.setMinimumContentsLength(6)
+        self.acceptance_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.acceptance_mode_combo.addItem("关闭", "off")
+        self.acceptance_mode_combo.addItem("建议（不阻止提交）", "advisory")
+        self.acceptance_mode_combo.addItem("必需（未通过不提交）", "required")
+        mode_index = self.acceptance_mode_combo.findData(self.summary_settings.acceptance_mode)
+        self.acceptance_mode_combo.setCurrentIndex(max(0, mode_index))
+        self.acceptance_mode_combo.setToolTip("默认关闭。启用后会把任务、变更 diff 和检查摘要发送给单独配置的复核模型。")
+        self.acceptance_mode_combo.currentIndexChanged.connect(lambda _index: self._persist_summary_settings())
+        settings_layout.addWidget(self.acceptance_mode_combo, 9, 1, 1, 3)
+        self.acceptance_model_label = QLabel("复核模型")
+        settings_layout.addWidget(self.acceptance_model_label, 10, 0)
+        self.acceptance_model_edit = QLineEdit(self.summary_settings.acceptance_model)
+        self.acceptance_model_edit.setPlaceholderText("填写不同于编码模型的模型 ID")
+        self.acceptance_model_edit.setToolTip("模型 ID 必须与编码模型不同；同一服务商仍不等于真正独立的机构审查。")
+        self.acceptance_model_edit.editingFinished.connect(self._persist_summary_settings)
+        settings_layout.addWidget(self.acceptance_model_edit, 10, 1, 1, 3)
+        self.acceptance_note = QLabel("额外 LLM 调用；必需模式在审查不通过或证据不完整时保留改动、不自动提交。")
+        self.acceptance_note.setObjectName("Hint")
+        self.acceptance_note.setWordWrap(True)
+        settings_layout.addWidget(self.acceptance_note, 11, 0, 1, 4)
+        self.multi_agent_enabled_checkbox = QCheckBox("允许主 Agent 委派协作 Agent")
+        self.multi_agent_enabled_checkbox.setChecked(self.summary_settings.multi_agent_enabled)
+        self.multi_agent_enabled_checkbox.setToolTip(
+            "默认关闭；可委派架构、测试、安全、编码或审阅专员。编码专员只能提交逐块审批补丁；所有专员均不能运行命令、浏览网页或操作 Git。"
+        )
+        self.multi_agent_enabled_checkbox.toggled.connect(self._on_multi_agent_enabled_changed)
+        settings_layout.addWidget(self.multi_agent_enabled_checkbox, 12, 0, 1, 4)
+        self.multi_agent_model_label = QLabel("协作模型")
+        settings_layout.addWidget(self.multi_agent_model_label, 13, 0)
+        self.multi_agent_model_edit = QLineEdit(self.summary_settings.multi_agent_model)
+        self.multi_agent_model_edit.setPlaceholderText("留空，跟随主模型")
+        self.multi_agent_model_edit.setToolTip("可指定协作 Agent 使用的模型 ID；留空跟随主模型。模型 ID 不同不代表不同机构。")
+        self.multi_agent_model_edit.setEnabled(self.summary_settings.multi_agent_enabled)
+        self.multi_agent_model_edit.editingFinished.connect(self._persist_summary_settings)
+        settings_layout.addWidget(self.multi_agent_model_edit, 13, 1, 1, 3)
+        self.multi_agent_note = QLabel("每任务最多 3 次委派；编码专员仅能提交一次逐块审批补丁，其他角色只读。主 Agent 仍负责核验与测试。关闭时不增加模型调用。")
+        self.multi_agent_note.setObjectName("Hint")
+        self.multi_agent_note.setWordWrap(True)
+        settings_layout.addWidget(self.multi_agent_note, 14, 0, 1, 4)
+        self.context_window_label = QLabel("模型上下文窗口")
+        self.context_window_spin = QSpinBox()
+        self.context_window_spin.setRange(1024, 1_048_576)
+        self.context_window_spin.setSingleStep(4096)
+        self.context_window_spin.setValue(self.summary_settings.context_window_tokens)
+        self.context_window_spin.setSuffix(" tok")
+        self.context_window_spin.setToolTip("填写当前主模型实际支持的上下文窗口；默认 32768 tokens。")
+        self.context_window_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
+        self.context_window_note = QLabel(
+            "占用按请求估算；接口报告输入 tokens 后显示实际值。请按模型实际窗口设置。"
+        )
+        self.context_window_note.setObjectName("Hint")
+        self.context_window_note.setWordWrap(True)
+        settings_layout.addWidget(self.context_window_label, 18, 0)
+        settings_layout.addWidget(self.context_window_spin, 18, 1)
+        settings_layout.addWidget(self.context_window_note, 19, 0, 1, 4)
+        self.summary_settings_scroll = QScrollArea()
+        self.summary_settings_scroll.setObjectName("SettingsScroll")
+        self.summary_settings_scroll.setWidgetResizable(True)
+        self.summary_settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.summary_settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.summary_settings_scroll.setWidget(self.summary_settings_panel)
+        self.chat_body_stack.addWidget(self.summary_settings_scroll)
+        self.chat_body_stack.setCurrentWidget(conversation)
+        provider_note = QLabel(
+            "模型配置来自启动环境：SCIDEV_API_KEY / SCIDEV_MODEL / SCIDEV_BASE_URL。\n"
+            "修改后重新启动客户端；这里的“模型”只覆盖总结模型。"
+        )
+        provider_note.setObjectName("Hint")
+        provider_note.setWordWrap(True)
+        provider_note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        settings_layout.addWidget(provider_note, 20, 0, 1, 4)
+
+        self.task_plan_panel = TaskPlanPanel(
+            self.planning_mode,
+            self.ui_settings,
+            self._on_planning_mode_changed,
+            chat,
+        )
+        layout.addWidget(self.task_plan_panel)
 
         self.chat_scroll = QScrollArea()
         self.chat_scroll.setObjectName("ChatScroll")
@@ -3730,25 +5040,57 @@ class ClientWindow(QMainWindow):
         self.retry_chip.setObjectName("Chip")
         self.retry_chip.setAccessibleName("自动重试")
         self.retry_chip.setToolTip("网络请求失败后自动排队并重试")
-        composer_top.addWidget(self.retry_chip)
+        self.usage_chip = QLabel("模型用量")
+        self.usage_chip.setObjectName("UsageQuiet")
+        self.usage_chip.setAccessibleName("模型请求用量")
+        self._display_model_usage({"usage": self.model_usage, "record": None})
         self.summary_chip = QLabel(self._summary_chip_text())
         self.summary_chip.setObjectName("Chip")
         self.summary_chip.setToolTip(self._summary_status_text())
         self.summary_chip.setAccessibleName(self._summary_status_text())
         composer_top.addWidget(self.summary_chip)
+        composer_top.addWidget(self.usage_chip)
+        self.context_usage_label = QLabel()
+        self.context_usage_label.setObjectName("ContextUsageLabel")
+        self.context_usage_label.setAccessibleName("上下文占用")
+        self.context_usage_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        composer_top.addWidget(self.context_usage_label)
+        self.context_usage_bar = QProgressBar()
+        self.context_usage_bar.setObjectName("ContextUsageBar")
+        self.context_usage_bar.setRange(0, 1000)
+        self.context_usage_bar.setTextVisible(False)
+        self.context_usage_bar.setFixedSize(round(68 * self._ui_scale), max(6, round(6 * self._ui_scale)))
+        self.context_usage_bar.setAccessibleName("上下文使用比例")
+        composer_top.addWidget(self.context_usage_bar)
+        self._render_context_meter()
         context_button = QToolButton()
         context_button.setObjectName("IconButton")
         context_button.setText("@")
-        context_button.setToolTip("引用当前文件或选中代码")
-        context_button.clicked.connect(self._insert_current_file_context)
+        context_button.setToolTip("引用文件/选区，或查看 Agent 的项目上下文")
+        context_button.setAccessibleName("项目上下文")
+        context_menu = QMenu(context_button)
+        context_menu.addAction("引用当前文件或选区", self._insert_current_file_context)
+        context_menu.addAction("查看项目上下文", self.show_project_context)
+        context_button.setMenu(context_menu)
+        context_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.context_button = context_button
         composer_top.addWidget(context_button)
         composer_top.addStretch(1)
         composer_layout.addLayout(composer_top)
+        self.chat_composer_meta = QHBoxLayout()
+        self.chat_composer_meta.setContentsMargins(0, 0, 0, 0)
+        self.chat_composer_meta.setSpacing(6)
+        self.chat_composer_meta.addStretch(1)
+        composer_layout.addLayout(self.chat_composer_meta)
+        self.retry_chip.hide()
+        for chip in (self.chat_mode_chip, self.summary_chip):
+            chip.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
         self.chat_input = PromptEdit()
         self.chat_input.setObjectName("ChatInput")
         self.chat_input.setPlaceholderText("告诉 Agent 你想修改什么…")
         self.chat_input.setFixedHeight(76)
+        self.chat_input.textChanged.connect(self._render_context_meter)
         self.chat_input.send_requested.connect(self.submit_chat)
         composer_layout.addWidget(self.chat_input)
         bottom = QHBoxLayout()
@@ -3771,10 +5113,105 @@ class ClientWindow(QMainWindow):
             return "总结已关闭"
         return f"总结已开启 · 每{settings.interval_turns}轮" if settings.interval_turns else "总结已开启 · 仅结束"
 
+    def _display_model_usage(self, payload: dict[str, Any]) -> None:
+        usage = payload.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        self.model_usage = {
+            name: max(0, int(usage.get(name, 0) or 0))
+            for name in ModelRequestUsage.COUNTERS
+        }
+        if not hasattr(self, "usage_chip"):
+            return
+        attempts = self.model_usage["request_attempts"]
+        request_size = ModelRequestUsage.format_bytes(self.model_usage["request_body_bytes"])
+        response_size = ModelRequestUsage.format_bytes(self.model_usage["response_body_bytes"])
+        usage_text = (
+            f"LLM {attempts}"
+            if self._is_chat_compact()
+            else f"LLM {attempts} · ↑{request_size} ↓{response_size}"
+        )
+        self.usage_chip.setText(usage_text)
+        self.usage_chip.setVisible(attempts > 0)
+        record = payload.get("record")
+        if (
+            isinstance(record, dict)
+            and record.get("kind") == "coding"
+            and str(payload.get("session_id") or "") == self._context_usage_session_id
+            and isinstance(record.get("prompt_tokens"), int)
+            and not isinstance(record.get("prompt_tokens"), bool)
+        ):
+            self._context_usage_actual_tokens = max(0, record["prompt_tokens"])
+            self._render_context_meter()
+        token_text = (
+            f"已报告 tokens：输入 {self.model_usage['prompt_tokens']:,} · "
+            f"输出 {self.model_usage['completion_tokens']:,} · 总计 {self.model_usage['total_tokens']:,}"
+            if self.model_usage["token_reports"] else "当前接口未返回 token usage"
+        )
+        self.usage_chip.setToolTip(
+            f"模型请求尝试：{attempts}（重试 {self.model_usage['retry_attempts']} 次，"
+            f"失败 {self.model_usage['failed_attempts']} 次，"
+            f"代理回退 {self.model_usage['proxy_fallback_attempts']} 次）\n"
+            f"请求体：{request_size} · 响应体：{response_size}\n"
+            f"累计请求耗时：{self.model_usage['elapsed_ms'] / 1000:.1f} 秒\n{token_text}\n"
+            "字节数统计 JSON 请求体与客户端读取的响应体，不含 HTTP/TLS 头和传输层开销。"
+        )
+
+    def _render_context_meter(self) -> None:
+        label = getattr(self, "context_usage_label", None)
+        if label is None:
+            return
+        settings = getattr(self, "summary_settings", SummarySettings())
+        window_tokens = max(1024, int(settings.context_window_tokens))
+        draft = estimate_text_tokens(
+            self.chat_input.toPlainText() if hasattr(self, "chat_input") else ""
+        )
+        actual_tokens = self._context_usage_actual_tokens
+        base_tokens = actual_tokens if actual_tokens is not None else self._context_usage_estimated_tokens
+        used_tokens = max(0, base_tokens) + draft
+        approximate = actual_tokens is None or draft > 0
+        percentage = min(100, round(used_tokens * 100 / window_tokens))
+        prefix = "≈" if approximate else ""
+        count_text = f"{prefix}{format_token_count(used_tokens)}/{format_token_count(window_tokens)}"
+        if self._is_chat_compact():
+            label.setText(f"上下文 {count_text}")
+        else:
+            label.setText(f"上下文 {count_text} · {percentage}%")
+        source = (
+            "估算值：按请求 JSON UTF-8 字节数折算，非模型专用 tokenizer。"
+            if actual_tokens is None
+            else "占用以接口报告的本轮输入 tokens 为准。"
+        )
+        if draft:
+            source += f"\n正在编辑的输入另估约 {draft:,} tokens。"
+        label.setToolTip(
+            f"上下文占用 {used_tokens:,} / {window_tokens:,} tokens（{percentage}%）\n"
+            f"{source}\n模型上下文窗口可在 Agent 设置中调整。"
+        )
+        label.setAccessibleDescription(label.toolTip())
+        bar = getattr(self, "context_usage_bar", None)
+        if bar is not None:
+            bar.setRange(0, 1000)
+            bar.setValue(min(1000, round(used_tokens * 1000 / window_tokens)))
+            level = "critical" if percentage >= 90 else "warning" if percentage >= 75 else "normal"
+            if bar.property("level") != level:
+                bar.setProperty("level", level)
+                bar.style().unpolish(bar)
+                bar.style().polish(bar)
+            bar.setToolTip(label.toolTip())
+
+    def _on_planning_mode_changed(self, mode: str) -> None:
+        self.planning_mode = mode
+
     def _is_chat_compact(self) -> bool:
         chat_panel = getattr(self, "chat_panel", None)
-        chat_width = chat_panel.width() if chat_panel is not None else self.width()
-        return self.width() < self.WORKBENCH_COMPACT_BREAKPOINT or chat_width < 390
+        if chat_panel is None:
+            return False
+        # Compaction is about the pane that actually renders the chips; while
+        # the pane is hidden (settings, version tree) or not yet shown there is
+        # no width to compact against.
+        if not chat_panel.isVisible():
+            return False
+        return chat_panel.width() < 390
 
     def _summary_compact_status_text(self) -> str:
         settings = getattr(self, "summary_settings", SummarySettings())
@@ -3792,24 +5229,37 @@ class ClientWindow(QMainWindow):
         return "结束" if compact else "总结结束"
 
     def toggle_summary_settings(self) -> None:
-        visible = not self.summary_settings_panel.isVisible()
-        self.summary_settings_panel.setVisible(visible)
-        if visible:
-            self.summary_instruction_edit.setFocus()
+        if self.workspace_stack.currentWidget() is self.settings_page:
+            self._close_settings()
+            return
+        self._open_agent_settings_from_preferences()
 
     def _persist_summary_settings(self) -> None:
         if not hasattr(self, "summary_enabled_checkbox"):
             return
+        timer = getattr(self, "summary_instruction_save_timer", None)
+        if timer is not None:
+            timer.stop()
         self.summary_settings.enabled = self.summary_enabled_checkbox.isChecked()
         self.summary_settings.model = self.summary_model_edit.text().strip()
         self.summary_settings.max_tokens = self.summary_tokens_spin.value()
         self.summary_settings.context_chars = self.summary_context_spin.value()
         self.summary_settings.retries = self.summary_retry_spin.value()
         self.summary_settings.interval_turns = self.summary_interval_spin.value()
-        self.summary_settings.instruction = self.summary_instruction_edit.text().strip() or SummarySettings.instruction
+        self.summary_settings.instruction = self.summary_instruction_edit.toPlainText().strip() or SummarySettings.instruction
+        self.summary_settings.memory_enabled = self.project_memory_checkbox.isChecked()
+        self.summary_settings.memory_results = self.project_memory_results_spin.value()
+        self.summary_settings.memory_context_chars = self.project_memory_context_spin.value()
+        self.summary_settings.context_window_tokens = self.context_window_spin.value()
+        self.summary_settings.acceptance_mode = SemanticAcceptance.mode(self.acceptance_mode_combo.currentData())
+        self.summary_settings.acceptance_model = self.acceptance_model_edit.text().strip()[:160]
+        self.summary_settings.multi_agent_enabled = self.multi_agent_enabled_checkbox.isChecked()
+        self.summary_settings.multi_agent_model = self.multi_agent_model_edit.text().strip()[:160]
         try:
             self.summary_settings.save(self.project_root)
+            self.settings_page.refresh_filter()
             self.agent.summary_settings = self.summary_settings
+            self._render_context_meter()
             state = self._summary_status_text()
             compact_state = (
                 self._summary_compact_status_text()
@@ -3824,22 +5274,41 @@ class ClientWindow(QMainWindow):
         except OSError as exc:
             self._append_log(f"总结设置保存失败: {exc}")
 
+    def _on_multi_agent_enabled_changed(self, enabled: bool) -> None:
+        self.multi_agent_model_edit.setEnabled(bool(enabled))
+        self._persist_summary_settings()
+
     def _provider_state(self) -> str:
-        key = os.getenv("SCIDEV_API_KEY") or os.getenv("OPENAI_API_KEY")
-        model = os.getenv("SCIDEV_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5"
-        return f"● {model}" if key else "● LLM 未配置"
+        return f"● {self._provider_model()}" if self._provider_configured() else "○ 配置 LLM"
+
+    @staticmethod
+    def _provider_configured() -> bool:
+        return bool(os.getenv("SCIDEV_API_KEY") or os.getenv("OPENAI_API_KEY"))
+
+    @staticmethod
+    def _provider_model() -> str:
+        return os.getenv("SCIDEV_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5"
 
     def _emit_agent(self, kind: str, data: dict[str, Any]) -> None:
         if not self._closing:
             self.signals.agent_event.emit(kind, data)
 
-    def _request_command_approval(self, command: str, timeout_seconds: int) -> bool:
+    def _request_command_approval(
+        self,
+        command: str,
+        timeout_seconds: int,
+        *,
+        purpose: str = "允许 Agent 执行这条终端命令？",
+        explanation: str = "",
+    ) -> bool:
         if self._closing:
             return False
         decision_ready = threading.Event()
         request = {
             "command": command,
             "timeout_seconds": timeout_seconds,
+            "purpose": purpose,
+            "explanation": explanation,
             "decision_ready": decision_ready,
             "approved": False,
         }
@@ -3859,22 +5328,107 @@ class ClientWindow(QMainWindow):
             dialog.setWindowTitle("安全确认")
             dialog.setIcon(QMessageBox.Icon.Warning)
             dialog.setTextFormat(Qt.TextFormat.PlainText)
-            dialog.setText("允许 Agent 执行这条终端命令？")
-            dialog.setInformativeText(
+            dialog.setText(str(request.get("purpose") or "允许 Agent 执行这条终端命令？"))
+            informative_text = (
                 f"工作目录：{self.project_root}\n"
                 f"超时上限：{timeout_seconds} 秒。命令将以当前 Windows 用户权限执行。\n"
-                "展开详细信息可检查完整命令。"
+                + (str(request.get("explanation") or "") + "\n" if request.get("explanation") else "")
+                + "展开详细信息可检查完整命令。"
             )
+            dialog.setInformativeText(informative_text)
             dialog.setDetailedText(command)
             dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            dialog.setButtonText(QMessageBox.StandardButton.Yes, "允许这一次")
-            dialog.setButtonText(QMessageBox.StandardButton.No, "拒绝")
+            dialog.button(QMessageBox.StandardButton.Yes).setText("允许这一次")
+            dialog.button(QMessageBox.StandardButton.No).setText("拒绝")
             dialog.setDefaultButton(QMessageBox.StandardButton.No)
             approved = dialog.exec() == QMessageBox.StandardButton.Yes
             request["approved"] = approved
-            self._append_log("已批准 Agent 命令" if approved else "已拒绝 Agent 命令")
+            self._append_log("已批准终端命令" if approved else "已拒绝终端命令")
         finally:
             decision_ready.set()
+
+    def _request_browser_approval(self, action: str, details: str) -> bool:
+        if self._closing:
+            return False
+        decision_ready = threading.Event()
+        request = {
+            "action": str(action)[:80],
+            "details": str(details)[:1400],
+            "decision_ready": decision_ready,
+            "approved": False,
+        }
+        self.signals.browser_approval_requested.emit(request)
+        decision_ready.wait()
+        return bool(request["approved"])
+
+    def _handle_browser_approval_request(self, request: dict[str, Any]) -> None:
+        decision_ready = request["decision_ready"]
+        try:
+            if self._closing:
+                return
+            dialog = QMessageBox(self)
+            dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+            dialog.setWindowTitle("浏览器操作确认")
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText("允许 Agent 在独立 Edge 浏览器中执行此操作？")
+            dialog.setInformativeText(
+                "浏览器使用临时独立配置，不会读取你的 Edge 登录态。网页会收到本次访问；"
+                "点击可能提交表单或改变网站数据。网页文字可能包含恶意指令，请检查操作内容。"
+            )
+            dialog.setDetailedText(str(request.get("details") or "")[:1400])
+            approve_button = dialog.addButton("允许这一次", QMessageBox.ButtonRole.AcceptRole)
+            deny_button = dialog.addButton("拒绝", QMessageBox.ButtonRole.RejectRole)
+            dialog.setDefaultButton(deny_button)
+            dialog.setEscapeButton(deny_button)
+            dialog.exec()
+            approved = dialog.clickedButton() is approve_button
+            request["approved"] = approved
+            self._append_log("已批准浏览器操作" if approved else "已拒绝浏览器操作")
+        finally:
+            decision_ready.set()
+
+    def _request_patch_review(self, preview: dict[str, Any]) -> set[int] | None:
+        if self._closing:
+            return None
+        decision_ready = threading.Event()
+        request: dict[str, Any] = {
+            "preview": preview,
+            "decision_ready": decision_ready,
+            "selected_hunks": None,
+            "resolved": False,
+            "card": None,
+        }
+        request_id = id(request)
+        self._pending_patch_reviews[request_id] = request
+        self.signals.patch_review_requested.emit(request)
+        decision_ready.wait()
+        self._pending_patch_reviews.pop(request_id, None)
+        selected = request.get("selected_hunks")
+        return set(selected) if isinstance(selected, set) else None
+
+    def _handle_patch_review_request(self, request: dict[str, Any]) -> None:
+        if self._closing or request.get("resolved"):
+            request["selected_hunks"] = None
+            request["resolved"] = True
+            request["decision_ready"].set()
+            return
+        card = PatchReviewCard(request.get("preview", {}))
+        request["card"] = card
+        card.decision.connect(lambda selected, pending=request: self._resolve_patch_review(pending, selected))
+        self.chat_layout.insertWidget(self.chat_layout.count() - 1, card)
+        QTimer.singleShot(
+            0,
+            lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()),
+        )
+
+    @staticmethod
+    def _resolve_patch_review(request: dict[str, Any], selected: object) -> None:
+        if request.get("resolved"):
+            return
+        request["selected_hunks"] = set(selected) if isinstance(selected, set) else None
+        request["resolved"] = True
+        request["decision_ready"].set()
 
     def _emit_worker(self, kind: str, data: dict[str, Any]) -> None:
         if not self._closing:
@@ -3883,23 +5437,51 @@ class ClientWindow(QMainWindow):
     def _handle_worker_event(self, event: str, payload: dict[str, Any]) -> None:
         task_id = payload.get("task_id", "")
         if event == "task_started" and task_id == self.active_task_id:
+            task_payload = payload.get("payload")
+            task_payload = task_payload if isinstance(task_payload, dict) else {}
+            retry_session_id = str(task_payload.get("session_id") or "")
+            if not self._execution_group_active and payload.get("kind") == "coding" and retry_session_id:
+                self._execution_group_active = True
+                self._execution_group_session_id = retry_session_id
+                self._active_execution_group = None
+            if self._active_execution_group is not None:
+                self._active_execution_group.set_state("running")
+                self._active_execution_group.set_activity("Agent 正在处理")
             self._set_state(self.chat_status, "工作中 · Agent 正在修改项目", "StateWorking")
             self._set_state(self.workspace_state, "● 工作中", "StateWorking")
         elif event == "task_retry" and task_id == self.active_task_id:
+            self._move_streams_to_execution_group(
+                self._execution_group_session_id,
+                speaker="Agent · 网络中断，等待自动重试",
+            )
             self._interrupt_streaming_bubbles("Agent · 网络中断，等待自动重试")
+            if self._active_execution_group is not None:
+                self._active_execution_group.set_state("waiting")
+            self.task_plan_panel.set_run_state("waiting")
             self._set_state(self.chat_status, "等待网络 · 自动重试中", "StateWorking")
             self._set_state(self.workspace_state, "● 重试中", "StateWorking")
             self._refresh_open_file_after_task()
         elif event == "task_completed" and task_id == self.active_task_id:
+            self._finish_execution_group("completed")
             self.active_task_id = None
+            self.task_plan_panel.set_run_state("completed")
             self._set_state(self.chat_status, "就绪 · 可以继续对话", "StateReady")
             self._set_state(self.workspace_state, "● 就绪", "StateReady")
         elif event == "task_failed" and task_id == self.active_task_id:
-            self._interrupt_streaming_bubbles("Agent · 响应中断")
+            error_message = str(payload.get("error") or "任务失败，未返回详细信息")
+            self._move_streams_to_execution_group(
+                self._execution_group_session_id,
+                speaker="Agent · 未完成回复",
+            )
+            self._interrupt_streaming_bubbles("Agent · 未完成回复")
+            self._finish_execution_group("failed")
             self.active_task_id = None
+            self.task_plan_panel.set_run_state("failed")
             self._set_state(self.chat_status, "任务失败 · 可从历史重试", "StateError")
             self._set_state(self.workspace_state, "● 出错", "StateError")
-            self.problems_output.setPlainText(str(payload.get("error") or "任务失败，未返回详细信息"))
+            self.problems_output.setPlainText(error_message)
+            visible_error = error_message if len(error_message) <= 2400 else error_message[:2400].rstrip() + "…"
+            self._append_chat("Harness · 任务失败", visible_error, "system")
             self._refresh_open_file_after_task()
         self._append_log(self._worker_message(event, payload))
         self.refresh_git_status()
@@ -3920,28 +5502,235 @@ class ClientWindow(QMainWindow):
         return f"工具 · {payload.get('name', '')}"
 
     def _handle_agent_event(self, event: str, payload: dict[str, Any]) -> None:
+        if event == "context_usage_updated":
+            if not payload.get("session_id") or str(payload.get("session_id")) == str(self.current_session_id or ""):
+                try:
+                    self._context_usage_estimated_tokens = max(0, int(payload.get("estimated_tokens", 0) or 0))
+                    self._context_usage_session_id = str(payload.get("session_id") or "")
+                except (TypeError, ValueError, OverflowError):
+                    self._context_usage_estimated_tokens = 0
+                    self._context_usage_session_id = str(payload.get("session_id") or "")
+                self._context_usage_actual_tokens = None
+                self._render_context_meter()
+        elif event == "model_usage_updated":
+            self._display_model_usage(payload)
+        elif event == "project_context_updated":
+            self._context_generation += 1
+            self._display_project_context(payload)
+        elif event == "project_memory_retrieved":
+            count = int(payload.get("count", 0) or 0)
+            if count:
+                self._append_execution_chat(
+                    "Harness · 项目记忆",
+                    f"已从本项目历史会话中检索并引用 {count} 条相关总结。",
+                    "meta",
+                    session_id=payload.get("session_id"),
+                )
+            elif payload.get("error"):
+                self._append_log(f"项目记忆不可用，不影响当前任务：{payload['error']}")
+        elif event == "specialist_started":
+            labels = {
+                "architecture": "架构调查", "tests": "测试专员", "security": "安全调查",
+                "coder": "编码专员", "reviewer": "代码审阅",
+            }
+            role = str(payload.get("role") or "协作")
+            boundary = (
+                "只能对委派范围提交一次逐块审批补丁，不可直接写文件或运行命令。"
+                if role == "coder"
+                else "只读调查，不会修改文件或运行命令。"
+            )
+            self._append_execution_chat(
+                f"协作 Agent · {labels.get(role, role)}",
+                f"开始协作任务 · 模型 {payload.get('model') or '跟随主模型'} · "
+                f"范围：{', '.join(payload.get('focus_paths') or []) or '整个项目'}。{boundary}",
+                "meta",
+                session_id=payload.get("session_id"),
+            )
+            self._append_log(f"协作 Agent 开始 · {labels.get(role, role)}")
+        elif event == "specialist_tool_used":
+            self._append_log(
+                f"协作 Agent 工具 · {payload.get('tool', '')} · "
+                f"第 {payload.get('tool_calls', '?')} 次"
+            )
+        elif event == "specialist_completed":
+            labels = {
+                "architecture": "架构调查", "tests": "测试专员", "security": "安全调查",
+                "coder": "编码专员", "reviewer": "代码审阅",
+            }
+            role = str(payload.get("role") or "协作")
+            self._append_execution_chat(
+                f"协作 Agent · {labels.get(role, role)}",
+                str(payload.get("summary") or "调查完成，没有返回文字发现。"),
+                "meta",
+                session_id=payload.get("session_id"),
+            )
+            self._append_log(
+                f"协作 Agent 完成 · {labels.get(role, role)} · "
+                f"{payload.get('tool_calls', 0)} 次工具调用"
+            )
+        elif event == "specialist_failed":
+            failed_status = str(payload.get("status", "unknown"))
+            failed_message = str(payload.get("summary") or "子 Agent 未能完成调查。")
+            if failed_status == "review_rejected":
+                failed_message = f"用户未批准编码专员补丁，任务已停止；没有使用其他写入工具绕过。{failed_message}"
+            self._append_execution_chat(
+                "协作 Agent · 调查未完成",
+                failed_message,
+                "meta",
+                session_id=payload.get("session_id"),
+            )
+            self._append_log(f"协作 Agent 未完成 · {failed_status}")
+        elif event == "specialist_result_reused":
+            self._append_log(
+                f"复用同一代码版本的协作调查 · {payload.get('role', '')}"
+            )
+        elif event == "specialist_limit_reached":
+            self._append_log("协作 Agent 达到每任务 3 次上限，本次委派未启动")
+        elif event == "project_context_preview":
+            self._context_preview_pending = False
+            self.project_context_refresh.setEnabled(True)
+            if payload.get("generation") == self._context_generation:
+                if payload.get("error"):
+                    self.project_context_meta.setText("上下文刷新失败，请重试")
+                    self._append_log(str(payload["error"]))
+                else:
+                    self._display_project_context(payload)
+        elif event == "project_environment_check_result":
+            self._environment_check_running = False
+            self.project_environment_check.setEnabled(True)
+            self._project_environment_report = str(payload.get("report") or "环境核验未返回报告")
+            status = str(payload.get("status") or "unknown")
+            if self.project_context_snapshot.get("text"):
+                self._display_project_context(self.project_context_snapshot)
+            else:
+                self.project_context_output.setPlainText(self._project_environment_report)
+                self.project_context_meta.setText(f"项目环境核验 · {status}")
+            checks = payload.get("checks") or []
+            checked_summary = "、".join(str(item) for item in checks[:8]) if checks else "未执行诊断命令"
+            self._append_log(
+                f"项目环境核验：{status} · {checked_summary}"
+            )
+        elif event == "plan_restored":
+            self.task_plan_panel.set_plan(
+                payload.get("plan"),
+                run_state="running",
+            )
+        elif event == "plan_updated":
+            self.task_plan_panel.set_plan(
+                payload.get("plan"),
+                run_state="running",
+            )
+            plan = TaskPlan.from_record(payload.get("plan"))
+            if plan is not None:
+                self._append_log(f"任务计划已更新 · {plan.progress[0]}/{plan.progress[1]}")
+        elif event == "plan_incomplete":
+            self.task_plan_panel.set_run_state("incomplete")
+            self._append_log(str(payload.get("reason") or payload.get("error") or "计划尚未完成"))
+        elif event == "verification_reported":
+            label = VerificationTracker.label(str(payload.get("status") or "not_run"))
+            self._append_log(f"验证状态：{label}")
+        elif event == "semantic_acceptance_started":
+            self._append_execution_chat(
+                "Harness · 独立语义验收",
+                f"正在把任务与 {payload.get('changed_file_count', 0)} 个变更文件的 diff 发送给复核模型 "
+                f"{payload.get('reviewer_model') or '（未配置）'}。这是额外模型调用，不是形式化证明。",
+                "meta",
+                session_id=payload.get("session_id"),
+            )
+        elif event == "semantic_acceptance_reviewed":
+            self._append_log(
+                f"语义验收：{payload.get('status', 'uncertain')} · "
+                f"{payload.get('reviewer_model') or '未配置复核模型'}"
+            )
+        elif event == "semantic_acceptance_retry_scheduled":
+            self._append_execution_chat(
+                "Harness · 语义验收发现待修项",
+                "复核模型报告了未满足的需求，Agent 将进行一次有限修正；之后需要重新检查并复核。",
+                "meta",
+                session_id=payload.get("session_id"),
+            )
+        elif event == "verification_retry_scheduled":
+            self._append_execution_chat(
+                "Harness · 需要验证",
+                "代码有改动但尚无当前代码的通过检查；Agent 正在有限补验。命令仍需逐条批准。",
+                "meta",
+                session_id=payload.get("session_id"),
+            )
+        elif event == "verification_blocked":
+            if payload.get("text"):
+                self._append_chat("Agent · 未完成验证", str(payload["text"]), "agent")
+            self._append_chat("Harness · 未自动提交", str(payload.get("error") or "代码未通过验证门槛。"), "meta")
+            self._append_log("代码未完成验证，本次改动保留且没有自动提交")
+        elif event == "semantic_acceptance_blocked":
+            if payload.get("text"):
+                self._append_chat("Agent · 语义验收未完成", str(payload["text"]), "agent")
+            self._append_chat(
+                "Harness · 未自动提交",
+                str(payload.get("error") or "独立语义验收未通过，改动保留在工作区。"),
+                "meta",
+            )
+            self._append_log("独立语义验收未通过，本次改动保留且没有自动提交")
+        elif event == "patch_review_stopped":
+            partial = bool(payload.get("patch_partial"))
+            detail = (
+                "只保留了你批准的补丁块；其余修改未应用。任务已停止且没有自动提交。"
+                if partial else "补丁被拒绝或未完成审核；任务已停止，没有改用其他工具写入。"
+            )
+            self._append_chat("Harness · 补丁审核", detail, "meta")
+            self._append_log("补丁审核结束，任务停止且未自动提交")
         if event == "summary_started":
             turn = payload.get("turn")
             label = f"第 {turn} 轮阶段总结" if payload.get("phase") == "checkpoint" and turn else "会话总结"
-            self._append_chat(label, "正在整理本次对话、修改和验证结果…", "meta")
+            self._append_execution_chat(
+                label, "正在整理本次对话、修改和验证结果…", "meta", session_id=payload.get("session_id")
+            )
             self._append_log(f"正在生成{label}")
         elif event == "summary_completed":
             turn = payload.get("turn")
             label = f"第 {turn} 轮阶段总结" if payload.get("phase") == "checkpoint" and turn else "会话总结"
-            self._append_chat(label, str(payload.get("text", "")), "summary")
+            self._append_execution_chat(
+                label, str(payload.get("text", "")), "summary", session_id=payload.get("session_id")
+            )
             self._append_log(f"{label}已保存: {payload.get('path', '')}")
         elif event == "summary_failed":
             turn = payload.get("turn")
             label = f"第 {turn} 轮阶段总结" if payload.get("phase") == "checkpoint" and turn else "会话总结"
-            self._append_chat(label, f"总结生成失败，但代码任务仍会继续：{payload.get('error', '')}", "meta")
+            self._append_execution_chat(
+                label,
+                f"总结生成失败，但代码任务仍会继续：{payload.get('error', '')}",
+                "meta",
+                session_id=payload.get("session_id"),
+            )
             self._append_log(f"{label}失败，未影响代码任务")
+        elif event == "verification_recorded":
+            if payload.get("kind") != "command":
+                category = {
+                    "test": "测试", "lint": "代码风格", "typecheck": "类型检查",
+                    "compile": "编译", "build": "构建", "check": "检查",
+                }.get(str(payload.get("kind") or ""), "项目检查")
+                label = VerificationTracker.label(str(payload.get("check_status") or "not_run"))
+                exit_code = payload.get("exit_code")
+                exit_text = f" · 退出码 {exit_code}" if exit_code is not None else ""
+                command = str(payload.get("command") or "")[:180]
+                detail = f"{category} · {label}{exit_text}"
+                if command:
+                    detail += f"\n{command}"
+                self._append_execution_chat(
+                    "Harness · 执行验证", detail, "meta", session_id=payload.get("session_id")
+                )
+                self._append_log(f"{category}：{label}")
         if event == "model_call_started":
+            group = self._ensure_execution_group(payload.get("session_id"))
+            if group is not None:
+                group.set_state("running")
+                group.record_model_call(payload.get("turn"))
             self._append_log(f"正在请求模型 · 第 {payload['turn']} 轮")
         elif event == "svg_creation_retry_scheduled":
-            self._append_chat(
+            self._append_execution_chat(
                 "Harness · SVG 生成补救",
                 "模型上一轮没有写出 SVG 文件，Harness 正在自动补问一次。",
                 "meta",
+                session_id=payload.get("session_id"),
             )
             self._append_log("模型未生成 SVG 文件，已安排一次自动补救")
         elif event == "assistant_delta":
@@ -3949,11 +5738,45 @@ class ClientWindow(QMainWindow):
         elif event == "assistant":
             self._finish_streamed_assistant(payload)
         elif event == "tool_started":
+            group = self._ensure_execution_group(payload.get("session_id"))
+            if group is not None:
+                self._move_latest_stream_to_execution_group(payload.get("session_id"))
+                group.record_tool_call(str(payload.get("name") or "工具"))
+            if payload.get("name") == "update_plan":
+                self._append_execution_chat(
+                    "工具 · update_plan", "更新任务计划", "tool", session_id=payload.get("session_id")
+                )
+                self._append_log("Agent 正在更新任务计划")
+                return
+            if payload.get("name") == "apply_patch":
+                self._append_execution_chat(
+                    "工具 · apply_patch", "准备补丁，等待逐块审核", "tool", session_id=payload.get("session_id")
+                )
+                self._append_log("补丁已准备，等待逐块审核")
+                return
             args = json.dumps(payload.get("arguments", {}), ensure_ascii=False)
-            self._append_chat(self._tool_event_speaker(payload), args, "tool")
+            self._append_execution_chat(
+                self._tool_event_speaker(payload), args, "tool", session_id=payload.get("session_id")
+            )
         elif event == "tool_result":
+            group = self._ensure_execution_group(payload.get("session_id"))
+            if group is not None:
+                group.set_activity(f"已完成 {payload.get('name') or '工具'}")
+            if payload.get("name") == "update_plan":
+                result = str(payload.get("result", ""))
+                if result.startswith("工具执行失败："):
+                    self._append_log(result)
+                self._append_execution_chat(
+                    "工具 · update_plan",
+                    result[-1400:] or "任务计划已更新",
+                    "tool",
+                    session_id=payload.get("session_id"),
+                )
+                return
             result = str(payload.get("result", ""))
-            self._append_chat(self._tool_event_speaker(payload), result[-1400:], "tool")
+            self._append_execution_chat(
+                self._tool_event_speaker(payload), result[-1400:], "tool", session_id=payload.get("session_id")
+            )
         elif event == "git_auto_commit_skipped_paths":
             self._append_chat(
                 "Harness · Git 自动提交保护",
@@ -3963,7 +5786,16 @@ class ClientWindow(QMainWindow):
             self._append_log("部分文件受 Git 自动提交安全策略保护，仍保留在工作区")
         elif event == "completed":
             sha = payload.get("git_result_sha") or "无新提交"
-            self._append_chat("系统", f"任务完成 · Git commit: {sha[:12]}", "meta")
+            report = payload.get("verification_report")
+            status = report.get("status") if isinstance(report, dict) else "not_run"
+            label = VerificationTracker.label(str(status or "not_run"))
+            self._append_execution_chat(
+                "系统",
+                f"任务完成 · Git commit: {sha[:12]}\n验证：{label}",
+                "meta",
+                session_id=payload.get("session_id"),
+            )
+            self._finish_execution_group("completed", payload.get("session_id"))
             self._refresh_open_file_after_task()
             self.refresh_git_status()
             self._refresh_development_tree()
@@ -4001,6 +5833,81 @@ class ClientWindow(QMainWindow):
             bubble.set_speaker(speaker)
         self._streaming_bubbles.clear()
 
+    def _ensure_execution_group(self, session_id: object = None) -> ExecutionGroup | None:
+        if not self._execution_group_active:
+            return None
+        requested_session = str(session_id or self._execution_group_session_id)
+        if requested_session != self._execution_group_session_id:
+            return None
+        if self._active_execution_group is None:
+            group = ExecutionGroup(requested_session)
+            self._active_execution_group = group
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1, group)
+        return self._active_execution_group
+
+    def _move_latest_stream_to_execution_group(self, session_id: object = None) -> None:
+        requested_session = str(session_id or self._execution_group_session_id)
+        candidates = [
+            (turn, bubble)
+            for (stream_session, turn), bubble in self._streaming_bubbles.items()
+            if stream_session == requested_session
+        ]
+        if not candidates:
+            return
+        turn, bubble = max(candidates, key=lambda item: item[0])
+        group = self._ensure_execution_group(requested_session)
+        if group is None:
+            return
+        self._streaming_bubbles.pop((requested_session, turn), None)
+        self.chat_layout.removeWidget(bubble)
+        group.add_item(bubble)
+
+    def _move_streams_to_execution_group(
+        self,
+        session_id: object = None,
+        *,
+        speaker: str = "",
+    ) -> None:
+        requested_session = str(session_id or self._execution_group_session_id)
+        candidates = sorted(
+            (
+                (turn, bubble)
+                for (stream_session, turn), bubble in self._streaming_bubbles.items()
+                if stream_session == requested_session
+            ),
+            key=lambda item: item[0],
+        )
+        if not candidates:
+            return
+        group = self._ensure_execution_group(requested_session)
+        if group is None:
+            return
+        for turn, bubble in candidates:
+            self._streaming_bubbles.pop((requested_session, turn), None)
+            self.chat_layout.removeWidget(bubble)
+            if speaker:
+                bubble.set_speaker(speaker)
+            group.add_item(bubble)
+
+    def _append_execution_chat(
+        self,
+        speaker: str,
+        message: str,
+        kind: str,
+        session_id: object = None,
+    ) -> None:
+        self._append_chat(speaker, message, kind, process=True, session_id=session_id)
+
+    def _finish_execution_group(self, state: str, session_id: object = None) -> None:
+        requested_session = str(session_id or self._execution_group_session_id)
+        if self._execution_group_active and requested_session == self._execution_group_session_id:
+            self._move_streams_to_execution_group(requested_session)
+            if self._active_execution_group is not None:
+                self._active_execution_group.set_state(state)
+            self._execution_group_active = False
+            self._execution_group_session_id = ""
+            self._active_execution_group = None
+
     @staticmethod
     def _worker_message(event: str, payload: dict[str, Any]) -> str:
         task_id = payload.get("task_id", "")
@@ -4017,12 +5924,26 @@ class ClientWindow(QMainWindow):
     def _append_log(self, message: str) -> None:
         self.statusBar().showMessage(message[:220])
 
-    def _append_chat(self, speaker: str, message: str, kind: str) -> None:
+    def _append_chat(
+        self,
+        speaker: str,
+        message: str,
+        kind: str,
+        *,
+        process: bool = False,
+        session_id: object = None,
+    ) -> None:
         bubble = MessageBubble(speaker, message, kind)
-        self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
+        group = self._ensure_execution_group(session_id) if process else None
+        if group is not None:
+            group.add_item(bubble)
+        else:
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
         QTimer.singleShot(0, lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()))
 
     def _clear_chat_history(self) -> None:
+        for request in list(self._pending_patch_reviews.values()):
+            self._resolve_patch_review(request, None)
         while self.chat_layout.count() > 1:
             item = self.chat_layout.takeAt(0)
             widget = item.widget()
@@ -4037,30 +5958,114 @@ class ClientWindow(QMainWindow):
     def refresh_all(self) -> None:
         self.refresh_git_status()
         self.connection_label.setText(self._provider_state())
+        self.connection_label.setObjectName("StateReady" if self._provider_configured() else "StateWorking")
+        self.connection_label.style().unpolish(self.connection_label)
+        self.connection_label.style().polish(self.connection_label)
+        self.agent_title.setText(self._provider_model() if self._provider_configured() else "Coding Agent")
         self.refresh_task_history()
         self._refresh_development_tree()
 
-    def refresh_git_status(self) -> None:
-        raw_status = self.git.status()
+    def refresh_git_status(self, *, background: bool = True) -> None:
+        """Refresh the Git views without running Git on the UI thread.
+
+        ``background=False`` performs one synchronous snapshot; it exists for
+        callers that need the result immediately (and for deterministic tests).
+        """
+        if not background:
+            with self._git_status_lock:
+                self._git_status_seq += 1
+                sequence = self._git_status_seq
+            snapshot = self.git.snapshot()
+            snapshot["_seq"] = sequence
+            self._apply_git_snapshot(snapshot)
+            return
+        with self._git_status_lock:
+            self._git_status_seq += 1
+            self._git_status_dirty = True
+            if self._git_status_busy:
+                return
+            self._git_status_busy = True
+        threading.Thread(target=self._git_status_worker, name="scidev-git-status", daemon=True).start()
+
+    def _git_status_worker(self) -> None:
+        while True:
+            with self._git_status_lock:
+                if not self._git_status_dirty:
+                    self._git_status_busy = False
+                    return
+                self._git_status_dirty = False
+                sequence = self._git_status_seq
+            try:
+                snapshot = self.git.snapshot()
+            except Exception as exc:  # noqa: BLE001 - surface as a Git message, never crash the worker
+                snapshot = {"state": "error", "text": f"Git 状态读取失败：{exc}", "entries": []}
+            if self._closing:
+                # The window (and later the QApplication) may already be gone;
+                # emitting into a destroyed QObject is a native crash.
+                with self._git_status_lock:
+                    self._git_status_busy = False
+                    self._git_status_dirty = False
+                return
+            snapshot["_seq"] = sequence
+            self.signals.git_status_ready.emit(snapshot)
+
+    def wait_for_git_status(self, timeout: float = 5.0) -> bool:
+        """Process events until the background Git refresh is applied to the UI."""
+        deadline = time.monotonic() + timeout
+        app = QApplication.instance()
+        while time.monotonic() < deadline:
+            if app is not None:
+                app.processEvents()
+            with self._git_status_lock:
+                idle = not self._git_status_busy and not self._git_status_dirty
+                applied = self._git_status_applied
+                issued = self._git_status_seq
+            if idle and applied >= issued:
+                # Deliver the queued snapshot before the caller inspects the UI.
+                if app is not None:
+                    app.processEvents()
+                return True
+            time.sleep(0.01)
+        return False
+
+    def _apply_git_snapshot(self, snapshot: dict[str, Any]) -> None:
+        sequence = int(snapshot.get("_seq") or 0)
+        if sequence and sequence < self._git_status_applied:
+            # A slower, older read must not overwrite a newer result.
+            return
+        if sequence:
+            self._git_status_applied = sequence
+        raw_status = str(snapshot.get("text") or "")
+        entries = snapshot.get("entries") or []
+        state = str(snapshot.get("state") or "")
+        if "head" in snapshot:
+            self._cached_head_sha = str(snapshot.get("head") or "")
         if hasattr(self, "git_status_output"):
             self.git_status_output.setPlainText(raw_status)
-        self._refresh_git_changes()
+        self._refresh_git_changes(entries)
+        enclosing = snapshot.get("enclosing")
         if hasattr(self, "git_init_button"):
-            git_ready = self.git.is_repo()
-            git_available = not raw_status.startswith("Git 不可用")
-            self.git_init_button.setText(
-                "Git 已初始化" if git_ready else ("需安装 Git" if not git_available else "初始化 Git")
+            git_ready = state in {"clean", "changes"}
+            git_available = state != "unavailable"
+            if enclosing:
+                label = "工作区在仓库内"
+            else:
+                label = "Git 已初始化" if git_ready else ("需安装 Git" if not git_available else "初始化 Git")
+            self.git_init_button.setText(label)
+            self.git_init_button.setEnabled(not enclosing and not git_ready and git_available)
+            self.git_init_button.setToolTip(
+                f"外层仓库：{enclosing}；请在仓库根目录打开工作区"
+                if enclosing
+                else ""
             )
-            self.git_init_button.setEnabled(not git_ready and git_available)
-        if raw_status in {"工作区干净", "未初始化 Git 仓库"} or raw_status.startswith("Git 不可用"):
+        if state in {"clean", "no_repo", "unavailable", "nested", "timeout", "error"}:
             status = raw_status
         else:
-            change_count = len([line for line in raw_status.splitlines() if line.strip()])
-            status = f"{change_count} 个工作区变更"
+            status = f"{len(entries)} 个工作区变更"
         self.status_branch.setText(f"Git · {status}")
         self.status_branch.setToolTip(raw_status)
 
-    def _refresh_git_changes(self) -> None:
+    def _refresh_git_changes(self, entries: list[dict[str, str]] | None = None) -> None:
         if not hasattr(self, "git_changes_tree"):
             return
         selected_path = None
@@ -4069,7 +6074,7 @@ class ClientWindow(QMainWindow):
             selected_path = selected_item.data(0, Qt.ItemDataRole.UserRole)
         self.git_changes_tree.clear()
         item_to_restore = None
-        for entry in self.git.status_entries():
+        for entry in (self.git.status_entries() if entries is None else entries):
             relative = str(entry.get("path", "")).strip('"')
             code = str(entry.get("code", "  "))
             if not relative:
@@ -4193,6 +6198,7 @@ class ClientWindow(QMainWindow):
 
     def _configure_editor(self, editor: CodeEditor) -> None:
         editor.set_ui_profile(self.ui_profile)
+        editor.set_appearance(self.appearance_preferences)
         editor.set_ui_scale(self._ui_scale)
         document = editor.document()
         highlighter = next(
@@ -4204,7 +6210,7 @@ class ClientWindow(QMainWindow):
             None,
         )
         if highlighter is None:
-            highlighter = PythonHighlighter(document, self.ui_profile)
+            highlighter = LanguageHighlighter(document, self.ui_profile, self._editor_paths.get(editor))
         self._editor_highlighters[editor] = highlighter
         connection = editor.document().modificationChanged.connect(
             lambda _changed, target=editor: self._update_editor_tab_for(target)
@@ -4213,22 +6219,33 @@ class ClientWindow(QMainWindow):
         editor.cursorPositionChanged.connect(
             lambda target=editor: self._update_cursor_status(target)
         )
-        editor.textChanged.connect(self._refresh_outline)
-        editor.textChanged.connect(self._refresh_diagnostics)
+        editor.textChanged.connect(self._schedule_code_intel)
         editor.installEventFilter(self)
 
     def _update_cursor_status(self, editor: CodeEditor | None = None) -> None:
         if not hasattr(self, "status_position"):
             return
-        target = editor or self._active_editor()
+        workspace_visible = (
+            not hasattr(self, "workspace_stack")
+            or self.workspace_stack.currentWidget() is self.workspace_page
+        )
+        target = (editor or self._active_editor()) if workspace_visible else None
         if target is None:
             self.status_position.setText("Ln 1, Col 1")
+            self.status_position.hide()
             return
-        cursor = target.textCursor()
-        self.status_position.setText(f"Ln {cursor.blockNumber() + 1}, Col {cursor.columnNumber() + 1}")
         path = self._editor_paths.get(target)
         if path is None and target.property("diff_path"):
             path = Path(str(target.property("diff_path")))
+        self.status_position.setVisible(path is not None)
+        if path is None:
+            return
+        cursor = target.textCursor()
+        self.status_position.setText(f"Ln {cursor.blockNumber() + 1}, Col {cursor.columnNumber() + 1}")
+        self.status_position.show()
+        highlighter = self._editor_highlighters.get(target)
+        if isinstance(highlighter, LanguageHighlighter):
+            highlighter.set_path(path)
         if hasattr(self, "status_language"):
             suffix = path.suffix.lower() if path is not None else ""
             language = {
@@ -4244,6 +6261,8 @@ class ClientWindow(QMainWindow):
             self.status_language.setText(language)
 
     def _active_editor(self) -> CodeEditor | None:
+        if hasattr(self, "settings_page") and self.workspace_stack.currentWidget() is self.settings_page:
+            return None
         group = getattr(self, "_active_editor_group", None) or getattr(self, "editor_tabs", None)
         editor = group.currentWidget() if group is not None else None
         return editor if isinstance(editor, CodeEditor) else None
@@ -4258,6 +6277,7 @@ class ClientWindow(QMainWindow):
         if path is None and widget is not None and widget.property("diff_path"):
             path = Path(str(widget.property("diff_path")))
         self.current_file = path
+        self.workspace_toolbar.setVisible(widget is not self.welcome_editor)
         if path is not None:
             relative = path.relative_to(self.project_root).as_posix()
             self.breadcrumb.setText(f"项目  /  {relative}")
@@ -4265,8 +6285,7 @@ class ClientWindow(QMainWindow):
             self.breadcrumb.setText("项目  /  欢迎页")
         self._update_editor_tab_for(widget)
         self._update_cursor_status(widget if isinstance(widget, CodeEditor) else None)
-        self._refresh_outline()
-        self._refresh_diagnostics()
+        self._refresh_code_intel()
 
     def _update_editor_tab_for(self, editor: QWidget | None = None) -> None:
         if not hasattr(self, "editor_tabs"):
@@ -4311,12 +6330,13 @@ class ClientWindow(QMainWindow):
         save = menu.addAction("保存")
         save.setEnabled(widget in self._editor_paths and isinstance(widget, CodeEditor) and widget.document().isModified())
         save.triggered.connect(lambda: self._save_editor(widget))
+        path = self._editor_paths.get(widget)
+        self._add_external_file_actions(menu, path)
         menu.addSeparator()
         close = menu.addAction("关闭")
         close.triggered.connect(lambda: self._close_editor_tab(index, group))
         close_others = menu.addAction("关闭其他标签")
         close_others.triggered.connect(lambda: self._close_other_editor_tabs(index, group))
-        path = self._editor_paths.get(widget)
         open_side = menu.addAction("在右侧编辑器组打开")
         open_side.setEnabled(path is not None)
         open_side.triggered.connect(lambda: self._open_editor_to_side(path))
@@ -4602,6 +6622,8 @@ class ClientWindow(QMainWindow):
                     highlighter.setDocument(None)
                 shared_document.deleteLater()
         widget.deleteLater()
+        if not any(self.editor_tabs.tabBar().isTabVisible(i) for i in range(self.editor_tabs.count())):
+            self._show_welcome()
 
     def _on_file_preview(self, index: QModelIndex) -> None:
         source_index = self.file_proxy.mapToSource(index)
@@ -4676,8 +6698,8 @@ class ClientWindow(QMainWindow):
                     editor = CodeEditor()
                     if shared_document is not None:
                         editor.setDocument(shared_document)
-                    self._configure_editor(editor)
                     self._editor_paths[editor] = path
+                    self._configure_editor(editor)
                     tab_index = group.addTab(editor, path.name)
                     self._install_tab_close_button(group, tab_index, editor)
                     group.setTabToolTip(tab_index, path.as_posix())
@@ -4704,6 +6726,12 @@ class ClientWindow(QMainWindow):
                     self._preview_editor = None
             self.code_editor = editor
             self.current_file = path
+            self.workspace_toolbar.setVisible(True)
+            highlighter = self._editor_highlighters.get(editor)
+            if isinstance(highlighter, LanguageHighlighter):
+                highlighter.set_path(path)
+            if self.welcome_editor is not None:
+                self.editor_tabs.tabBar().setTabVisible(self.editor_tabs.indexOf(self.welcome_editor), False)
             relative = path.relative_to(self.project_root).as_posix()
             self._update_editor_tab_for(editor)
             self.breadcrumb.setText(f"项目  /  {relative}")
@@ -4722,17 +6750,10 @@ class ClientWindow(QMainWindow):
             self.editor_tabs.setCurrentWidget(self.welcome_editor)
             self.code_editor = self.welcome_editor
             self.editor_tabs.setTabText(self.editor_tabs.indexOf(self.welcome_editor), "欢迎页")
+            self.editor_tabs.tabBar().setTabVisible(self.editor_tabs.indexOf(self.welcome_editor), True)
         if hasattr(self, "breadcrumb"):
             self.breadcrumb.setText("项目  /  欢迎页")
-        if self.welcome_editor is not None:
-            self._show_editor_text(
-                "SciDevHarness\n"
-                "──────────────────────\n\n"
-                "在左侧打开文件开始编辑，或在右侧直接输入指令。\n\n"
-                "Agent 会读取项目并通过工具修改代码；网络不稳定时，任务会自动排队重试。\n\n"
-                "Ctrl + P 打开文件\n"
-                "Ctrl + Enter 发送任务  ·  Ctrl + S 保存"
-            )
+        self.workspace_toolbar.setVisible(False)
 
     def _show_editor_text(self, text: str) -> None:
         editor = self._active_editor() or self.code_editor
@@ -4769,7 +6790,7 @@ class ClientWindow(QMainWindow):
         self._quick_search_expand_query = query
         self._quick_search_expand_directory_keys.clear()
         self._quick_search_visible_expand_timer.stop()
-        if len(query) < 2 or query.startswith(">"):
+        if not query or query.startswith(">"):
             self._quick_search_expand_timer.stop()
             return
         self._quick_search_expand_timer.start()
@@ -4852,6 +6873,24 @@ class ClientWindow(QMainWindow):
         self.command_search.setCursorPosition(len(self.command_search.text()))
         self.command_search.setFocus()
 
+    def _on_workspace_stack_page_changed(self, index: int) -> None:
+        if hasattr(self, "settings_button"):
+            self.settings_button.setChecked(self.workspace_stack.widget(index) is getattr(self, "settings_page", None))
+        tree_active = self.workspace_stack.widget(index) is self.git_page
+        if tree_active and not self._git_focus:
+            self._git_details_expanded = self.width() >= 1100
+            self._git_details_forced = False
+        self._git_focus = tree_active
+        self._adapt_workbench_layout()
+        self._update_cursor_status()
+        if not tree_active:
+            if self._quick_search_expand_directory_keys:
+                self._schedule_visible_filtered_branch_expansion()
+            else:
+                self._expand_filtered_file_branches(self.command_search.text())
+        else:
+            self._adapt_git_layout()
+
     def _project_files(self) -> list[Path]:
         files: list[Path] = []
         for root, directories, names in os.walk(self.project_root):
@@ -4894,10 +6933,12 @@ class ClientWindow(QMainWindow):
                 self._show_workspace_search()
             elif "replace" in command or "替换" in command:
                 self._show_find_bar(True)
-            elif any(keyword in command for keyword in ("appearance", "theme", "主题", "外观")):
-                self.ui_theme_button.showMenu()
+            elif any(keyword in command for keyword in ("appearance", "theme", "settings", "设置", "主题", "外观")):
+                self.show_settings()
             elif "outline" in command or "大纲" in command:
                 self._show_outline()
+            elif "context" in command or "上下文" in command:
+                self.show_project_context()
             elif command == "git" or "git" in command:
                 self.show_git()
             elif "explorer" in command or "资源" in command:
@@ -4963,15 +7004,49 @@ class ClientWindow(QMainWindow):
         self.bottom_tabs.setVisible(True)
         self.outline_tree.setFocus()
 
-    def _refresh_outline(self) -> None:
+    def _schedule_code_intel(self) -> None:
+        """Debounce symbol/syntax refresh so typing one key costs no parse."""
+        timer = getattr(self, "_code_intel_timer", None)
+        if timer is not None:
+            timer.start()
+
+    def _refresh_code_intel(self) -> None:
+        """Parse the active Python document once and update outline + problems."""
+        timer = getattr(self, "_code_intel_timer", None)
+        if timer is not None:
+            timer.stop()
         if not hasattr(self, "outline_tree"):
             return
-        self.outline_tree.clear()
         editor = self._active_editor()
         path = self._editor_paths.get(editor) if editor is not None else None
         if editor is None or path is None:
             return
         text = editor.toPlainText()
+        syntax_tree = None
+        syntax_error = None
+        if path.suffix.lower() == ".py" and len(text) <= self.CODE_INTEL_MAX_PARSE_CHARS:
+            try:
+                syntax_tree = ast.parse(text or "\n")
+            except SyntaxError as exc:
+                syntax_error = exc
+        self._render_outline(path, text, syntax_tree)
+        self._render_diagnostics(path, syntax_error)
+
+    def _refresh_outline(self) -> None:
+        self._refresh_code_intel()
+
+    def _refresh_diagnostics(self) -> None:
+        self._refresh_code_intel()
+
+    def _render_outline(
+        self,
+        path: Path,
+        text: str,
+        syntax_tree: ast.AST | None,
+    ) -> None:
+        if not hasattr(self, "outline_tree"):
+            return
+        self.outline_tree.clear()
         count = 0
 
         def add_symbol(name: str, kind: str, line_number: int, parent: QTreeWidgetItem | None = None) -> QTreeWidgetItem:
@@ -4986,20 +7061,15 @@ class ClientWindow(QMainWindow):
                 parent.addChild(item)
             return item
 
-        if path.suffix.lower() == ".py":
-            try:
-                syntax_tree = ast.parse(text or "\n")
-            except SyntaxError:
-                syntax_tree = None
-            if syntax_tree is not None:
-                def visit(nodes: list[ast.AST], parent: QTreeWidgetItem | None = None) -> None:
-                    for node in nodes:
-                        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                            kind = "类" if isinstance(node, ast.ClassDef) else "函数"
-                            item = add_symbol(node.name, kind, node.lineno, parent)
-                            visit(getattr(node, "body", []), item)
+        if syntax_tree is not None:
+            def visit(nodes: list[ast.AST], parent: QTreeWidgetItem | None = None) -> None:
+                for node in nodes:
+                    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                        kind = "类" if isinstance(node, ast.ClassDef) else "函数"
+                        item = add_symbol(node.name, kind, node.lineno, parent)
+                        visit(getattr(node, "body", []), item)
 
-                visit(syntax_tree.body)
+            visit(syntax_tree.body)
 
         if count == 0:
             pattern = re.compile(r"^\s*(?:def|class|function|interface|enum|struct|fn)\s+([A-Za-z_]\w*)")
@@ -5010,26 +7080,22 @@ class ClientWindow(QMainWindow):
         if count == 0:
             item = QTreeWidgetItem(["当前文件没有可识别的符号"])
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            self.outline_tree.addTopLevelItem(item)
 
-    def _refresh_diagnostics(self) -> None:
+    def _render_diagnostics(self, path: Path, syntax_error: SyntaxError | None) -> None:
         if not hasattr(self, "problems_tree"):
             return
         self.problems_tree.clear()
-        editor = self._active_editor()
-        path = self._editor_paths.get(editor) if editor is not None else None
-        if editor is None or path is None or path.suffix.lower() != ".py":
+        if path.suffix.lower() != ".py" or syntax_error is None:
             return
-        try:
-            ast.parse(editor.toPlainText() or "\n")
-        except SyntaxError as exc:
-            line_number = max(1, int(exc.lineno or 1))
-            column_number = max(1, int(exc.offset or 1))
-            message = str(exc.msg or "语法错误")
-            item = QTreeWidgetItem([f"{path.name}:{line_number}:{column_number}  {message}"])
-            item.setData(0, Qt.ItemDataRole.UserRole, str(path))
-            item.setData(0, Qt.ItemDataRole.UserRole + 1, line_number)
-            item.setData(0, Qt.ItemDataRole.UserRole + 2, column_number)
-            self.problems_tree.addTopLevelItem(item)
+        line_number = max(1, int(syntax_error.lineno or 1))
+        column_number = max(1, int(syntax_error.offset or 1))
+        message = str(syntax_error.msg or "语法错误")
+        item = QTreeWidgetItem([f"{path.name}:{line_number}:{column_number}  {message}"])
+        item.setData(0, Qt.ItemDataRole.UserRole, str(path))
+        item.setData(0, Qt.ItemDataRole.UserRole + 1, line_number)
+        item.setData(0, Qt.ItemDataRole.UserRole + 2, column_number)
+        self.problems_tree.addTopLevelItem(item)
 
     def _open_problem(self, item: QTreeWidgetItem, _column: int = 0) -> None:
         raw_path = item.data(0, Qt.ItemDataRole.UserRole)
@@ -5284,7 +7350,7 @@ class ClientWindow(QMainWindow):
         command = self.terminal_input.text().strip()
         if not command:
             return
-        if self.terminal_process is not None and self.terminal_process.state() != QProcess.ProcessState.NotRunning:
+        if self.terminal_process is not None and self.terminal_process.exit_code() is None:
             self._append_terminal_output("\n[已有命令正在运行]\n")
             return
         if not self.bottom_tabs.isVisible() or self.bottom_tabs.currentIndex() != 1:
@@ -5297,29 +7363,20 @@ class ClientWindow(QMainWindow):
             "stdout": TerminalOutputDecoder(fallback_encoding),
             "stderr": TerminalOutputDecoder(fallback_encoding),
         }
-        process = QProcess(self)
+        environment = os.environ.copy()
+        if os.name == "nt":
+            environment["PYTHONUTF8"] = "1"
+            environment["PYTHONIOENCODING"] = "utf-8"
+        process = StreamingCommand()
         self.terminal_process = process
-        process.setWorkingDirectory(str(self.terminal_cwd))
-        process.readyReadStandardOutput.connect(self._read_terminal_output)
-        process.readyReadStandardError.connect(self._read_terminal_output)
-        process.finished.connect(self._terminal_finished)
-        process.errorOccurred.connect(
-            lambda error: self._append_terminal_output(f"\n[进程错误: {error.name}]\n")
-        )
-        environment = QProcessEnvironment.systemEnvironment()
-        if os.name == "nt":
-            environment.insert("PYTHONUTF8", "1")
-            environment.insert("PYTHONIOENCODING", "utf-8")
-        process.setProcessEnvironment(environment)
-        if os.name == "nt":
-            # QProcess quotes each argument for CreateProcess. Passing the
-            # whole command as the final ``cmd /c`` argument therefore turns
-            # embedded quotes into literal backslashes on Windows. Use the
-            # raw-command overload so quoted executable paths work correctly.
-            shell = os.environ.get("COMSPEC", "cmd.exe")
-            process.startCommand(f'"{shell}" /d /c chcp 65001>nul & {command}')
-        else:
-            process.start(os.environ.get("SHELL", "/bin/sh"), ["-lc", command])
+        try:
+            process.start(command, self.terminal_cwd, environment)
+        except OSError as exc:
+            self.terminal_process = None
+            self._append_terminal_output(f"\n[进程错误: {exc}]\n")
+            return
+        self._terminal_started_at = time.monotonic()
+        self._terminal_timer.start()
         self.ledger.append(
             "terminal_command",
             {
@@ -5328,17 +7385,27 @@ class ClientWindow(QMainWindow):
             },
         )
 
+    def _poll_terminal_output(self) -> None:
+        process = self.terminal_process
+        if process is None:
+            self._terminal_timer.stop()
+            return
+        self._read_terminal_output()
+        exit_code = process.exit_code()
+        if exit_code is None:
+            return
+        # Give the pipe readers a moment to flush the final bytes, then finish
+        # even if a grandchild keeps the inherited handle open.
+        if not process.streams_finished() and time.monotonic() - self._terminal_started_at < 0.6:
+            return
+        self._terminal_finished(exit_code)
+
     def _read_terminal_output(self) -> None:
         process = self.terminal_process
         if process is None:
             return
         output = ""
-        for stream, raw in (
-            ("stdout", bytes(process.readAllStandardOutput())),
-            ("stderr", bytes(process.readAllStandardError())),
-        ):
-            if not raw:
-                continue
+        for stream, raw in process.drain():
             decoder = self._terminal_decoders.get(stream)
             output += decoder.decode(raw) if decoder is not None else self._decode_terminal_bytes(raw)
         if output:
@@ -5360,7 +7427,7 @@ class ClientWindow(QMainWindow):
         self.terminal_output.insertPlainText(text)
         self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
 
-    def _terminal_finished(self, exit_code: int, _status: QProcess.ExitStatus) -> None:
+    def _terminal_finished(self, exit_code: int) -> None:
         self._read_terminal_output()
         pending_text = "".join(
             decoder.decode(b"", final=True) for decoder in self._terminal_decoders.values()
@@ -5372,11 +7439,12 @@ class ClientWindow(QMainWindow):
         self._append_terminal_output(f"\n[退出码 {exit_code}]\n")
         if exit_code != 0:
             self.problems_output.setPlainText(self._terminal_buffer.strip() or f"命令退出码: {exit_code}")
+        self._terminal_timer.stop()
         self.refresh_git_status()
         process = self.terminal_process
         self.terminal_process = None
         if process is not None:
-            process.deleteLater()
+            process.close()
 
     def save_current_file(self) -> None:
         editor = self._active_editor()
@@ -5498,9 +7566,17 @@ class ClientWindow(QMainWindow):
             self._append_log(f"资源操作失败：{exc}")
 
     def _update_open_paths_after_rename(self, old_target: Path, new_target: Path) -> None:
+        old_target = old_target.resolve()
+        new_target = new_target.resolve()
+
+        def rebase(path: Path) -> Path:
+            if path == old_target or old_target in path.parents:
+                return new_target / path.relative_to(old_target) if path != old_target else new_target
+            return path
+
         for editor, path in list(self._editor_paths.items()):
             if path == old_target or old_target in path.parents:
-                updated = new_target / path.relative_to(old_target) if path != old_target else new_target
+                updated = rebase(path)
                 self._editor_paths[editor] = updated
                 group = self._editor_group_for(editor)
                 index = group.indexOf(editor) if group is not None else -1
@@ -5509,11 +7585,57 @@ class ClientWindow(QMainWindow):
                     self._update_editor_tab_for(editor)
         for path, document in list(self._shared_editor_documents.items()):
             if path == old_target or old_target in path.parents:
-                updated = new_target / path.relative_to(old_target) if path != old_target else new_target
+                updated = rebase(path)
                 self._shared_editor_documents.pop(path, None)
                 self._shared_editor_documents[updated] = document
-        if self.current_file == old_target or (self.current_file is not None and old_target in self.current_file.parents):
-            self.current_file = new_target / self.current_file.relative_to(old_target) if self.current_file != old_target else new_target
+        if self.current_file is not None:
+            self.current_file = rebase(self.current_file)
+        self._navigation_back = [
+            (rebase(path), line, column) for path, line, column in self._navigation_back
+        ]
+        self._navigation_forward = [
+            (rebase(path), line, column) for path, line, column in self._navigation_forward
+        ]
+        self.terminal_cwd = rebase(self.terminal_cwd)
+
+        for index in range(self.workspace_search_results.topLevelItemCount()):
+            item = self.workspace_search_results.topLevelItem(index)
+            raw_path = item.data(0, Qt.ItemDataRole.UserRole)
+            if not raw_path:
+                continue
+            old_path = Path(str(raw_path))
+            updated = rebase(old_path)
+            if updated == old_path:
+                continue
+            item.setData(0, Qt.ItemDataRole.UserRole, str(updated))
+            line = int(item.data(0, Qt.ItemDataRole.UserRole + 1) or 1)
+            relative = updated.relative_to(self.project_root).as_posix()
+            _separator, _found, detail = item.text(0).partition("  ")
+            item.setText(0, f"{relative}:{line}  {detail}" if detail else f"{relative}:{line}")
+
+        for group in self._editor_groups():
+            for index in range(group.count()):
+                editor = group.widget(index)
+                raw_diff_path = editor.property("diff_path")
+                if not raw_diff_path:
+                    continue
+                old_diff_path = Path(str(raw_diff_path)).resolve()
+                updated_diff_path = rebase(old_diff_path)
+                if updated_diff_path == old_diff_path:
+                    continue
+                editor.setProperty("diff_path", str(updated_diff_path))
+                title = f"差异 · {updated_diff_path.name}"
+                self._editor_titles[editor] = title
+                group.setTabToolTip(index, f"Git diff · {updated_diff_path.as_posix()}")
+                self._update_editor_tab_for(editor)
+                if isinstance(editor, QPlainTextEdit):
+                    editor.setPlainText(self.git.diff(updated_diff_path))
+                    editor.document().setModified(False)
+
+        active_editor = self._active_editor()
+        active_group = self._editor_group_for(active_editor)
+        if active_editor is not None and active_group is not None:
+            self._on_editor_tab_changed(active_group.indexOf(active_editor), active_group)
 
     def _show_explorer_menu(self, point: QPoint) -> None:
         index = self.file_tree.indexAt(point)
@@ -5524,6 +7646,11 @@ class ClientWindow(QMainWindow):
             self.file_tree.setCurrentIndex(index)
         base = path if path is not None and path.is_dir() else (path.parent if path is not None else self.project_root)
         menu = QMenu(self)
+        if path is not None and path.is_file():
+            open_editor = menu.addAction("在编辑器中打开")
+            open_editor.triggered.connect(lambda: self._open_file(path, preview=False))
+            self._add_external_file_actions(menu, path)
+            menu.addSeparator()
         new_file = menu.addAction("新建文件")
         new_file.triggered.connect(lambda: self.start_new_file_entry(base))
         new_folder = menu.addAction("新建文件夹")
@@ -5539,6 +7666,43 @@ class ClientWindow(QMainWindow):
         open_terminal = menu.addAction("在终端中打开")
         open_terminal.triggered.connect(lambda: self.open_terminal_at(base))
         menu.exec(self.file_tree.viewport().mapToGlobal(point))
+
+    def _add_external_file_actions(self, menu: QMenu, path: Path | None) -> None:
+        if path is None or not path.is_file():
+            return
+        if path.suffix.casefold() in {".html", ".htm", ".xhtml"}:
+            browser_action = menu.addAction("在浏览器中打开")
+            browser_action.triggered.connect(lambda: self._open_external_file(path, browser=True))
+        default_action = menu.addAction("使用默认程序打开")
+        default_action.triggered.connect(lambda: self._open_external_file(path))
+
+    def _open_external_file(self, path: Path, *, browser: bool = False) -> bool:
+        try:
+            target = Path(path).resolve(strict=True)
+            if not target.is_relative_to(self.project_root) or not target.is_file():
+                self._append_log("无法打开：请选择项目内的文件")
+                return False
+            relative = target.relative_to(self.project_root)
+            if any(part.casefold() in _EXCLUDED_PROJECT_NAMES_CASEFOLD for part in relative.parts):
+                self._append_log("无法打开：不能操作内部目录")
+                return False
+            if browser and target.suffix.casefold() not in {".html", ".htm", ".xhtml"}:
+                self._append_log("在浏览器中打开需要 HTML 文件")
+                return False
+            opened = (webbrowser.open_new_tab(target.as_uri()) if browser
+                      else QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))))
+            if not opened:
+                self._append_log(f"无法打开 {target.name}：未找到可用的{'浏览器' if browser else '默认程序'}")
+                return False
+            message = f"已请求{'浏览器' if browser else '默认程序'}打开 {relative.as_posix()}"
+            if any(editor_path == target and editor.document().isModified()
+                   for editor, editor_path in self._editor_paths.items()):
+                message += "（显示磁盘版本，请先保存未保存的修改）"
+            self._append_log(message)
+            return True
+        except (OSError, ValueError, webbrowser.Error) as exc:
+            self._append_log(f"打开文件失败：{exc}")
+            return False
 
     def delete_explorer_path(self, target: Path | None) -> None:
         if target is None:
@@ -5614,6 +7778,9 @@ class ClientWindow(QMainWindow):
             self._append_log("请先在编辑器中打开一个文件")
             return
         relative = path.relative_to(self.project_root).as_posix()
+        if relative not in self._context_file_paths():
+            self._append_log("该文件属于 Agent 不可访问的内部或敏感路径")
+            return
         selected = editor.textCursor().selectedText().replace("\u2029", "\n")[:4000]
         context = f"\n\n请参考当前文件：`{relative}`"
         if selected:
@@ -5621,17 +7788,180 @@ class ClientWindow(QMainWindow):
         self.chat_input.insertPlainText(context)
         self.chat_input.setFocus()
 
-    def _prompt_with_editor_context(self, prompt: str) -> str:
+    def _prompt_with_editor_context(
+        self,
+        prompt: str,
+        content_overrides: dict[str, str] | None = None,
+        readonly_paths: list[str] | None = None,
+    ) -> str:
         editor = self._active_editor()
         path = self._editor_paths.get(editor) if editor is not None else None
         if editor is None or path is None:
             return prompt
         relative = path.relative_to(self.project_root).as_posix()
+        if relative not in self._context_file_paths():
+            return prompt
         selected = editor.textCursor().selectedText().replace("\u2029", "\n")[:2400]
         context = f"\n\n当前编辑器文件：{relative}（如需修改，请先读取该文件）"
+        if editor.document().isModified():
+            overrides = content_overrides or {}
+            readonly = {item.casefold() for item in (readonly_paths or [])}
+            if relative in overrides:
+                context = (
+                    f"\n\n当前编辑器文件：{relative}（有未保存修改；Harness 已将本次编辑器缓冲作为只读上下文提供。"
+                    "请勿尝试修改此文件；如确需修改，请提醒我保存后重新发起任务。）"
+                )
+            elif relative.casefold() in readonly:
+                context = (
+                    f"\n\n当前编辑器文件：{relative}（有未保存修改，但文件因上下文预算限制未提供。"
+                    "请勿按磁盘旧版本修改此文件，先提醒我保存后重试。）"
+                )
         if selected:
             context += f"\n当前选中代码：\n```\n{selected}\n```"
         return prompt + context
+
+    def _context_file_paths(self) -> list[str]:
+        editor = self._active_editor()
+        path = self._editor_paths.get(editor) if editor is not None else None
+        if path is None or not path.is_relative_to(self.project_root):
+            return []
+        relative = path.relative_to(self.project_root).as_posix()
+        try:
+            self.agent.toolbox.project_context.resolve_scope(relative)
+        except ValueError:
+            return []
+        return [relative]
+
+    def _editor_context_state(self) -> tuple[dict[str, str], list[str], int]:
+        """Capture bounded dirty buffers; they remain read-only for this task."""
+        active = self._active_editor()
+        entries = list(self._editor_paths.items())
+        entries.sort(key=lambda item: item[0] is not active)
+        overrides: dict[str, str] = {}
+        readonly: list[str] = []
+        seen: set[str] = set()
+        total_bytes = 0
+        skipped = 0
+        for editor, path in entries:
+            if not isinstance(editor, CodeEditor) or not editor.document().isModified():
+                continue
+            try:
+                relative = path.resolve().relative_to(self.project_root).as_posix()
+                self.agent.toolbox.project_context.resolve_scope(relative)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if relative.casefold() in seen:
+                continue
+            seen.add(relative.casefold())
+            if len(readonly) >= 128:
+                skipped += 1
+                continue
+            readonly.append(relative)
+            if len(overrides) >= self.agent.toolbox.project_context.MAX_CONTENT_OVERRIDES:
+                skipped += 1
+                continue
+            text = editor.toPlainText()
+            encoded = text.encode("utf-8")
+            if (
+                b"\x00" in encoded
+                or len(encoded) > self.agent.toolbox.MAX_CONTEXT_FILE_BYTES
+                or total_bytes + len(encoded) > self.agent.toolbox.project_context.MAX_OVERRIDE_BYTES
+            ):
+                skipped += 1
+                continue
+            overrides[relative] = text
+            total_bytes += len(encoded)
+        return overrides, readonly, skipped
+
+    def _display_project_context(self, snapshot: dict[str, Any]) -> None:
+        self.project_context_snapshot = dict(snapshot)
+        context_text = str(snapshot.get("text", ""))
+        if self._project_environment_report:
+            context_text += "\n\n──────── 项目环境核验 ────────\n" + self._project_environment_report
+        self.project_context_output.setPlainText(context_text)
+        counts = f"{snapshot.get('file_count', 0)} 个文件 · {snapshot.get('indexed_count', 0)} 个文本"
+        suffix = " · 范围已截断" if snapshot.get("limited") else ""
+        override_paths = snapshot.get("editor_overrides") or []
+        excluded_paths = snapshot.get("editor_excluded") or []
+        if override_paths:
+            suffix += f" · {len(override_paths)} 个未保存缓冲只读接入"
+        if excluded_paths or snapshot.get("editor_context_skipped"):
+            suffix += " · 有未保存文件因预算未纳入"
+        self.project_context_meta.setText(counts + suffix)
+        tooltip = "相关文件：\n" + "\n".join(snapshot.get("sources", []))
+        if override_paths:
+            tooltip += "\n\n未保存只读缓冲：\n" + "\n".join(override_paths)
+        if excluded_paths:
+            tooltip += "\n\n因预算排除：\n" + "\n".join(excluded_paths)
+        self.project_context_meta.setToolTip(tooltip)
+        self.chat_mode_chip.setToolTip("项目上下文已更新 · " + counts + suffix + "\n" + tooltip)
+
+    def show_project_context(self) -> None:
+        self.show_workspace()
+        self.bottom_tabs.setVisible(True)
+        self.bottom_tabs.setCurrentIndex(self.project_context_tab_index)
+        if not self.project_context_snapshot:
+            self.refresh_project_context()
+
+    def refresh_project_context(self) -> None:
+        if self._context_preview_pending:
+            return
+        self._context_preview_pending = True
+        self.project_context_refresh.setEnabled(False)
+        self.project_context_meta.setText("正在检索项目上下文…")
+        query = self.chat_input.toPlainText().strip() or self._last_context_query
+        paths = self._context_file_paths()
+        overrides, readonly_paths, skipped = self._editor_context_state()
+        excluded = [path for path in readonly_paths if path.casefold() not in {item.casefold() for item in overrides}]
+        generation = self._context_generation
+
+        def build_preview() -> None:
+            try:
+                snapshot = self.agent.context_snapshot(query, paths, overrides, excluded)
+                snapshot["editor_context_skipped"] = skipped
+            except Exception as exc:  # UI background failures stay non-modal.
+                snapshot = {"error": f"项目上下文刷新失败：{exc}"}
+            if not self._closing:
+                self.signals.agent_event.emit("project_context_preview", {**snapshot, "generation": generation})
+
+        threading.Thread(target=build_preview, name="project-context-preview", daemon=True).start()
+
+    def check_project_environment(self) -> None:
+        if self._environment_check_running:
+            return
+        if self.active_task_id:
+            self._append_log("项目环境核验暂不可用：请等待当前编码任务结束。")
+            return
+        self._environment_check_running = True
+        self.project_environment_check.setEnabled(False)
+        self.project_context_meta.setText("正在准备项目环境核验…")
+
+        def inspect_environment() -> None:
+            try:
+                inspector = ProjectEnvironmentInspector(
+                    self.project_root,
+                    lambda command, timeout: self._request_command_approval(
+                        command,
+                        timeout,
+                        purpose=APPROVAL_PURPOSE,
+                        explanation=APPROVAL_EXPLANATION,
+                    ),
+                    event_recorder=self.ledger.append,
+                )
+                result = inspector.inspect()
+            except Exception as exc:  # Keep an optional local diagnostic from affecting the editor.
+                result = {
+                    "status": "failed",
+                    "report": f"项目环境核验失败：{type(exc).__name__}",
+                }
+            if not self._closing:
+                self.signals.agent_event.emit("project_environment_check_result", result)
+
+        threading.Thread(
+            target=inspect_environment,
+            name="project-environment-check",
+            daemon=True,
+        ).start()
 
     def _refresh_open_file_after_task(self) -> None:
         active_editor = self._active_editor()
@@ -5668,30 +7998,67 @@ class ClientWindow(QMainWindow):
             self.chat_input.clear()
 
     def _submit_prompt(self, prompt: str) -> bool:
+        if self._environment_check_running:
+            self._append_chat("系统", "项目环境核验进行中，请等待核验结束后再启动编码任务。", "meta")
+            return False
         if self.active_task_id:
             self._append_chat("系统", "当前任务仍在执行，请等待 Agent 完成后继续。", "meta")
             return False
         if self.current_session_id is None:
             self.current_session_id = new_id("session")
             self._append_chat("系统", f"已创建会话 {self.current_session_id}", "meta")
+        self._execution_group_active = True
+        self._execution_group_session_id = str(self.current_session_id)
+        self._active_execution_group = None
         self._append_chat("你", prompt, "user")
-        task_prompt = self._prompt_with_editor_context(prompt)
+        editor_overrides, readonly_paths, skipped_overrides = self._editor_context_state()
+        task_prompt = self._prompt_with_editor_context(prompt, editor_overrides, readonly_paths)
+        self._last_context_query = task_prompt
         self.active_task_id = self.worker.submit(
             "coding",
-            {"session_id": self.current_session_id, "prompt": task_prompt},
+            {
+                "session_id": self.current_session_id,
+                "prompt": task_prompt,
+                "context_files": self._context_file_paths(),
+                "context_overrides": editor_overrides,
+                "context_readonly_paths": readonly_paths,
+                "planning_mode": self.planning_mode,
+            },
             max_attempts=6,
         )
+        self.task_plan_panel.set_plan(None, run_state="running")
         self._set_state(self.chat_status, "排队中 · 等待 Agent", "StateWorking")
         self._set_state(self.workspace_state, "● 排队中", "StateWorking")
         self._append_log(f"编码任务已加入队列：{self.active_task_id}")
+        if skipped_overrides:
+            self._append_log(
+                f"有 {skipped_overrides} 个未保存文件因数量或大小预算未载入上下文；Agent 将跳过这些文件的磁盘旧版本和修改。"
+            )
         return True
 
     def new_coding_task(self) -> None:
+        if self._environment_check_running:
+            self._append_chat("系统", "项目环境核验进行中，暂时不能新建会话。", "meta")
+            return
         if self.active_task_id:
             self._append_chat("系统", "当前任务仍在执行，暂时不能新建会话。", "meta")
             return
         self.show_workspace()
         self.current_session_id = None
+        self._execution_group_active = False
+        self._execution_group_session_id = ""
+        self._active_execution_group = None
+        self._context_usage_estimated_tokens = 0
+        self._context_usage_actual_tokens = None
+        self._context_usage_session_id = ""
+        self._render_context_meter()
+        self._display_model_usage({"usage": ModelRequestUsage.empty(), "record": None})
+        self._last_context_query = ""
+        self.project_context_snapshot = {}
+        self._context_generation += 1
+        self.project_context_output.setPlainText(self._project_environment_report)
+        self.project_context_meta.setText("发送任务时自动检索相关代码与项目指令")
+        self.task_plan_panel.set_plan(None, run_state="idle")
         self._show_welcome()
         self._clear_chat_history()
         self._append_chat("系统", "已开始新会话。", "meta")
@@ -5716,6 +8083,9 @@ class ClientWindow(QMainWindow):
             row.setData(0, Qt.ItemDataRole.UserRole, item["task_id"])
 
     def retry_selected(self) -> None:
+        if self._environment_check_running:
+            self._append_log("项目环境核验进行中，暂时不能重试编码任务。")
+            return
         tree = self.task_history_tree
         if tree is None or not tree.currentItem():
             return
@@ -5726,8 +8096,12 @@ class ClientWindow(QMainWindow):
             self.refresh_task_history()
 
     def show_git(self) -> None:
+        self._git_focus = True
+        self._git_details_expanded = self.width() >= 1100
+        self._git_details_forced = False
         self._set_activity_button(2)
         self.workspace_stack.setCurrentWidget(self.git_page)
+        self._adapt_workbench_layout()
         self._adapt_git_layout()
         self._refresh_development_tree()
         self._append_log("已打开开发版本树")
@@ -5742,8 +8116,10 @@ class ClientWindow(QMainWindow):
             self._show_message("Git 错误", str(exc))
 
     def show_workspace(self) -> None:
+        self._git_focus = False
         self._set_activity_button(0)
         self.workspace_stack.setCurrentWidget(self.workspace_page)
+        self._adapt_workbench_layout()
         self._append_log("已返回编码工作区")
 
     def focus_explorer(self) -> None:
@@ -5764,6 +8140,19 @@ class ClientWindow(QMainWindow):
         return self.agent.run(task)
 
     def eventFilter(self, watched: QObject, event) -> bool:  # noqa: ANN001 - Qt event signature.
+        if watched is getattr(self, "welcome_content", None):
+            if event.type() == QEvent.Type.Resize:
+                QTimer.singleShot(0, self._update_welcome_text_sizes)
+            return False
+        if watched is getattr(self, "connection_label", None) and event.type() == QEvent.Type.MouseButtonRelease:
+            if self._git_focus:
+                self._git_chat_visible = True
+                self._adapt_workbench_layout()
+            if self.chat_body_stack.currentWidget() is not self.summary_settings_scroll:
+                self.toggle_summary_settings()
+            return True
+        if watched is getattr(self, "connection_label", None):
+            return False
         if watched is self.file_tree.viewport() and event.type() == QEvent.Type.MouseButtonDblClick:
             index = self.file_tree.indexAt(event.position().toPoint())
             self._on_file_selected(index)
@@ -5846,9 +8235,19 @@ class ClientWindow(QMainWindow):
                     event.ignore()
                     return
         self._closing = True
-        if self.terminal_process is not None and self.terminal_process.state() != QProcess.ProcessState.NotRunning:
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with self._git_status_lock:
+                if not self._git_status_busy and not self._git_status_dirty:
+                    break
+            time.sleep(0.01)
+        for request in list(self._pending_patch_reviews.values()):
+            self._resolve_patch_review(request, None)
+        if self.terminal_process is not None:
             self.terminal_process.kill()
+        self._terminal_timer.stop()
         self.worker.stop()
+        self.agent.toolbox.close()
         app = QApplication.instance()
         windows = getattr(app, "_scidev_windows", []) if app is not None else []
         if self in windows:
@@ -5869,7 +8268,7 @@ def main(argv: list[str] | None = None) -> int:
     source_root = application_base_dir()
     if args.workspace is not None:
         try:
-            workspace_root = resolve_initial_workspace(args.workspace, None, source_root)
+            workspace_root = resolve_startup_workspace(args.workspace, None, source_root)
         except ValueError as exc:
             parser.error(str(exc))
 
@@ -5878,22 +8277,21 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName("SciDevHarness")
     app.setOrganizationDomain("scidevharness.local")
     app.setApplicationDisplayName("SciDevHarness")
-    ui_font = QFont("Segoe UI", 11)
-    ui_font.setStyleHint(QFont.StyleHint.SansSerif)
-    app.setFont(ui_font)
+    app.setFont(create_ui_font())
 
     settings = QSettings("SciDevHarness", "SciDevHarness")
     if args.workspace is None:
         last_workspace = str(settings.value("lastWorkspace", "") or "")
         is_packaged = bool(getattr(sys, "frozen", False) or "__compiled__" in globals())
-        if is_packaged and not (last_workspace and Path(last_workspace).is_dir()):
+        has_valid_last_workspace = bool(last_workspace and Path(last_workspace).expanduser().is_dir())
+        has_bundled_sample = default_sample_workspace(source_root) != source_root
+        if is_packaged and not has_valid_last_workspace and not has_bundled_sample:
             selected = _choose_workspace_directory(Path.home())
             if selected is None:
                 return 0
             workspace_root = selected
         else:
-            fallback = Path(sys.executable).resolve().parent if is_packaged else source_root
-            workspace_root = resolve_initial_workspace(None, last_workspace, fallback)
+            workspace_root = resolve_startup_workspace(None, last_workspace, source_root)
 
     if not args.smoke_test:
         settings.setValue("lastWorkspace", str(workspace_root))
