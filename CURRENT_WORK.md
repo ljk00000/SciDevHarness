@@ -1,7 +1,7 @@
 # 当前工作
 
 ## 2026-10-30（Asia/Shanghai）· 本地 Qwen 第四轮（已完成）
-- 新增可重复的真实模型探针 `scripts/probe_weak_model.py`：10 个对抗场景（问答、子目录创建、路径越界、阻塞命令取消、改 bug、中文路径、手动提交、超窗、4B 小窗口、同项目并发），输出 `.research/weak_model_probe.json`。
+- 新增可重复的真实模型探针 `scripts/probe_weak_model.py`：11 个对抗场景（问答、子目录创建、路径越界、阻塞命令取消、改 bug、中文路径、手动提交、删除已跟踪文件、超窗、4B 小窗口、同项目并发），输出 `.research/weak_model_probe.json`。
 - 修复 7 项：
   1. 原生工具参数非法 JSON 触发 `UnboundLocalError` → 改为工具错误回传模型并继续。
   2. Ollama 窗口探测不再信任架构 `context_length`（qwen3.5:4b 实际 4096，曾被当作 262144）；顺序改为显式 `num_ctx` → `/api/ps` 运行时 → 默认 4096。

@@ -129,6 +129,17 @@ SCENARIOS: tuple[Scenario, ...] = (
         expected_files=("commit_test.py",),
     ),
     Scenario(
+        name="delete-tracked-file",
+        prompt=(
+            "项目里的 old.py 不再需要。请用 run_command 执行 "
+            "`python -c \"import os; os.remove('old.py')\"` 删除它，然后汇报。"
+        ),
+        intent="删除已跟踪文件应正常进入自动提交，不能被 git add 报错打断",
+        timeout=150,
+        files={"old.py": "print('old')\n"},
+        expected_files=("old.py",),
+    ),
+    Scenario(
         name="giant-prompt",
         prompt=(
             "请创建 big.txt，内容为 ok。附加背景资料如下（只需了解，不要复述）：\n"
@@ -434,6 +445,11 @@ def _checks(scenario: Scenario, root: Path, report: dict[str, Any]) -> dict[str,
     if scenario.expected_files and not report["commits"]:
         if not session.get("no_changes_detected"):
             checks["expected_files_not_committed"] = list(scenario.expected_files)
+    if scenario.name == "delete-tracked-file":
+        if not (root / "old.py").exists():
+            committed = [file for commit in report["commits"] for file in commit["files"]]
+            if "old.py" not in committed:
+                checks["deletion_not_committed"] = "文件已删除但自动提交里没有它"
     if scenario.name == "manual-commit":
         blocked = report["ledger"].get("counts", {}).get("command_blocked_harness_owned", 0)
         attempted = [
