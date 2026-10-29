@@ -49,7 +49,29 @@ jobs:
         run: .\start_client.bat --check-runtime
 
       - name: Run tests with coverage
+        id: tests
         run: .\.venv\Scripts\python.exe scripts\run_tests_coverage.py
+
+      - name: Report test failures as annotations
+        if: ${{ failure() && steps.tests.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          $path = ".research/test_result.json"
+          if (-not (Test-Path $path)) {
+            Write-Output "::error::Test result file missing; the test child crashed before recording progress."
+            exit 0
+          }
+          $payload = Get-Content $path -Raw | ConvertFrom-Json
+          if (-not $payload.complete) {
+            Write-Output "::error::Test run aborted after $($payload.last_test)"
+          }
+          foreach ($item in @($payload.failure_details)) {
+            $detail = ([string]$item.detail) -replace "`r?`n", " "
+            Write-Output "::error title=$($item.test)::$detail"
+          }
+          if ($payload.complete -and $payload.failures -eq 0 -and $payload.errors -eq 0) {
+            Write-Output "::error::Tests passed; the coverage gate or a later step failed."
+          }
 
       - name: Compile Python modules
         run: .\.venv\Scripts\python.exe -m py_compile scidev_client.py scidev_core.py scidev_acceptance.py scidev_usage.py scidev_context.py scidev_patching.py scidev_memory.py scidev_multi_agent.py scidev_planning.py scidev_verification.py scidev_browser.py scripts\audit_standalone.py scripts\bootstrap.py scripts\smoke_local_ollama.py scripts\smoke_pelican_svg.py scripts\verify_minimal_qt.py tests\test_client.py tests\test_core.py tests\test_acceptance.py tests\test_usage.py tests\test_context_memory.py tests\test_multi_agent.py tests\test_planning.py tests\test_verification.py tests\test_browser.py tests\test_artifact_adapter.py tests\test_bootstrap.py tests\test_local_ollama_smoke.py tests\test_package_audit.py tests\test_release_staging.py tests\test_pelican_svg.py smoke_dependency.py smoke_screenshot.py

@@ -26,27 +26,67 @@ def _run_child() -> None:
 
     import coverage
 
+    class RecordingResult(unittest.TextTestResult):
+        """Persist progress after every test so a native crash is diagnosable."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.last_test = ""
+
+        def startTest(self, test) -> None:  # noqa: N802 - unittest API
+            self.last_test = test.id()
+            super().startTest(test)
+            _write(complete=False, result=self, last_test=self.last_test)
+
+        def stopTest(self, test) -> None:  # noqa: N802 - unittest API
+            super().stopTest(test)
+            _write(complete=False, result=self, last_test=self.last_test)
+
+        def addFailure(self, test, err) -> None:  # noqa: N802 - unittest API
+            super().addFailure(test, err)
+            _write(complete=False, result=self, last_test=self.last_test)
+
+        def addError(self, test, err) -> None:  # noqa: N802 - unittest API
+            super().addError(test, err)
+            _write(complete=False, result=self, last_test=self.last_test)
+
+    def _details(result: unittest.TextTestResult) -> list[dict[str, str]]:
+        details: list[dict[str, str]] = []
+        for test, traceback_text in list(result.failures) + list(result.errors):
+            lines = [line.strip() for line in str(traceback_text).strip().splitlines() if line.strip()]
+            details.append({
+                "test": getattr(test, "id", lambda: str(test))(),
+                "detail": (lines[-1] if lines else "")[:400],
+            })
+        return details
+
+    def _write(*, complete: bool, result: unittest.TextTestResult, last_test: str) -> None:
+        RESULT.parent.mkdir(parents=True, exist_ok=True)
+        RESULT.write_text(
+            json.dumps(
+                {
+                    "success": result.wasSuccessful(),
+                    "tests_run": result.testsRun,
+                    "failures": len(result.failures),
+                    "errors": len(result.errors),
+                    "skipped": len(result.skipped),
+                    "failure_details": _details(result),
+                    "last_test": last_test,
+                    "complete": complete,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     cov = coverage.Coverage(branch=True, config_file=str(ROOT / "pyproject.toml"))
     cov.start()
     suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"))
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    result = unittest.TextTestRunner(verbosity=2, resultclass=RecordingResult).run(suite)
     cov.stop()
     cov.save()
-    RESULT.parent.mkdir(parents=True, exist_ok=True)
-    RESULT.write_text(
-        json.dumps(
-            {
-                "success": result.wasSuccessful(),
-                "tests_run": result.testsRun,
-                "failures": len(result.failures),
-                "errors": len(result.errors),
-                "skipped": len(result.skipped),
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
+    _write(complete=True, result=result, last_test=result.last_test)
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0 if result.wasSuccessful() else 1)
@@ -63,7 +103,17 @@ def _parent() -> int:
         return 1
     payload = json.loads(RESULT.read_text(encoding="utf-8"))
     print(json.dumps(payload, ensure_ascii=False))
+    if not payload.get("complete"):
+        print(
+            f"test run aborted after {payload.get('last_test')} "
+            f"(child exit {completed.returncode}); partial result recorded"
+        )
+        for item in payload.get("failure_details") or []:
+            print(f"FAILED {item.get('test')}: {item.get('detail')}")
+        return 1
     if not payload.get("success"):
+        for item in payload.get("failure_details") or []:
+            print(f"FAILED {item.get('test')}: {item.get('detail')}")
         return 1
     report = subprocess.run(
         [sys.executable, "-m", "coverage", "report"],
