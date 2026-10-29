@@ -2212,6 +2212,9 @@ class CodingToolbox:
         self.enforce_patch_review_for_existing = bool(enforce_patch_review_for_existing)
         self._task_created_file_hashes: dict[str, str] = {}
         self.last_command_execution: dict[str, Any] | None = None
+        self._active_command_lock = threading.Lock()
+        self._active_command: subprocess.Popen[str] | None = None
+        self._command_cancel = threading.Event()
         self.last_patch_result: dict[str, Any] | None = None
         self.context_overrides: dict[str, str] = {}
         self._context_overrides_by_key: dict[str, str] = {}
@@ -3062,8 +3065,17 @@ class CodingToolbox:
         self.last_command_execution = dict(execution)
         self.ledger.append("command_execution_recorded", dict(execution))
 
+    def cancel_running_command(self) -> None:
+        """Terminate the command tree started by run_command, if any."""
+        self._command_cancel.set()
+        with self._active_command_lock:
+            process = self._active_command
+        if process is not None and process.poll() is None:
+            terminate_process_tree(process)
+
     def run_command(self, command: str, timeout_seconds: int = 120) -> str:
         command = str(command or "").strip()
+        self._command_cancel.clear()
         execution = {
             "command_id": new_id("cmd"),
             "command": command[:1000],
@@ -3134,6 +3146,8 @@ class CodingToolbox:
                 errors="replace",
                 **background_process_options(),
             )
+            with self._active_command_lock:
+                self._active_command = process
             try:
                 output, _ = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
@@ -3148,6 +3162,22 @@ class CodingToolbox:
                 return (
                     f"命令超时（{timeout}s），已终止。\n执行状态：timed_out；退出码：{process.returncode}"
                     f"\n{(output or '')[-20000:]}"
+                )
+            finally:
+                with self._active_command_lock:
+                    if self._active_command is process:
+                        self._active_command = None
+            if self._command_cancel.is_set():
+                self._finish_command_execution(
+                    execution,
+                    "cancelled",
+                    exit_code=process.returncode,
+                    elapsed_ms=int((time.monotonic() - execution_started) * 1000),
+                )
+                return (
+                    "命令已取消，进程树已终止。\n"
+                    f"执行状态：cancelled；退出码：{process.returncode}\n"
+                    f"{(output or '')[-4000:]}"
                 )
         except OSError as exc:
             self._finish_command_execution(
@@ -3596,6 +3626,7 @@ class CodingAgent:
     def request_cancel(self) -> None:
         """Ask the running task to stop before its next model call or tool."""
         self._cancel.set()
+        self.toolbox.cancel_running_command()
 
     def _raise_if_cancelled(self, session: dict[str, Any], session_id: str) -> None:
         if not self._cancel.is_set():

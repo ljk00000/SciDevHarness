@@ -6,6 +6,7 @@ import os
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -4507,6 +4508,88 @@ class EmptyModelResponseTests(unittest.TestCase):
 
 
 class CancellationTests(unittest.TestCase):
+    def test_cancel_terminates_a_running_command(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-command-cancel-") as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(root, EventLedger(root), command_approval=lambda _c, _t: True)
+            command = f'"{sys.executable}" -c "import time; time.sleep(10)"'
+            result: list[str] = []
+            started = time.monotonic()
+
+            def execute() -> None:
+                try:
+                    result.append(toolbox.run_command(command, timeout_seconds=30))
+                except Exception as exc:  # noqa: BLE001
+                    result.append(f"{type(exc).__name__}: {exc}")
+
+            worker = threading.Thread(target=execute, daemon=True)
+            worker.start()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with toolbox._active_command_lock:
+                    if toolbox._active_command is not None:
+                        break
+                time.sleep(0.05)
+            toolbox.cancel_running_command()
+            worker.join(8)
+            elapsed = time.monotonic() - started
+            self.assertFalse(worker.is_alive())
+            self.assertLess(elapsed, 8)
+            self.assertIn("已取消", result[-1] if result else "")
+            self.assertEqual((toolbox.last_command_execution or {}).get("status"), "cancelled")
+
+    def test_agent_cancel_interrupts_an_approved_command(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-agent-command-cancel-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            agent = CodingAgent(
+                root, EventLedger(root), GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+                command_approval=lambda _c, _t: True,
+            )
+            provider = Mock()
+            provider.chat.return_value = {
+                "content": "",
+                "tool_calls": [{
+                    "id": "sleep-call",
+                    "function": {
+                        "name": "run_command",
+                        "arguments": json.dumps({
+                            "command": f'"{sys.executable}" -c "import time; time.sleep(10)"',
+                            "timeout_seconds": 30,
+                        }),
+                    },
+                }],
+            }
+            errors: list[str] = []
+            started = time.monotonic()
+
+            def execute() -> None:
+                try:
+                    with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                        agent.run({"task_id": "sleep-task", "payload": {
+                            "session_id": "sleep-session", "prompt": "run the sleep command",
+                            "planning_mode": "off",
+                        }})
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(str(exc))
+
+            worker = threading.Thread(target=execute, daemon=True)
+            worker.start()
+            time.sleep(1.0)
+            agent.request_cancel()
+            worker.join(10)
+            elapsed = time.monotonic() - started
+            self.assertFalse(worker.is_alive())
+            self.assertLess(elapsed, 8)
+            self.assertTrue(errors)
+            self.assertIn("任务已取消", errors[-1])
+            self.assertIn(
+                "coding_session_cancelled",
+                (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+            )
+
     def test_new_task_after_cancel_starts_from_a_clean_transcript(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-cancel-clean-") as temp:
             root = Path(temp)
