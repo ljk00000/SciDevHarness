@@ -45,7 +45,7 @@ from scidev_multi_agent import (
 )
 from scidev_planning import PLAN_TOOL, TaskPlan, planning_mode
 from scidev_process import background_process_options, terminate_process_tree
-from scidev_patching import PatchEngine, PatchReviewRejected
+from scidev_patching import PatchEngine, PatchError, PatchReviewRejected
 from scidev_usage import ModelRequestUsage
 from scidev_verification import VerificationTracker
 
@@ -2939,6 +2939,17 @@ class CodingToolbox:
     def apply_patch(self, patch: str) -> str:
         self.last_patch_result = None
         plan = self.patch_engine.prepare(patch)
+        for file_plan in plan.files:
+            target = (self.project_root / file_plan.path).resolve()
+            try:
+                relative = target.relative_to(self.project_root).as_posix()
+            except ValueError:
+                continue
+            if relative.casefold() in self._context_readonly_paths:
+                raise PatchError(
+                    f"{relative} 在本次任务开始时有未保存的编辑器内容；"
+                    "为避免补丁覆盖草稿，请先保存文件再重新发起任务。"
+                )
         preview = plan.review_payload()
         self.ledger.append("patch_previewed", {
             "patch_id": plan.patch_id,

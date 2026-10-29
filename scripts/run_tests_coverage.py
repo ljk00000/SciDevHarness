@@ -56,7 +56,7 @@ def _run_child() -> None:
             lines = [line.strip() for line in str(traceback_text).strip().splitlines() if line.strip()]
             details.append({
                 "test": getattr(test, "id", lambda: str(test))(),
-                "detail": (lines[-1] if lines else "")[:400],
+                "detail": (" | ".join(lines[-2:]) if lines else "")[:500],
             })
         return details
 

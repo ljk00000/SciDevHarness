@@ -15,7 +15,7 @@ if os.name == "nt":
         os.environ["QT_QPA_FONTDIR"] = str(fonts)
 
 from PySide6.QtCore import QPoint, QSettings, Qt
-from PySide6.QtGui import QFontInfo, QTextDocument, QTextLayout
+from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QTextDocument, QTextLayout
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 
@@ -190,6 +190,20 @@ class DesktopPolishTests(unittest.TestCase):
             label.close()
 
     def test_navigation_uses_real_sans_glyphs_and_semibold_controls_in_all_themes(self):
+        requested = ui_font_family()
+        available = {family.casefold() for family in QFontDatabase.families()}
+        preferred = (
+            "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC",
+            "PingFang SC", "WenQuanYi Micro Hei",
+        )
+        resolved = QFontInfo(QFont(requested)).family()
+        if (
+            not any(name.casefold() in available for name in preferred)
+            or resolved.casefold() != requested.casefold()
+        ):
+            self.skipTest(
+                f"no usable CJK sans-serif here (requested {requested!r}, resolved {resolved!r})"
+            )
         controls = [self.window.title_new_button, self.window.title_git_button,
                     self.window.title_refresh_button, self.window.agent_title,
                     self.window.task_plan_panel.title_label]

@@ -67,7 +67,7 @@ jobs:
           }
           foreach ($item in @($payload.failure_details)) {
             $detail = ([string]$item.detail) -replace "`r?`n", " "
-            Write-Output "::error title=$($item.test)::$detail"
+            Write-Output "::error title=$($item.test)::$($item.test) :: $detail"
           }
           if ($payload.complete -and $payload.failures -eq 0 -and $payload.errors -eq 0) {
             Write-Output "::error::Tests passed; the coverage gate or a later step failed."

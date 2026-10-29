@@ -2248,6 +2248,12 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                 renamed_file = renamed_directory / "renamed.py"
                 self.assertTrue(renamed_directory.is_dir())
                 self.assertTrue(renamed_file.is_file())
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    if window._editor_paths[editor].resolve() == renamed_file.resolve():
+                        break
+                    self.app.processEvents()
+                    time.sleep(0.02)
                 self.assertEqual(window._editor_paths[editor].resolve(), renamed_file.resolve())
                 self.assertEqual(window.current_file.resolve(), renamed_file.resolve())
                 self.assertEqual(
