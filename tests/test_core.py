@@ -20,6 +20,7 @@ from urllib.error import HTTPError, URLError
 from unittest.mock import Mock, patch
 
 from scidev_core import (
+    OLLAMA_DEFAULT_NUM_CTX,
     CodingAgent,
     CodingToolbox,
     EventLedger,
@@ -31,6 +32,7 @@ from scidev_core import (
     SummarySettings,
     SvgArtifactAdapter,
     atomic_write_bytes,
+    manual_git_mutation_reason,
     parse_porcelain_z,
 )
 
@@ -2662,24 +2664,24 @@ class CoreTests(unittest.TestCase):
     def test_agent_prompt_requires_explicit_checks_to_be_run_before_completion(self) -> None:
         prompt = CodingAgent.SYSTEM_PROMPT
         self.assertLessEqual(len(prompt), 700)
-        self.assertIn("每次成功修改后，下一次精确编辑前先重新读取", prompt)
+        self.assertIn("每次修改后，再精确编辑前先重读", prompt)
         for required_rule in (
-            "直接用工具完成用户在工作区内的请求",
+            "用工具完成用户在工作区内的请求",
             "`write_file` 一次",
-            "不要为名称、路径、尺寸或风格追问",
-            "严格按用户指定对象与动作，不得换成相似对象",
+            "不要追问名称/路径/尺寸/风格",
+            "按用户指定对象/动作，不得换成相似对象",
             "没有成功工具结果不得声称已保存",
-            "将引用的旧请求只视为背景",
+            "旧请求只作背景",
             "同文件多项独立精确修改可一次批量调用",
             "不得访问 `.git`、`.research`、密钥、环境变量、数据集或工作区外路径",
             "命令逐条经 UI 批准",
-            "不得重试、拆分或变形规避",
+            "不得重试或变形规避",
             "用户点名的检查必须实跑",
             "不把请求、计划或工具 JSON 当结果",
-            "完成后简述改动、验证和限制",
-            "请求明确时直接执行",
+            "完成后简述改动/验证",
+            "请求明确即执行",
             "不擅自运行长实验/训练或下载大文件",
-            "`read_file` 行首 `N:` 仅是显示行号",
+            "`read_file` 行首 `N:` 是显示行号",
             "写入 `old_text` 前去掉",
             "按用户要求明确可观察的完成条件",
             "逐项核对",
@@ -3514,6 +3516,17 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn(
             "tool_calls",
             provider._coerce_text_tool_calls(tool_response_with_prose, [replace_tool]),
+        )
+
+        plain_tool_response = {
+            "role": "assistant",
+            "content": "<tool_response>\n工具执行失败：PermanentError: 不允许\n</tool_response>",
+        }
+        rejected_markup = provider._coerce_text_tool_calls(plain_tool_response, [replace_tool])
+        self.assertNotIn("tool_calls", rejected_markup)
+        self.assertEqual(
+            rejected_markup["tool_parse_error"]["reason"],
+            "incomplete_or_invalid_tool_envelope",
         )
 
         unwrapped_call = {
@@ -4812,6 +4825,236 @@ class NoChangesDetectionTests(unittest.TestCase):
         )
 
 
+class GitCommitOwnershipTests(unittest.TestCase):
+    """The Harness owns staging/commits; model-run Git mutations must not bypass it."""
+
+    @staticmethod
+    def _init_repo(root: Path) -> GitManager:
+        (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+        git = GitManager(root)
+        git.init()
+        git.commit_changes("baseline")
+        return git
+
+    def test_manual_git_commit_is_refused_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-manual-git-") as temp:
+            root = Path(temp)
+            git = self._init_repo(root)
+            (root / "app.py").write_text("print(1)\n", encoding="utf-8")
+            baseline = git.head_sha()
+            ledger = EventLedger(root)
+            toolbox = CodingToolbox(root, ledger, command_approval=lambda command, timeout: True)
+            for command in (
+                "git add -A && git commit -m manual",
+                "git commit -m manual",
+                "git --no-pager add -A",
+                "git -c core.quotepath=false commit -m manual",
+                "git reset --soft HEAD~1",
+            ):
+                with self.assertRaisesRegex(PermanentError, "自动提交"):
+                    toolbox.run_command(command)
+            self.assertEqual(git.head_sha(), baseline)
+            self.assertIn(
+                "command_blocked_harness_owned",
+                ledger.events_path.read_text(encoding="utf-8"),
+            )
+            for allowed in ("git status --short", "git log --grep commit", "git diff --stat"):
+                self.assertIsNone(manual_git_mutation_reason(allowed))
+
+    def test_vanished_untracked_file_does_not_abort_auto_commit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-vanished-") as temp:
+            root = Path(temp)
+            git = self._init_repo(root)
+            included, skipped = git.filter_auto_commit_paths({"draft.py"})
+            self.assertEqual(included, set())
+            self.assertEqual(skipped, {})
+            self.assertEqual(git.commit_paths("noop", {"draft.py"}), "")
+
+    def test_deleted_tracked_file_is_still_committed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-deleted-") as temp:
+            root = Path(temp)
+            git = self._init_repo(root)
+            (root / "old.py").write_text("print(1)\n", encoding="utf-8")
+            git.commit_changes("add old")
+            (root / "old.py").unlink()
+            included, skipped = git.filter_auto_commit_paths({"old.py"})
+            self.assertEqual(included, {"old.py"})
+            self.assertEqual(skipped, {})
+            sha = git.commit_paths("remove old", {"old.py"})
+            self.assertTrue(sha)
+            names = subprocess.run(
+                ["git", "-C", str(root), "show", "--format=", "--name-only", sha],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+            self.assertEqual(names, ["old.py"])
+
+    def test_commit_made_during_the_run_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-external-commit-") as temp:
+            root = Path(temp)
+            git = self._init_repo(root)
+            code = (
+                "import subprocess;"
+                "subprocess.run(['git','add','-A']);"
+                "subprocess.run(['git','commit','-m','manual'])"
+            )
+            command = f'"{sys.executable}" -c "{code}"'
+            provider = ScriptedPlanningProvider(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_write",
+                            "type": "function",
+                            "function": {
+                                "name": "write_file",
+                                "arguments": json.dumps({"path": "w.py", "content": "print(1)\n"}),
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_commit",
+                            "type": "function",
+                            "function": {
+                                "name": "run_command",
+                                "arguments": json.dumps({"command": command}),
+                            },
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "完成", "tool_calls": []},
+                {"role": "assistant", "content": "完成", "tool_calls": []},
+            )
+            agent = CodingAgent(
+                root,
+                EventLedger(root),
+                git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+                command_approval=lambda command, timeout: True,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run(
+                    {"payload": {"session_id": "external-commit", "prompt": "创建 w.py", "planning_mode": "off"}}
+                )
+            self.assertEqual(result["git_result_sha"], git.head_sha())
+            session = json.loads(
+                (root / ".research" / "sessions" / "external-commit.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session.get("git_commit_source"), "detected_external")
+            self.assertIn("新提交", str(session.get("git_auto_commit_warning") or ""))
+            self.assertIn("git_commit_detected_outside_harness", (root / ".research" / "events.jsonl").read_text(encoding="utf-8"))
+
+    def test_edit_that_leaves_no_diff_is_reported_instead_of_silent_success(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-noop-edit-") as temp:
+            root = Path(temp)
+            git = self._init_repo(root)
+            remove_code = "import os; os.remove('draft.py')"
+            provider = ScriptedPlanningProvider(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_write",
+                            "type": "function",
+                            "function": {
+                                "name": "write_file",
+                                "arguments": json.dumps({"path": "draft.py", "content": "print(0)\n"}),
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_remove",
+                            "type": "function",
+                            "function": {
+                                "name": "run_command",
+                                "arguments": json.dumps(
+                                    {"command": f'"{sys.executable}" -c "{remove_code}"'}
+                                ),
+                            },
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "已改好", "tool_calls": []},
+                {"role": "assistant", "content": "已改好", "tool_calls": []},
+            )
+            agent = CodingAgent(
+                root,
+                EventLedger(root),
+                git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+                command_approval=lambda command, timeout: True,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run(
+                    {"payload": {"session_id": "noop-edit", "prompt": "把 VALUE 改成 2", "planning_mode": "off"}}
+                )
+            self.assertTrue(result["no_changes_detected"])
+            self.assertEqual(result["git_result_sha"], "")
+            session = json.loads(
+                (root / ".research" / "sessions" / "noop-edit.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("没有产生可提交的改动", str(session.get("final_message")))
+
+
+class MalformedToolCallTests(unittest.TestCase):
+    def test_invalid_native_tool_arguments_are_reported_to_the_model(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-malformed-args-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            git.init()
+            git.commit_changes("baseline")
+            provider = ScriptedPlanningProvider(
+                {
+                    "role": "assistant",
+                    "content": "尝试写入",
+                    "tool_calls": [
+                        {
+                            "id": "call_bad",
+                            "type": "function",
+                            "function": {"name": "write_file", "arguments": "{not valid json"},
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "改为直接回复。", "tool_calls": []},
+            )
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run(
+                    {"payload": {"session_id": "malformed-args", "prompt": "创建 hello.py", "planning_mode": "off"}}
+                )
+            self.assertTrue(result["no_changes_detected"])
+            events = (root / ".research" / "events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("JSONDecodeError", events)
+            self.assertNotIn("UnboundLocalError", events)
+            session = json.loads(
+                (root / ".research" / "sessions" / "malformed-args.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session.get("status"), "completed")
+
+
 class LocalModelContextTests(unittest.TestCase):
     def test_ollama_num_ctx_is_detected_from_show_api(self) -> None:
         provider = OpenAICompatibleProvider(
@@ -4824,6 +5067,49 @@ class LocalModelContextTests(unittest.TestCase):
         with patch("scidev_core.urlopen", return_value=response):
             provider._detect_local_context_limit()
         self.assertEqual(provider.local_context_limit, 8192)
+        self.assertEqual(provider.local_context_source, "ollama_api")
+
+    def test_architecture_context_length_is_not_trusted_without_num_ctx(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://127.0.0.1:11434/v1", "k", "m", streaming=False,
+        )
+        show = {"parameters": "", "model_info": {"qwen35.context_length": 262144}}
+        status = {"models": [{"name": "m", "model": "m", "context_length": 4096}]}
+
+        def fake_urlopen(request, timeout=3.0):
+            payload = status if str(request.full_url).endswith("/api/ps") else show
+            return BytesIO(json.dumps(payload).encode("utf-8"))
+
+        with patch("scidev_core.urlopen", side_effect=fake_urlopen):
+            provider._detect_local_context_limit()
+        self.assertEqual(provider.local_context_limit, 4096)
+        self.assertEqual(provider.local_context_source, "ollama_runtime")
+
+    def test_model_without_num_ctx_and_not_loaded_uses_ollama_default(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://127.0.0.1:11434/v1", "k", "m", streaming=False,
+        )
+        show = {"parameters": "", "model_info": {"x.context_length": 131072}}
+        status = {"models": []}
+
+        def fake_urlopen(request, timeout=3.0):
+            payload = status if str(request.full_url).endswith("/api/ps") else show
+            return BytesIO(json.dumps(payload).encode("utf-8"))
+
+        with patch("scidev_core.urlopen", side_effect=fake_urlopen):
+            provider._detect_local_context_limit()
+        self.assertEqual(provider.local_context_limit, OLLAMA_DEFAULT_NUM_CTX)
+        self.assertEqual(provider.local_context_source, "ollama_default")
+
+    def test_switching_model_redetects_the_window(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://127.0.0.1:11434/v1", "k", "other", streaming=False,
+        )
+        provider.local_context_limit = 32768
+        response = json.dumps({"parameters": "num_ctx 8192\n"}).encode("utf-8")
+        with patch("scidev_core.urlopen", return_value=BytesIO(response)):
+            switched = provider.with_model("second-model")
+        self.assertEqual(switched.local_context_limit, 8192)
 
     def test_oversized_local_request_fails_instead_of_being_truncated(self) -> None:
         provider = OpenAICompatibleProvider(
@@ -4832,6 +5118,36 @@ class LocalModelContextTests(unittest.TestCase):
         provider.local_context_limit = 4096
         with self.assertRaisesRegex(PermanentError, "num_ctx"):
             provider.chat([{"role": "user", "content": "x" * 40_000}], max_tokens=512)
+
+    def test_chinese_prompt_is_not_undercounted_as_ascii(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://127.0.0.1:11434/v1", "k", "m", streaming=False,
+        )
+        provider.local_context_limit = 8192
+        # 12k Chinese characters are ~12k tokens, not the 3k a /4 estimate says.
+        with self.assertRaisesRegex(PermanentError, "num_ctx"):
+            provider.chat([{"role": "user", "content": "背" * 12_000}], max_tokens=512)
+
+    def test_large_output_budget_is_clamped_to_fit_window(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://127.0.0.1:11434/v1", "k", "m", streaming=False,
+        )
+        provider.local_context_limit = 4096
+        captured: dict[str, Any] = {}
+
+        def fake_urlopen(request, timeout=90.0):
+            captured.update(json.loads(request.data.decode("utf-8")))
+            body = {
+                "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 1, "total_tokens": 9},
+            }
+            return BytesIO(json.dumps(body).encode("utf-8"))
+
+        with patch("scidev_core.urlopen", side_effect=fake_urlopen):
+            message = provider.chat([{"role": "user", "content": "hi"}], max_tokens=12000)
+        self.assertEqual(message["content"], "ok")
+        self.assertEqual(provider.last_output_token_clamp, (12000, int(4096 * 0.95) - 65))
+        self.assertEqual(captured["max_tokens"], provider.last_output_token_clamp[1])
 
 
 class ObservabilityTests(unittest.TestCase):

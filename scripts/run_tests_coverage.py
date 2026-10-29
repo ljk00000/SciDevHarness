@@ -25,6 +25,26 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _isolate_child_environment() -> None:
+    """Keep every child's temp files and Git discovery out of the checkout.
+
+    Some Python installs cannot write the system temp directory and
+    ``tempfile`` then falls back to the current directory, which is this Git
+    work tree. Without a ceiling, ``GitManager.init`` would refuse every test
+    fixture as "inside a larger repository".
+    """
+    import tempfile
+
+    fallback = ROOT / ".tmp-tests"
+    fallback.mkdir(parents=True, exist_ok=True)
+    current = Path(tempfile.gettempdir()).resolve()
+    if current == ROOT.resolve() or not os.access(current, os.W_OK):
+        for name in ("TEMP", "TMP", "TMPDIR"):
+            os.environ[name] = str(fallback)
+        tempfile.tempdir = str(fallback)
+    os.environ.setdefault("GIT_CEILING_DIRECTORIES", str(ROOT))
+
+
 def _write_result(path: Path, *, complete: bool, result, last_test: str) -> None:
     import unittest
 
@@ -58,6 +78,8 @@ def _run_child(target: str, result_path: Path) -> None:
     import unittest
 
     import coverage
+
+    _isolate_child_environment()
 
     class RecordingResult(unittest.TextTestResult):
         """Persist progress after every test so a native crash is diagnosable."""
