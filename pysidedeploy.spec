@@ -68,7 +68,7 @@ macos.permissions =
 mode = standalone
 
 # specify any extra nuitka arguments
-extra_args = --quiet --noinclude-qt-translations --windows-console-mode=disable
+extra_args = --quiet --noinclude-qt-translations --windows-console-mode=disable --include-data-dir=ui/icons=ui/icons
 
 [buildozer]
 

@@ -11,6 +11,13 @@ from pathlib import Path
 
 class ReleaseStagingTests(unittest.TestCase):
     def _stage_project(self, project_root: Path, stage: Path) -> None:
+        project_resolved = project_root.resolve()
+        stage_resolved = Path(stage).resolve()
+        if stage_resolved == project_resolved or stage_resolved.is_relative_to(project_resolved):
+            self.skipTest(
+                "release staging requires a destination outside the source checkout; "
+                "this sandbox forces the temporary directory inside it"
+            )
         powershell = shutil.which("powershell")
         self.assertIsNotNone(powershell, "Windows PowerShell is required to validate release staging")
         result = subprocess.run(
@@ -39,6 +46,8 @@ class ReleaseStagingTests(unittest.TestCase):
             "checkpoints/run.pt",
             "datasets/train.parquet",
             "artifacts/embedding.npy",
+            ".research/memory.sqlite3",
+            ".research/memory.sqlite3-wal",
             "output.bin",
         )
         for relative_path in ignored_paths:
@@ -77,13 +86,31 @@ class ReleaseStagingTests(unittest.TestCase):
             "scripts/smoke_local_ollama.py",
             "scidev_client.py",
             "scidev_core.py",
+            "scidev_process.py",
+            "scidev_acceptance.py",
+            "scidev_usage.py",
+            "scidev_context.py",
+            "scidev_environment.py",
+            "scidev_patching.py",
+            "scidev_memory.py",
+            "scidev_multi_agent.py",
+            "scidev_planning.py",
+            "scidev_verification.py",
+            "scidev_browser.py",
             "scidev_icons.py",
             "scidev_ui.py",
+            "scidev_preferences.py",
+            "scidev_settings.py",
+            "scidev_highlighting.py",
             "scidev_visual.py",
             "scripts/bootstrap.py",
             "start_client.bat",
             "start_qwen_local.bat",
             "ui/qml/DevelopmentTree.qml",
+            "ui/icons/chevron-down.svg",
+            "ui/icons/chevron-up.svg",
+            "examples/tetris/README.txt",
+            "examples/tetris/index.html",
         }
 
         with tempfile.TemporaryDirectory(prefix="scidev-release-test-") as temporary:
@@ -99,6 +126,50 @@ class ReleaseStagingTests(unittest.TestCase):
             self.assertFalse((stage / ".venv").exists())
             self.assertFalse((stage / ".research").exists())
             self.assertFalse((stage / ".git").exists())
+
+    def test_tetris_sample_is_a_self_contained_offline_web_page(self) -> None:
+        sample = Path(__file__).resolve().parents[1] / "examples" / "tetris"
+        html = (sample / "index.html").read_text(encoding="utf-8")
+        instructions = (sample / "README.txt").read_text(encoding="utf-8")
+        self.assertIn("<!doctype html>", html.lower())
+        self.assertIn('<canvas id="board"', html)
+        self.assertIn("requestAnimationFrame(frame)", html)
+        self.assertNotIn("<script src=", html.lower())
+        self.assertNotIn("<link rel=\"stylesheet\"", html.lower())
+        self.assertNotIn("https://", html.lower())
+        self.assertIn("双击 index.html", instructions)
+
+    def test_default_sample_packaging_copies_editable_project_next_to_app(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        self.assertIsNotNone(powershell, "PowerShell is required to validate default sample packaging")
+        source = project_root / "examples" / "tetris"
+        expected_files = {"README.txt", "index.html"}
+
+        with tempfile.TemporaryDirectory(prefix="scidev-default-sample-package-") as temporary:
+            application_directory = Path(temporary) / "application"
+            application_directory.mkdir()
+            result = subprocess.run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(project_root / "scripts" / "copy_default_sample.ps1"),
+                    "-ApplicationDirectory",
+                    str(application_directory),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            copied = application_directory / "examples" / "tetris"
+            self.assertEqual({path.name for path in copied.iterdir() if path.is_file()}, expected_files)
+            for file_name in expected_files:
+                self.assertEqual((copied / file_name).read_bytes(), (source / file_name).read_bytes())
 
     def test_staged_source_launches_client_and_loads_qml(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

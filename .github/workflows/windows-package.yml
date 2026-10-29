@@ -57,11 +57,11 @@ jobs:
           if ($qmlFiles.Count -lt 1) {
             throw "The standalone package is missing DevelopmentTree.qml."
           }
-          $smokeWorkspace = Join-Path $env:RUNNER_TEMP "scidev-package-smoke-workspace"
-          New-Item -ItemType Directory -Path $smokeWorkspace -Force | Out-Null
+          $applicationDirectory = Split-Path -Parent $executables[0].FullName
+          & "$env:GITHUB_WORKSPACE\scripts\copy_default_sample.ps1" -ApplicationDirectory $applicationDirectory
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:QT_QUICK_BACKEND = "software"
-          & $executables[0].FullName --smoke-test --workspace $smokeWorkspace
+          & $executables[0].FullName --smoke-test
           if ($LASTEXITCODE -ne 0) {
             throw "Packaged executable failed its Qt/QML startup smoke test (exit $LASTEXITCODE)."
           }

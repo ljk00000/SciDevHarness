@@ -164,7 +164,10 @@ class BrowserAgentTests(unittest.TestCase):
     def test_screenshot_rejects_symlinked_state_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as outside:
             root = Path(temporary)
-            (root / ".research").symlink_to(outside, target_is_directory=True)
+            try:
+                (root / ".research").symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"symlink creation is unavailable here: {exc}")
             browser = BrowserAgent(
                 root,
                 EventLedger.__new__(EventLedger),

@@ -10,6 +10,7 @@ Item {
     property string selectedId: ""
     property string hoverNodeId: ""
     property string visualTheme: "studio"
+    property string uiFontFamily: "Noto Sans SC"
     property bool lightMode: visualTheme === "paper"
     property bool focusMode: visualTheme === "focus"
     property real panX: 0
@@ -19,10 +20,10 @@ Item {
     readonly property real renderScale: zoom * uiScale
     property real pulse: 0.0
     property int layoutVersion: 0
-    property real cardHeight: 68
+    property real cardHeight: 90
     property real cardWidth: width < 620
-                            ? Math.min(270, Math.max(132, (width - 44) / 2))
-                            : Math.min(270, Math.max(180, width * 0.31))
+                            ? Math.min(300, Math.max(150, (width - 44) / 2))
+                            : Math.min(300, Math.max(190, width * 0.31))
     property real trunkX: width / 2
     property bool compactHeader: width < 520 || height < 360
 
@@ -95,9 +96,9 @@ Item {
     function mainYFor(nodeId) {
         var main = mainNodes()
         var targetIndex = mainIndexFor(nodeId)
-        var y = root.compactHeader ? 48 : 88
-        var mainRowHeight = root.compactHeader ? 80 : 122
-        var attemptSlotHeight = 90
+        var y = root.compactHeader ? 56 : 104
+        var mainRowHeight = root.compactHeader ? 104 : 140
+        var attemptSlotHeight = 100
         for (var index = 0; index < targetIndex; index++) {
             y += mainRowHeight + Math.max(0, attemptsForParent(String(main[index].id)) - 1) * attemptSlotHeight
         }
@@ -118,8 +119,8 @@ Item {
         var main = mainNodes()
         var parentId = String(node.parent_id || (main.length ? main[main.length - 1].id : "root"))
         var parentY = mainYFor(parentId)
-        var attemptOffset = root.compactHeader ? 40 : 54
-        var attemptSlotHeight = 90
+        var attemptOffset = root.compactHeader ? 52 : 62
+        var attemptSlotHeight = 100
         return Math.max(90, parentY + attemptOffset + attemptSlotFor(node) * attemptSlotHeight + offsetFor(node.id, "y"))
     }
 
@@ -128,7 +129,7 @@ Item {
         if (node.lane === "main") {
             return Math.max(12, dotX - root.cardWidth - 58)
         }
-        return Math.min(root.width - root.cardWidth - 12, dotX + 24)
+        return Math.min(root.width - root.cardWidth - 12, trunkX + 102) + offsetFor(node.id, "x")
     }
 
     function cardYFor(node) {
@@ -137,16 +138,16 @@ Item {
 
     function accentFor(node) {
         if (node.lane === "main") {
-            return "#55e3c1"
+            return root.lightMode ? "#13836b" : "#55e3c1"
         }
         if (node.status === "failed") {
-            return "#ff8978"
+            return root.lightMode ? "#b7473c" : "#ff8978"
         }
         if (node.status === "retry") {
-            return "#f2ca78"
+            return root.lightMode ? "#91600c" : "#f2ca78"
         }
         if (node.status === "active") {
-            return "#70b8ff"
+            return root.lightMode ? "#266dc0" : "#70b8ff"
         }
         return "#a7b1b8"
     }
@@ -229,9 +230,9 @@ Item {
         var accent = accentFor(node)
 
         ctx.save()
-        ctx.translate(5, 7)
-        ctx.strokeStyle = Qt.rgba(0, 0, 0, 0.52)
-        ctx.lineWidth = 10
+        ctx.translate(3, 4)
+        ctx.strokeStyle = Qt.rgba(0, 0, 0, root.lightMode ? 0.08 : 0.18)
+        ctx.lineWidth = 7
         ctx.lineCap = "round"
         ctx.beginPath()
         ctx.moveTo(parent.x, parent.y)
@@ -246,8 +247,8 @@ Item {
         ctx.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, current.x, current.y)
         ctx.stroke()
         ctx.strokeStyle = accent
-        ctx.globalAlpha = String(node.id) === root.hoverNodeId ? 0.78 : 0.48
-        ctx.lineWidth = 2.3
+        ctx.globalAlpha = String(node.id) === root.hoverNodeId ? 0.92 : 0.72
+        ctx.lineWidth = 2.6
         ctx.beginPath()
         ctx.moveTo(parent.x, parent.y)
         ctx.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, current.x, current.y)
@@ -276,14 +277,14 @@ Item {
             halo.addColorStop(0.52, accent)
             halo.addColorStop(1, Qt.rgba(1, 1, 1, 0))
             ctx.fillStyle = halo
-            ctx.globalAlpha = selected ? 0.52 : 0.34
+        ctx.globalAlpha = selected ? 0.38 : 0.26
             ctx.beginPath()
             ctx.arc(point.x, point.y, radius, 0, Math.PI * 2)
             ctx.fill()
             ctx.globalAlpha = 1.0
         }
 
-        ctx.fillStyle = Qt.rgba(0, 0, 0, 0.55)
+        ctx.fillStyle = Qt.rgba(0, 0, 0, 0.34)
         ctx.beginPath()
         ctx.arc(point.x + 4, point.y + 6, 12, 0, Math.PI * 2)
         ctx.fill()
@@ -338,8 +339,8 @@ Item {
             for (var gridX = -width; gridX <= width * 2; gridX += 36) {
                 var endX = vanishingX + (gridX - vanishingX) * 0.42
                 ctx.strokeStyle = root.lightMode
-                        ? Qt.rgba(0.27, 0.39, 0.53, 0.09)
-                        : Qt.rgba(0.55, 0.70, 0.74, 0.06)
+                        ? Qt.rgba(0.27, 0.39, 0.53, 0.022)
+                        : Qt.rgba(0.55, 0.70, 0.74, 0.015)
                 ctx.lineWidth = 1
                 ctx.beginPath()
                 ctx.moveTo(gridX, horizon)
@@ -350,8 +351,8 @@ Item {
                 var ratio = Math.pow(gridIndex / 12.0, 1.7)
                 var gridY = horizon + (height - horizon) * ratio
                 ctx.strokeStyle = root.lightMode
-                        ? Qt.rgba(0.27, 0.39, 0.53, 0.035 + gridIndex * 0.004)
-                        : Qt.rgba(0.55, 0.70, 0.74, 0.035 + gridIndex * 0.003)
+                        ? Qt.rgba(0.27, 0.39, 0.53, 0.010 + gridIndex * 0.001)
+                        : Qt.rgba(0.55, 0.70, 0.74, 0.007 + gridIndex * 0.001)
                 ctx.beginPath()
                 ctx.moveTo(0, gridY)
                 ctx.lineTo(width, gridY)
@@ -369,7 +370,7 @@ Item {
             var main = root.mainNodes()
             if (!main.length) {
                 ctx.fillStyle = root.lightMode ? "#718096" : "#9da5aa"
-                ctx.font = (14 * root.uiScale) + "px Segoe UI"
+                ctx.font = (14 * root.uiScale) + "px \"" + root.uiFontFamily + "\""
                 ctx.fillText("还没有开发记录", width / 2 - 48, height / 2)
                 return
             }
@@ -382,12 +383,12 @@ Item {
             var trunk = {"x": root.trunkX, "y": firstY}
             var trunkEnd = {"x": root.trunkX, "y": lastY}
 
-            ctx.strokeStyle = Qt.rgba(0, 0, 0, 0.56)
+            ctx.strokeStyle = Qt.rgba(0, 0, 0, root.lightMode ? 0.10 : 0.20)
             ctx.lineWidth = 13
             ctx.lineCap = "round"
             ctx.beginPath()
-            ctx.moveTo(trunk.x + 5, trunk.y + 8)
-            ctx.lineTo(trunkEnd.x + 5, trunkEnd.y + 8)
+            ctx.moveTo(trunk.x + 3, trunk.y + 5)
+            ctx.lineTo(trunkEnd.x + 3, trunkEnd.y + 5)
             ctx.stroke()
             ctx.strokeStyle = root.lightMode ? "#d6e0e8" : (root.focusMode ? "#171523" : "#0b1115")
             ctx.lineWidth = 11
@@ -514,7 +515,7 @@ Item {
             property real logicalCardX: root.layoutVersion >= 0
                                        ? (card.isMain
                                           ? Math.max(12, root.trunkX - root.cardWidth - 58)
-                                          : Math.min(root.width - root.cardWidth - 12, root.trunkX + 78 + root.offsetFor(card.nodeId, "x") + 24))
+                                          : Math.min(root.width - root.cardWidth - 12, root.trunkX + 102) + root.offsetFor(card.nodeId, "x"))
                                        : 0
             property real logicalCardY: root.layoutVersion >= 0 ? root.cardYFor(node) : 0
             x: root.panX + logicalCardX * root.renderScale
@@ -528,22 +529,22 @@ Item {
             Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
             Rectangle {
-                x: 7 * root.renderScale
-                y: 9 * root.renderScale
+                x: 4 * root.renderScale
+                y: 6 * root.renderScale
                 width: parent.width
                 height: parent.height
                 radius: 9 * root.renderScale
                 color: root.lightMode ? "#566579" : "#020507"
-                opacity: root.lightMode ? 0.13 : 0.64
+                opacity: root.lightMode ? 0.07 : 0.22
             }
             Rectangle {
-                x: 5 * root.renderScale
-                y: 7 * root.renderScale
+                x: 3 * root.renderScale
+                y: 4 * root.renderScale
                 width: parent.width
                 height: parent.height
                 radius: 9 * root.renderScale
                 color: card.accent
-                opacity: 0.18
+                opacity: card.nodeId === root.selectedId ? 0.16 : 0.05
             }
             Rectangle {
                 anchors.fill: parent
@@ -597,7 +598,7 @@ Item {
                 x: parent.width - width - 10 * root.renderScale
                 y: 8 * root.renderScale
                 width: Math.max(34 * root.renderScale, badgeText.implicitWidth + 14 * root.renderScale)
-                height: 18 * root.renderScale
+                height: 20 * root.renderScale
                 radius: 9 * root.renderScale
                 color: Qt.rgba(card.accent.r, card.accent.g, card.accent.b, card.nodeId === root.selectedId ? 0.24 : 0.14)
                 border.width: root.renderScale
@@ -608,44 +609,44 @@ Item {
                     anchors.centerIn: parent
                     text: root.badgeFor(card.node)
                     color: card.accent
-                    font.family: "Segoe UI"
-                    font.pixelSize: Math.max(10 * root.uiScale, 10.5 * root.renderScale)
+                    font.family: root.uiFontFamily
+                    font.pixelSize: Math.max(12 * root.uiScale, 12 * root.renderScale)
                 }
             }
             Text {
                 x: 13 * root.renderScale
-                y: 7 * root.renderScale
+                y: 8 * root.renderScale
                 width: Math.max(40 * root.renderScale, badge.x - 20 * root.renderScale)
-                height: 19 * root.renderScale
+                height: 22 * root.renderScale
                 text: String(card.node.title || "")
                 color: root.lightMode ? "#25364a" : (root.focusMode ? "#f1edff" : "#f0f5fa")
-                font.family: "Segoe UI"
+                font.family: root.uiFontFamily
                 font.bold: true
-                font.pixelSize: Math.max(11 * root.uiScale, 12 * root.renderScale)
+                font.pixelSize: Math.max(13 * root.uiScale, 15 * root.renderScale)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
             Text {
                 x: 13 * root.renderScale
-                y: 31 * root.renderScale
+                y: 35 * root.renderScale
                 width: Math.max(40 * root.renderScale, parent.width - 28 * root.renderScale)
-                height: Math.max(10 * root.uiScale, 16 * root.renderScale)
+                height: Math.max(12 * root.uiScale, 18 * root.renderScale)
                 text: root.statusFor(card.node)
                 color: card.accent
-                font.family: "Segoe UI"
-                font.pixelSize: Math.max(10 * root.uiScale, 10.5 * root.renderScale)
+                font.family: root.uiFontFamily
+                font.pixelSize: Math.max(12 * root.uiScale, 13 * root.renderScale)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
             Text {
                 x: 13 * root.renderScale
-                y: 49 * root.renderScale
+                y: 59 * root.renderScale
                 width: Math.max(40 * root.renderScale, parent.width - 28 * root.renderScale)
-                height: Math.max(10 * root.uiScale, 14 * root.renderScale)
+                height: Math.max(12 * root.uiScale, 16 * root.renderScale)
                 text: String(card.node.meta || "")
                 color: root.lightMode ? "#65758a" : "#b0bdc9"
-                font.family: "Segoe UI"
-                font.pixelSize: Math.max(10 * root.uiScale, 10 * root.renderScale)
+                font.family: root.uiFontFamily
+                font.pixelSize: Math.max(12 * root.uiScale, 12 * root.renderScale)
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
@@ -709,7 +710,7 @@ Item {
         y: 10 * root.uiScale
         text: "开发尝试树"
         color: root.lightMode ? "#31596a" : (root.focusMode ? "#e7ddff" : "#e2f3ef")
-        font.family: "Segoe UI"
+        font.family: root.uiFontFamily
         font.bold: true
         font.pixelSize: 15 * root.uiScale
     }
@@ -722,7 +723,7 @@ Item {
               ? Math.round(root.zoom * 100) + "% · Ctrl+滚轮"
               : Math.round(root.zoom * 100) + "%  ·  Ctrl+滚轮缩放 · 拖动分支 / 平移画布"
         color: root.lightMode ? "#65758a" : "#a2afbd"
-        font.family: "Segoe UI"
+        font.family: root.uiFontFamily
         font.pixelSize: (root.compactHeader ? 11 : 13) * root.uiScale
     }
     Text {
@@ -733,7 +734,7 @@ Item {
         width: Math.max(100 * root.uiScale, parent.width - 36 * root.uiScale)
         text: "主干 = 当前编码主线  ·  分支 = 已取消、失败或等待中的尝试方向"
         color: root.lightMode ? "#65758a" : "#a2afbd"
-        font.family: "Segoe UI"
+        font.family: root.uiFontFamily
         font.pixelSize: 12 * root.uiScale
         elide: Text.ElideRight
     }

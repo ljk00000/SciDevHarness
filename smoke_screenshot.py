@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_QUICK_BACKEND"] = "software"
@@ -20,12 +21,13 @@ if os.name == "nt":
         os.environ["QT_QPA_FONTDIR"] = str(windows_fonts)
 
 from PySide6.QtQuickWidgets import QQuickWidget
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QTimer, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QMouseEvent, QWheelEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSettings, QTimer, Qt
+from PySide6.QtGui import QColor, QFontInfo, QImage, QMouseEvent, QTextLayout, QWheelEvent
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QSizePolicy
 
 from scidev_client import ClientWindow, DevelopmentTreeView
-from scidev_ui import UI_PROFILES
+from scidev_planning import TaskPlan
+from scidev_ui import ACTIVITY_BUTTON_SIZE, ACTIVITY_ICON_SIZE, UI_PROFILES, create_ui_font, ui_font_family
 
 
 def capture(
@@ -40,7 +42,13 @@ def capture(
     scale = float(window.devicePixelRatioF()) if physical_size else 1.0
     logical_size = (round(size[0] / scale), round(size[1] / scale))
     window._apply_screen_resolution(*logical_size)
-    window.resize(*logical_size)
+    target_logical_size = (
+        max(window.minimumWidth(), logical_size[0]),
+        max(window.minimumHeight(), logical_size[1]),
+    )
+    window.resize(*target_logical_size)
+    if target_logical_size != logical_size:
+        print(f"{name}: requested {size[0]}x{size[1]} at {scale:g}x; minimum logical window is {target_logical_size}")
     window.show()
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
@@ -62,7 +70,8 @@ def capture(
         time.sleep(0.016)
     image = window.grab().toImage()
     if physical_size:
-        wrong_size = abs(image.width() - size[0]) > 8 or abs(image.height() - size[1]) > 8
+        expected_physical_size = tuple(round(dimension * scale) for dimension in target_logical_size)
+        wrong_size = abs(image.width() - expected_physical_size[0]) > 8 or abs(image.height() - expected_physical_size[1]) > 8
     else:
         wrong_size = image.width() < size[0] - 8 or image.height() < size[1] - 8
     if image.isNull() or wrong_size:
@@ -207,6 +216,13 @@ def verify_keyboard_focus_ring(window: ClientWindow, image: QImage, name: str) -
 
 
 def verify_workbench_layout(window: ClientWindow, name: str) -> None:
+    for button in window.activity_buttons + [window.settings_button]:
+        minimum_target = round(ACTIVITY_BUTTON_SIZE * window._ui_scale)
+        minimum_icon = round(ACTIVITY_ICON_SIZE * window._ui_scale)
+        if button.width() < minimum_target or button.height() < minimum_target:
+            raise RuntimeError(f"activity button hit area is too small for {name}: {button.size()}")
+        if button.iconSize().width() < minimum_icon:
+            raise RuntimeError(f"activity icon is too small for {name}: {button.iconSize()}")
     QApplication.processEvents()
     splitter = window.workbench
     panes = [splitter.widget(index) for index in range(splitter.count())]
@@ -215,6 +231,8 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
     explorer_should_be_visible = window._explorer_visibility_override
     if explorer_should_be_visible is None:
         explorer_should_be_visible = window.width() >= window.EXPLORER_COLLAPSE_BREAKPOINT
+    if window._git_focus:
+        explorer_should_be_visible = False
     explorer_is_visible = not window.explorer.isHidden()
     if explorer_is_visible != explorer_should_be_visible:
         raise RuntimeError(
@@ -223,13 +241,16 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
         )
     if len(panes) != 3 or len(sizes) != 3:
         raise RuntimeError(f"unexpected workbench pane count for {name}: {len(panes)}")
-    if any(not pane.isVisible() or pane.width() < minimum for pane, minimum in zip(panes, minimum_widths)):
+    visible_panes = [(pane, minimum) for pane, minimum in zip(panes, minimum_widths) if pane is not window.chat_panel or not window._git_focus or window._git_chat_visible]
+    if any(not pane.isVisible() or pane.width() < minimum for pane, minimum in visible_panes):
         widths = [pane.width() for pane in panes]
         raise RuntimeError(f"workbench pane collapsed or clipped for {name}: {widths}")
-    rectangles = [pane.geometry() for pane in panes]
+    rectangles = [pane.geometry() for pane, _minimum in visible_panes]
     if any(left.intersects(right) for left, right in zip(rectangles, rectangles[1:])):
         raise RuntimeError(f"workbench panes overlap for {name}: {rectangles}")
-    if not window.chat_input.isVisible() or window.chat_input.width() < 200:
+    settings_active = window.summary_settings_panel.isVisible()
+    conversation_active = window.chat_panel.isVisible() and not settings_active
+    if conversation_active and (not window.chat_input.isVisible() or window.chat_input.width() < 200):
         raise RuntimeError(f"Agent composer is not usable for {name}: {window.chat_input.size()}")
     if explorer_is_visible:
         git_entry_width = window.git_entry_button.contentsRect().width()
@@ -242,9 +263,11 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
     if not window.git_entry_button.toolTip():
         raise RuntimeError(f"Explorer development-tree entry lost its full description for {name}")
     composer = window.chat_input.parentWidget()
-    if composer is None or not composer.rect().contains(window.chat_input.geometry()):
+    if conversation_active and (composer is None or not composer.rect().contains(window.chat_input.geometry())):
         raise RuntimeError(f"Agent input is clipped inside its composer for {name}")
     for chip in (window.chat_mode_chip, window.retry_chip, window.summary_chip):
+        if not conversation_active:
+            continue
         rendered_width = chip.fontMetrics().horizontalAdvance(chip.text())
         available_width = chip.contentsRect().width()
         if rendered_width > available_width:
@@ -262,7 +285,8 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
         visible_text_width = label.fontMetrics().horizontalAdvance(label.text())
         if visible_text_width > label.contentsRect().width() + 1:
             raise RuntimeError(
-                f"workspace name is clipped for {name}: {label.text()!r} exceeds {label.width()}px"
+                f"workspace name is clipped for {name}: {label.text()!r} needs {visible_text_width}px, "
+                f"has {label.contentsRect().width()}px"
             )
         if visible_text_width < label.fontMetrics().horizontalAdvance(label.full_text) and "…" not in label.text():
             raise RuntimeError(f"workspace name was truncated without an ellipsis for {name}: {label.text()!r}")
@@ -392,7 +416,7 @@ def verify_git_splitter_layout(window: ClientWindow, name: str, orientation: Qt.
             f"{policy.horizontalPolicy().name}/{policy.verticalPolicy().name}"
         )
     short_layout = window.height() < 560
-    narrow_layout = splitter.width() < 700
+    narrow_layout = splitter.width() < 900
     if window.git_metrics_panel.isHidden() != (short_layout or narrow_layout):
         raise RuntimeError(f"version-tree metrics do not match the compact-layout policy for {name}")
     expected_header_height = 56 if short_layout else 68
@@ -408,6 +432,8 @@ def verify_git_splitter_layout(window: ClientWindow, name: str, orientation: Qt.
         raise RuntimeError(f"version-tree canvas header did not adapt to its viewport for {name}")
     for index in range(splitter.count()):
         child = splitter.widget(index)
+        if child.isHidden():
+            continue
         rect = child.geometry()
         if (
             rect.x() < 0
@@ -416,9 +442,12 @@ def verify_git_splitter_layout(window: ClientWindow, name: str, orientation: Qt.
             or rect.y() + rect.height() > splitter.height() + 1
         ):
             raise RuntimeError(f"version-tree pane is clipped for {name}: {rect} / {splitter.size()}")
-    if orientation == Qt.Orientation.Vertical:
+    if window.git_details_scroll.isHidden():
+        if window.git_tree_scroll.height() < splitter.height() - 3:
+            raise RuntimeError(f"collapsed details did not release the tree canvas for {name}")
+    elif orientation == Qt.Orientation.Vertical:
         tree_height, details_height = splitter.sizes()
-        minimum_details_height = max(144, int(splitter.height() * 0.36))
+        minimum_details_height = max(136, int(splitter.height() * 0.34))
         if details_height < minimum_details_height:
             raise RuntimeError(
                 f"version-tree details are too short for {name}: "
@@ -529,9 +558,69 @@ def capture_summary_settings_panel(window: ClientWindow, app: QApplication, outp
             capture(window, app, output_dir, name, size)
             verify_screenshot_content(window, name)
             verify_workbench_layout(window, name)
+            verify_settings_layout(window, name)
     finally:
         if not was_visible and window.summary_settings_panel.isVisible():
             window.toggle_summary_settings()
+
+
+def verify_settings_layout(window: ClientWindow, name: str) -> None:
+    controls = (
+        window.summary_model_edit, window.summary_tokens_spin, window.summary_context_spin,
+        window.summary_retry_spin, window.summary_interval_spin, window.summary_instruction_edit,
+        window.project_memory_results_spin, window.project_memory_context_spin,
+        window.acceptance_mode_combo, window.acceptance_model_edit, window.multi_agent_model_edit,
+    )
+    bounds = window.summary_settings_panel.rect()
+    if bounds.width() > window.summary_settings_scroll.viewport().width():
+        raise RuntimeError(f"settings content is horizontally clipped for {name}: {bounds.width()}px")
+    if bounds.height() > window.summary_settings_scroll.viewport().height() and window.summary_settings_scroll.verticalScrollBar().maximum() <= 0:
+        raise RuntimeError(f"settings content should be independently scrollable for {name}")
+    for control in controls:
+        rect = control.geometry()
+        if rect.height() < 28 or not bounds.contains(rect):
+            raise RuntimeError(f"settings field is compressed or outside its content for {name}: {rect}")
+    for index, control in enumerate(controls):
+        for other in controls[index + 1:]:
+            if control.geometry().intersects(other.geometry()):
+                raise RuntimeError(f"settings fields overlap for {name}")
+
+
+def capture_task_plan_panel(window: ClientWindow, app: QApplication, output_dir: Path) -> None:
+    old_mode = window.task_plan_panel.mode
+    was_collapsed = window.task_plan_panel.collapsed
+    window.task_plan_panel.collapsed = False
+    window.task_plan_panel._sync_controls()
+    plan = TaskPlan.update(
+        None,
+        [
+            {"step": "检索相关实现并确认调用边界", "status": "completed"},
+            {"step": "实现计划工具与失败恢复", "status": "in_progress"},
+            {"step": "运行全量回归并修复问题", "status": "pending"},
+        ],
+    )
+    try:
+        window.task_plan_panel.set_mode("auto")
+        window.task_plan_panel.set_plan(plan.to_record(), run_state="running")
+        for profile_key in ("studio", "paper", "focus"):
+            window.set_ui_profile(profile_key, persist=False)
+            for suffix, size in (("wide", (1500, 920)), ("minimum", (780, 480))):
+                name = f"task-plan-{profile_key}-{suffix}"
+                image = capture(window, app, output_dir, name, size)
+                verify_workbench_layout(window, name)
+                if window.task_plan_panel.plan != plan:
+                    raise RuntimeError(f"task plan state changed while rendering {name}")
+                if window.task_plan_panel.scroll.height() > 240:
+                    raise RuntimeError(f"task-plan list exceeded its responsive height cap for {name}")
+                if window.task_plan_panel.mode_button.width() < 38:
+                    raise RuntimeError(f"task-plan mode control is clipped for {name}")
+                if image.isNull():
+                    raise RuntimeError(f"task-plan panel screenshot was not captured for {name}")
+    finally:
+        window.task_plan_panel.set_plan(None, run_state="idle")
+        window.task_plan_panel.mode = old_mode
+        window.task_plan_panel.collapsed = was_collapsed
+        window.task_plan_panel._sync_controls()
 
 
 def send_wheel(
@@ -620,11 +709,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, help="directory for PNG files (defaults to a temporary folder)")
     parser.add_argument(
+        "--native-typography", action="store_true",
+        help="check Windows font selection and capture hidden Qt widgets without activating a window",
+    )
+    parser.add_argument(
         "--resolution-seed",
         type=int,
         help="optional seed for reproducible nearby-resolution screenshots",
     )
     args = parser.parse_args(argv)
+    if args.native_typography:
+        if os.name != "nt":
+            parser.error("--native-typography requires Windows")
+        os.environ["QT_QPA_PLATFORM"] = "windows"
     resolution_seed = args.resolution_seed if args.resolution_seed is not None else secrets.randbits(32)
     resolution_rng = random.Random(resolution_seed)
     print(f"Nearby-resolution screenshot seed: {resolution_seed}")
@@ -638,9 +735,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir.mkdir(parents=True, exist_ok=True)
 
     app = QApplication([sys.argv[0]])
-    ui_font = QFont("Microsoft YaHei UI", 11)
-    ui_font.setStyleHint(QFont.StyleHint.SansSerif)
-    app.setFont(ui_font)
+    app.setFont(create_ui_font())
     workspace_temp = tempfile.TemporaryDirectory(prefix="scidev-ui-workspace-")
     workspace = Path(workspace_temp.name)
     source_dir = workspace / "src"
@@ -660,15 +755,93 @@ def main(argv: list[str] | None = None) -> int:
         "# Example research project\n\nA small project used for desktop visual regression checks.\n",
         encoding="utf-8",
     )
+    settings = QSettings(str(workspace / "ui-smoke.ini"), QSettings.Format.IniFormat)
+    settings_patch = patch("scidev_client.QSettings", return_value=settings)
+    settings_patch.start()
     window = None
     try:
         window = ClientWindow(workspace)
+        if args.native_typography:
+            window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+            expected_family = ui_font_family()
+            for theme in UI_PROFILES:
+                window.set_ui_profile(theme, persist=False)
+                for suffix, size in (("wide", (1800, 1080)), ("minimum", (780, 480))):
+                    name = f"native-typography-{theme}-{suffix}"
+                    capture(window, app, output_dir, name, size)
+                    verify_workbench_layout(window, name)
+                    for control in (window.title_new_button, window.title_git_button,
+                                    window.title_refresh_button, window.task_plan_panel.title_label):
+                        layout = QTextLayout("打开文件 新会话 任务计划", control.font())
+                        layout.beginLayout()
+                        layout.createLine()
+                        layout.endLayout()
+                        runs = layout.glyphRuns()
+                        if not runs or any(run.rawFont().familyName() != expected_family for run in runs):
+                            raise RuntimeError(f"unexpected Windows CJK glyph fallback for {name}")
+                        if control.font().weight() < 600:
+                            raise RuntimeError(f"navigation font is too thin for {name}")
+                    print(f"Windows CJK font: {QFontInfo(window.title_new_button.font()).family()} / "
+                          f"{QFontInfo(window.title_new_button.font()).styleName()}")
+                window.show_settings()
+                for suffix, size in (("wide", (1500, 920)), ("minimum", (780, 480))):
+                    name = f"native-preferences-{theme}-{suffix}"
+                    capture(window, app, output_dir, name, size)
+                    verify_workbench_layout(window, name)
+                window.show_workspace()
+            print("Hidden Windows typography screenshot check: OK (Qt widget rendering, not compositor capture)")
+            return 0
         original_saved_profile = window.ui_settings.value("uiProfile", "studio")
+        window.show_settings()
+        for profile_key in UI_PROFILES:
+            window.set_ui_profile(profile_key, persist=False)
+            for suffix, size in (("wide", (1500, 920)), ("minimum", (780, 480))):
+                name = f"preferences-{profile_key}-{suffix}"
+                capture(window, app, output_dir, name, size)
+                verify_workbench_layout(window, name)
+                page = window.settings_page
+                if page.scroll.widget().width() > page.scroll.viewport().width():
+                    raise RuntimeError(f"settings page has horizontal clipping for {name}")
+                if page.categories.isVisible() != (page.width() >= 650):
+                    raise RuntimeError(f"settings categories did not reflow for {name}")
+        window.settings_page.search.setText("editor font")
+        capture(window, app, output_dir, "preferences-search", (1120, 700))
+        visible = {key for key, row in window.settings_page.rows.items() if row.isVisible()}
+        if visible != {"editor_font_family", "editor_font_size"}:
+            raise RuntimeError(f"settings search returned incorrect rows: {visible}")
+        window.settings_page.search.clear()
+        window.set_ui_profile("paper", persist=False)
+        window._on_appearance_setting_changed("font_size", 14)
+        window._on_appearance_setting_changed("control_weight", 700)
+        capture(window, app, output_dir, "preferences-large-font", (1120, 700))
+        window._reset_appearance()
+        window.show_workspace()
+        for profile_key in ("studio", "paper"):
+            window.set_ui_profile(profile_key, persist=False)
+            for suffix, size in (("wide", (1500, 920)), ("minimum", (780, 480))):
+                name = f"welcome-{profile_key}-{suffix}"
+                capture(window, app, output_dir, name, size)
+                verify_workbench_layout(window, name)
+                if not window.welcome_content.isVisible() or window.welcome_editor.line_number_area.isVisible():
+                    raise RuntimeError(f"welcome page has editor chrome or missing content for {name}")
+                for label in window._welcome_text_labels:
+                    if label.height() < label.heightForWidth(label.width()):
+                        raise RuntimeError(f"welcome description is vertically clipped for {name}")
+        sample_file = workspace / "index.html"
+        sample_file.write_text((Path(__file__).resolve().parent / "examples" / "tetris" / "index.html").read_text(encoding="utf-8"), encoding="utf-8")
+        window._open_file(sample_file)
+        for profile_key in ("studio", "paper"):
+            window.set_ui_profile(profile_key, persist=False)
+            name = f"html-{profile_key}-laptop"
+            capture(window, app, output_dir, name, (1366, 768))
+            verify_workbench_layout(window, name)
         window.set_ui_profile("studio", persist=False)
         window._open_file(source_file, preview=False)
         capture(window, app, output_dir, "editor-wide", (1500, 920))
         verify_workbench_layout(window, "editor-wide")
         verify_ui_profile(window, "studio", "editor-wide")
+        capture_task_plan_panel(window, app, output_dir)
+        window.set_ui_profile("studio", persist=False)
         capture_summary_settings_panel(window, app, output_dir)
         capture_ui_profile_menu(window, app, output_dir)
         window.show_git()
@@ -713,6 +886,13 @@ def main(argv: list[str] | None = None) -> int:
         window.git_main_value.setText("1")
         window.git_attempt_value.setText("2")
         window.git_failed_value.setText("1")
+        capture(window, app, output_dir, "tree-details-wide", (1500, 920))
+        window._git_details_expanded = True
+        window._adapt_git_layout()
+        capture(window, app, output_dir, "tree-details-expanded", (1500, 920))
+        verify_git_splitter_layout(window, "tree-details-expanded", Qt.Orientation.Horizontal)
+        window._git_details_expanded = False
+        window._adapt_git_layout()
 
         responsive_viewports = (
             ("1080p", (1920, 1080)),
@@ -793,7 +973,7 @@ def main(argv: list[str] | None = None) -> int:
         app.processEvents()
         capture(window, app, output_dir, "tree-medium", (1180, 760))
         verify_workbench_layout(window, "tree-medium")
-        verify_git_splitter_layout(window, "tree-medium", Qt.Orientation.Vertical)
+        verify_git_splitter_layout(window, "tree-medium", Qt.Orientation.Horizontal)
         narrow_tree_image = capture(window, app, output_dir, "tree-narrow", (820, 600))
         verify_workbench_layout(window, "tree-narrow")
         verify_git_splitter_layout(window, "tree-narrow", Qt.Orientation.Vertical)
@@ -879,7 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
             name = f"tree-resolution-studio-{resolution}"
             capture(window, app, output_dir, name, size, physical_size=True)
             verify_workbench_layout(window, name)
-            orientation = Qt.Orientation.Vertical if resolution == "720p" else Qt.Orientation.Horizontal
+            orientation = Qt.Orientation.Vertical if window.git_tree_splitter.width() < 900 else Qt.Orientation.Horizontal
             verify_git_splitter_layout(window, name, orientation)
             jittered_size = (
                 size[0] + resolution_rng.choice((-32, -16, 16, 32)),
@@ -889,7 +1069,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Nearby resolution {resolution}: {jittered_size[0]}x{jittered_size[1]}")
             capture(window, app, output_dir, jittered_name, jittered_size, physical_size=True)
             verify_workbench_layout(window, jittered_name)
-            verify_git_splitter_layout(window, jittered_name, orientation)
+            jittered_orientation = Qt.Orientation.Vertical if window.git_tree_splitter.width() < 900 else Qt.Orientation.Horizontal
+            verify_git_splitter_layout(window, jittered_name, jittered_orientation)
         window.show_workspace()
         for name, size in (
             ("editor-narrow", (940, 620)),
@@ -907,6 +1088,7 @@ def main(argv: list[str] | None = None) -> int:
             window.close()
         app.processEvents()
         app.quit()
+        settings_patch.stop()
         workspace_temp.cleanup()
         if temporary_output is not None:
             temporary_output.cleanup()

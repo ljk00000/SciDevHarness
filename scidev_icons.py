@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import math
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
@@ -35,19 +36,37 @@ def _icon_paths(name: str) -> tuple[QPainterPath, ...]:
         branch.cubicTo(7, 14, 17, 9, 17, 15)
         return (trunk, branch)
 
+    if name == "settings":
+        gear = QPainterPath()
+        for index in range(32):
+            radius = 9.0 if index % 4 in (1, 2) else 7.2
+            angle = index * math.tau / 32
+            x, y = 12 + radius * math.cos(angle), 12 + radius * math.sin(angle)
+            if index:
+                gear.lineTo(x, y)
+            else:
+                gear.moveTo(x, y)
+        gear.closeSubpath()
+        center = QPainterPath()
+        center.addEllipse(QRectF(9, 9, 6, 6))
+        return (gear, center)
+
     raise ValueError(f"unknown activity icon: {name}")
 
 
 @lru_cache(maxsize=32)
 def _render_icon(name: str, color_name: str) -> QPixmap:
-    pixmap = QPixmap(48, 48)
+    # Enough source pixels for the larger rail and high-DPI screens. QIcon
+    # otherwise caps the old 24px logical raster instead of enlarging it.
+    pixmap = QPixmap(96, 96)
     pixmap.setDevicePixelRatio(2.0)
     pixmap.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-    pen = QPen(QColor(color_name), 1.75, Qt.PenStyle.SolidLine)
+    painter.scale(2.0, 2.0)
+    pen = QPen(QColor(color_name), 2.0, Qt.PenStyle.SolidLine)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)

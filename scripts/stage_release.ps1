@@ -19,8 +19,22 @@ New-Item -ItemType Directory -Path $stageRoot | Out-Null
 $releaseFiles = @(
     "scidev_client.py",
     "scidev_core.py",
+    "scidev_process.py",
+    "scidev_acceptance.py",
+    "scidev_usage.py",
+    "scidev_context.py",
+    "scidev_environment.py",
+    "scidev_patching.py",
+    "scidev_memory.py",
+    "scidev_multi_agent.py",
+    "scidev_planning.py",
+    "scidev_verification.py",
+    "scidev_browser.py",
     "scidev_icons.py",
     "scidev_ui.py",
+    "scidev_preferences.py",
+    "scidev_settings.py",
+    "scidev_highlighting.py",
     "scidev_visual.py",
     "README.md",
     "LICENSE",
@@ -32,7 +46,9 @@ $releaseFiles = @(
     "start_qwen_local.bat",
     "scripts\bootstrap.py",
     "scripts\smoke_local_ollama.py",
-    "ui\qml\DevelopmentTree.qml"
+    "ui\qml\DevelopmentTree.qml",
+    "ui\icons\chevron-down.svg",
+    "ui\icons\chevron-up.svg"
 )
 
 foreach ($relativePath in $releaseFiles) {
@@ -44,6 +60,21 @@ foreach ($relativePath in $releaseFiles) {
     $destinationParent = Split-Path -Parent $destinationPath
     New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
     Copy-Item -LiteralPath $sourcePath -Destination $destinationPath
+}
+
+$sampleRelativePath = "examples\tetris"
+$sampleSource = Join-Path $repoRoot $sampleRelativePath
+$sampleDestination = Join-Path $stageRoot $sampleRelativePath
+$requiredSampleFiles = @("index.html", "README.txt")
+foreach ($fileName in $requiredSampleFiles) {
+    $sampleFile = Join-Path $sampleSource $fileName
+    if (-not (Test-Path -LiteralPath $sampleFile -PathType Leaf)) {
+        throw "Required Tetris sample input is missing: $sampleRelativePath\$fileName"
+    }
+}
+New-Item -ItemType Directory -Path $sampleDestination -Force | Out-Null
+foreach ($fileName in $requiredSampleFiles) {
+    Copy-Item -LiteralPath (Join-Path $sampleSource $fileName) -Destination $sampleDestination
 }
 
 Write-Output $stageRoot
