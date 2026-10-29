@@ -2261,6 +2261,17 @@ class ExplorerInlineEntryTests(unittest.TestCase):
                     "项目  /  src/renamed-analysis/renamed.py",
                 )
                 self.assertEqual(window.terminal_cwd.resolve(), renamed_directory.resolve())
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    if (
+                        window.terminal_cwd.resolve() == renamed_directory.resolve()
+                        and window._navigation_back
+                        and window._navigation_back[-1][0].resolve() == renamed_file.resolve()
+                    ):
+                        break
+                    self.app.processEvents()
+                    time.sleep(0.02)
+                self.assertEqual(window.terminal_cwd.resolve(), renamed_directory.resolve())
                 self.assertEqual(
                     window._navigation_back[-1][0].resolve(),
                     renamed_file.resolve(),

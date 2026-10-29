@@ -234,7 +234,7 @@ class PatchEngineTests(unittest.TestCase):
 
             def fail_update(source, destination):
                 nonlocal fail_once
-                if Path(destination) == updated and fail_once:
+                if Path(destination).resolve() == updated.resolve() and fail_once:
                     fail_once = False
                     raise OSError("simulated replacement failure")
                 return original_replace(source, destination)

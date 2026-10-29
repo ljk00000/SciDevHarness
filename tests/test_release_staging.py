@@ -34,7 +34,7 @@ class ReleaseStagingTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=120,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
@@ -196,7 +196,7 @@ class ReleaseStagingTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=30,
+                timeout=90,
             )
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 

@@ -302,8 +302,11 @@ class ProjectContextTests(unittest.TestCase):
             original_is_symlink = Path.is_symlink
 
             def guarded_is_symlink(path: Path) -> bool:
-                if path == config:
-                    return True
+                try:
+                    if Path(path).resolve() == config.resolve():
+                        return True
+                except OSError:
+                    pass
                 return original_is_symlink(path)
 
             with patch.object(Path, "is_symlink", guarded_is_symlink):
