@@ -7604,6 +7604,10 @@ class ClientWindow(QMainWindow):
         new_target = new_target.resolve()
 
         def rebase(path: Path) -> Path:
+            try:
+                path = path.resolve()
+            except OSError:
+                pass
             if path == old_target or old_target in path.parents:
                 return new_target / path.relative_to(old_target) if path != old_target else new_target
             return path
