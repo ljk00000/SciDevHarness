@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-10-29（Asia/Shanghai）· GitHub CI 失败邮件排查（已转绿）
+- 现象：每次 push 后收到 `[ljk00000/SciDevHarness] Run failed: Windows CI`，三个 Python 版本各 30 秒~7 分钟失败。
+- 根因链：① 提交版 `smoke_screenshot.py` 有未使用变量，ruff 失败（本地因未提交的工作区版本而通过）；② 测试依赖尚未提交的 UI/打包改动（`ACTIVITY_ICON_SIZE`、`stage_release.ps1` 新模块列表等），CI 检出即缺文件；③ 其余为 CI 特有差异：Windows 8.3 短路径导致路径比较失败、目录重命名后 `terminal_cwd` 未按规范化路径 rebase、staging 30 秒超时、截图脚本对设置页/自由拖拽的假设与产品不一致。
+- 处理：补齐必需的工作区改动；测试运行器记录失败测试名与部分结果、CI 失败时输出注解；路径比较统一 `resolve()`；重命名 rebase 先规范化；放宽/修正 CI 不稳定的测试与截图断言；staging 超时提高到 120 秒。
+- 结果：Windows CI #98 成功（7m26s），不再产生失败通知。若仍有邮件，属 GitHub 通知设置或 Dependabot 等其他工作流。
+
 ## 2026-10-29（Asia/Shanghai）· 本地 Qwen 第三轮（命令取消/并发/边界）
 - 停止不杀命令（已修复）：任务运行中停止/关窗时，`run_command` 的进程树原先继续跑（最长到超时），可能留下孤儿进程。现在 `request_cancel()` 会终止当前命令树，工具结果标记 `cancelled`。真实 Qwen 实测：取消后 0.12 s 命令终止、会话 `cancelled`。
 - 同项目并发任务混提交（已记录，未改）：两个窗口同时对同一项目提交任务时，后完成的任务把两个文件一起提交到自己的说明下（实测 `alpha.py` 与 `beta.py` 同在一个 "[codex] Create beta.py" 提交）。界面正常路径会复用同一窗口，属边缘场景；建议后续按项目串行化任务或限制单项目单任务。

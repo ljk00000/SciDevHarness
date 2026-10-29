@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-10-29（Asia/Shanghai）· CI 失败邮件（已完成）
+- Windows CI 已从“每次 push 必失败”修到 #98 成功；根因是 ruff 未使用变量、测试依赖未提交的 UI/打包改动、Windows 短路径/重命名/超时/截图断言差异。
+- 增强：测试运行器记录失败测试名与部分结果，CI 失败时输出注解；路径统一 `resolve()`，重命名 rebase 规范化，staging 超时 120 秒，截图断言与产品布局对齐。
+- 后续：若仍收到 GitHub 邮件，检查 Settings → Notifications → Actions 或 Dependabot 通知。
+
 ## 2026-10-29（Asia/Shanghai）· 本地 Qwen 第三轮（已完成）
 - 修复：停止/关窗时未终止正在运行的命令（进程树可能继续跑到超时）。新增 `CodingToolbox.cancel_running_command()`，取消即杀进程树并标记 `cancelled`；单测 + 真实 Qwen 验证（0.12 s 生效）。
 - 已记录未改：同项目两个窗口并发任务会混提交（后完成者提交两者）；无改动请求被弱模型“口头完成”时仍标记完成。前者建议串行化/限制单项目任务，后者需意图校验策略。
