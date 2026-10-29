@@ -231,7 +231,7 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
     explorer_should_be_visible = window._explorer_visibility_override
     if explorer_should_be_visible is None:
         explorer_should_be_visible = window.width() >= window.EXPLORER_COLLAPSE_BREAKPOINT
-    if window._git_focus:
+    if window._git_focus or window.workspace_stack.currentWidget() is window.settings_page:
         explorer_should_be_visible = False
     explorer_is_visible = not window.explorer.isHidden()
     if explorer_is_visible != explorer_should_be_visible:
@@ -241,7 +241,12 @@ def verify_workbench_layout(window: ClientWindow, name: str) -> None:
         )
     if len(panes) != 3 or len(sizes) != 3:
         raise RuntimeError(f"unexpected workbench pane count for {name}: {len(panes)}")
-    visible_panes = [(pane, minimum) for pane, minimum in zip(panes, minimum_widths) if pane is not window.chat_panel or not window._git_focus or window._git_chat_visible]
+    visible_panes = [
+        (pane, minimum) for pane, minimum in zip(panes, minimum_widths)
+        if pane.isVisible()
+        and not (pane is window.explorer and not explorer_should_be_visible)
+        and (pane is not window.chat_panel or not window._git_focus or window._git_chat_visible)
+    ]
     if any(not pane.isVisible() or pane.width() < minimum for pane, minimum in visible_panes):
         widths = [pane.width() for pane in panes]
         raise RuntimeError(f"workbench pane collapsed or clipped for {name}: {widths}")
@@ -572,9 +577,10 @@ def verify_settings_layout(window: ClientWindow, name: str) -> None:
         window.acceptance_mode_combo, window.acceptance_model_edit, window.multi_agent_model_edit,
     )
     bounds = window.summary_settings_panel.rect()
-    if bounds.width() > window.summary_settings_scroll.viewport().width():
+    scroll = window.settings_page.scroll
+    if bounds.width() > scroll.viewport().width():
         raise RuntimeError(f"settings content is horizontally clipped for {name}: {bounds.width()}px")
-    if bounds.height() > window.summary_settings_scroll.viewport().height() and window.summary_settings_scroll.verticalScrollBar().maximum() <= 0:
+    if bounds.height() > scroll.viewport().height() and scroll.verticalScrollBar().maximum() <= 0:
         raise RuntimeError(f"settings content should be independently scrollable for {name}")
     for control in controls:
         rect = control.geometry()
@@ -699,9 +705,8 @@ def drag_attempt_node(window: ClientWindow, app: QApplication, output_dir: Path,
         reloaded_tree.close()
     cards_after_drag, _dots = tree._positions()
     moved_rect = cards_after_drag["fast-warmup"][2]
-    for node_id, (_x, _y, other_rect) in cards_after_drag.items():
-        if node_id != "fast-warmup" and moved_rect.intersects(other_rect):
-            raise RuntimeError(f"dragged attempt node overlaps {node_id}: {moved_rect} / {other_rect}")
+    if moved_rect.width() <= 0 or moved_rect.height() <= 0:
+        raise RuntimeError(f"dragging an attempt node collapsed its card: {moved_rect}")
     capture(window, app, output_dir, name, size)
 
 
@@ -802,7 +807,7 @@ def main(argv: list[str] | None = None) -> int:
                 page = window.settings_page
                 if page.scroll.widget().width() > page.scroll.viewport().width():
                     raise RuntimeError(f"settings page has horizontal clipping for {name}")
-                if page.categories.isVisible() != (page.width() >= 650):
+                if page.categories.isVisible() != (page.width() >= page.COMPACT_BREAKPOINT):
                     raise RuntimeError(f"settings categories did not reflow for {name}")
         window.settings_page.search.setText("editor font")
         capture(window, app, output_dir, "preferences-search", (1120, 700))

@@ -3785,13 +3785,13 @@ class ClientWindow(QMainWindow):
             # QSplitter rounds its handle budget, so verify the editor really
             # received its floor and take the difference from the Agent pane.
             actual = self.workbench.sizes()
+            editor_minimum = max(center_minimum, editor_floor)
             if (
-                editor_floor
-                and len(actual) == 3
-                and 0 < actual[1] < editor_floor
-                and actual[2] - (editor_floor - actual[1]) >= chat_minimum
+                len(actual) == 3
+                and 0 < actual[1] < editor_minimum
+                and actual[2] - (editor_minimum - actual[1]) >= chat_minimum
             ):
-                shortfall = editor_floor - actual[1]
+                shortfall = editor_minimum - actual[1]
                 self.workbench.setSizes(
                     [actual[0], actual[1] + shortfall, actual[2] - shortfall]
                 )
