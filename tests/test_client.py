@@ -3047,6 +3047,21 @@ class SummarySettingsUiTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_no_changes_event_is_visible_in_chat(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-no-changes-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                with patch.object(window, "_append_chat") as append:
+                    window._handle_agent_event("no_changes_detected", {
+                        "session_id": "no-changes",
+                        "message": "未检测到文件改动：任务看起来要求修改项目。",
+                    })
+                append.assert_called_once()
+                self.assertIn("未检测到文件改动", append.call_args.args[1])
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_completed_bubble_reports_skipped_auto_commit(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-completed-commit-ui-") as temp:
             window = ClientWindow(Path(temp))

@@ -5809,6 +5809,13 @@ class ClientWindow(QMainWindow):
                 "meta",
             )
             self._append_log("部分文件受 Git 自动提交安全策略保护，仍保留在工作区")
+        elif event == "no_changes_detected":
+            self._append_chat(
+                "Harness · 未检测到文件改动",
+                str(payload.get("message") or "本次没有写入任何文件。"),
+                "meta",
+            )
+            self._append_log("任务结束但未检测到文件改动")
         elif event == "completed":
             sha = str(payload.get("git_result_sha") or "")
             if not sha:

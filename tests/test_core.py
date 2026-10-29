@@ -4507,6 +4507,59 @@ class EmptyModelResponseTests(unittest.TestCase):
             )
 
 
+class ProjectTaskIsolationTests(unittest.TestCase):
+    def test_second_task_in_the_same_project_is_rejected_while_one_runs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-project-lock-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            first_agent = CodingAgent(
+                root, EventLedger(root), GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            second_agent = CodingAgent(
+                root, EventLedger(root), GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            started = threading.Event()
+            release = threading.Event()
+            provider = Mock()
+
+            def slow_chat(messages, **_kwargs):
+                started.set()
+                release.wait(5)
+                return {"content": "done", "tool_calls": []}
+
+            provider.chat.side_effect = slow_chat
+            errors: list[Exception] = []
+            results: list[dict[str, Any]] = []
+
+            def run_first() -> None:
+                try:
+                    with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                        results.append(first_agent.run({"task_id": "first", "payload": {
+                            "session_id": "first", "prompt": "say done", "planning_mode": "off",
+                        }}))
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+            worker = threading.Thread(target=run_first, daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(started.wait(5))
+                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=Mock()):
+                    with self.assertRaisesRegex(PermanentError, "同一项目已有编码任务"):
+                        second_agent.run({"task_id": "second", "payload": {
+                            "session_id": "second", "prompt": "say done", "planning_mode": "off",
+                        }})
+            finally:
+                release.set()
+                worker.join(10)
+            self.assertEqual(errors, [])
+            self.assertEqual(results[0]["text"], "done")
+
+
 class CancellationTests(unittest.TestCase):
     def test_cancel_terminates_a_running_command(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-command-cancel-") as temp:
@@ -4715,6 +4768,70 @@ class ToolLoopGuardTests(unittest.TestCase):
                 "tool_loop_detected",
                 (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
             )
+
+
+class NoChangesDetectionTests(unittest.TestCase):
+    def _run(self, prompt: str) -> tuple[dict[str, Any], Path]:
+        temp = tempfile.TemporaryDirectory(prefix="scidev-no-changes-")
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+        agent = CodingAgent(
+            root, EventLedger(root), GitManager(root),
+            summary_settings=SummarySettings(enabled=False),
+            require_verification=False,
+        )
+        provider = Mock()
+        provider.chat.return_value = {"content": "done", "tool_calls": []}
+        with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            result = agent.run({"task_id": "no-changes", "payload": {
+                "session_id": "no-changes", "prompt": prompt, "planning_mode": "off",
+            }})
+        return result, root
+
+    def test_change_request_without_writes_is_reported(self) -> None:
+        result, root = self._run(
+            "Create a file demo.py containing print(1) using write_file, then finish."
+        )
+        self.assertTrue(result["no_changes_detected"])
+        self.assertFalse((root / "demo.py").exists())
+        self.assertEqual(result["git_result_sha"], "")
+        events = (root / ".research" / "events.jsonl").read_text(encoding="utf-8")
+        self.assertIn("no_changes_detected", events)
+        session = json.loads(
+            (root / ".research" / "sessions" / "no-changes.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("未检测到文件改动", session["final_message"])
+
+    def test_explanation_prompt_is_not_flagged(self) -> None:
+        result, root = self._run("解释一下什么是 Python 列表推导式。")
+        self.assertFalse(result["no_changes_detected"])
+        self.assertNotIn(
+            "no_changes_detected",
+            (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+        )
+
+
+class LocalModelContextTests(unittest.TestCase):
+    def test_ollama_num_ctx_is_detected_from_show_api(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://127.0.0.1:11434/v1", "k", "m", streaming=False,
+        )
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = json.dumps({"parameters": "num_ctx 8192\n"}).encode("utf-8")
+        with patch("scidev_core.urlopen", return_value=response):
+            provider._detect_local_context_limit()
+        self.assertEqual(provider.local_context_limit, 8192)
+
+    def test_oversized_local_request_fails_instead_of_being_truncated(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://127.0.0.1:11434/v1", "k", "m", streaming=False,
+        )
+        provider.local_context_limit = 4096
+        with self.assertRaisesRegex(PermanentError, "num_ctx"):
+            provider.chat([{"role": "user", "content": "x" * 40_000}], max_tokens=512)
 
 
 class ObservabilityTests(unittest.TestCase):

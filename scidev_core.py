@@ -1525,6 +1525,10 @@ class OpenAICompatibleProvider:
         self.temperature = float(temperature)
         # Set when an on_metrics callback raises; exposed for diagnostics.
         self.last_metrics_error = ""
+        # Filled for loopback Ollama endpoints; requests larger than this are
+        # rejected instead of being silently truncated by the server.
+        self.local_context_limit: int | None = None
+        self.local_context_source = ""
 
     def with_model(
         self,
@@ -1533,7 +1537,7 @@ class OpenAICompatibleProvider:
         streaming: bool | None = None,
         temperature: float | None = None,
     ) -> "OpenAICompatibleProvider":
-        return type(self)(
+        provider = type(self)(
             self.base_url,
             self.api_key,
             model.strip() or self.model,
@@ -1542,6 +1546,82 @@ class OpenAICompatibleProvider:
             self.streaming if streaming is None else streaming,
             self.presence_penalty,
             self.temperature if temperature is None else temperature,
+        )
+        provider.local_context_limit = self.local_context_limit
+        provider.local_context_source = self.local_context_source
+        return provider
+
+    @staticmethod
+    def _loopback_endpoint(base_url: str) -> tuple[str, str, int] | None:
+        parsed = urlsplit(base_url)
+        host = (parsed.hostname or "").casefold()
+        if host not in {"127.0.0.1", "localhost", "::1"}:
+            return None
+        scheme = parsed.scheme or "http"
+        port = parsed.port or (443 if scheme == "https" else 80)
+        return scheme, host, port
+
+    def _detect_local_context_limit(self, *, timeout: float = 3.0) -> None:
+        """Ask a loopback Ollama server for the model's effective num_ctx."""
+        endpoint = self._loopback_endpoint(self.base_url)
+        if endpoint is None:
+            return
+        scheme, host, port = endpoint
+        show_url = f"{scheme}://{host}:{port}/api/show"
+        body = json.dumps({"model": self.model}).encode("utf-8")
+        request = Request(show_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        except Exception:
+            # Best effort: a missing/older Ollama or a request observer must not
+            # break normal chat calls.
+            return
+        limit = 0
+        parameters = payload.get("parameters") if isinstance(payload, dict) else None
+        if isinstance(parameters, str):
+            for line in parameters.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0].casefold() == "num_ctx":
+                    try:
+                        limit = int(parts[1])
+                    except ValueError:
+                        limit = 0
+                    break
+        if limit <= 0 and isinstance(payload, dict):
+            info = payload.get("model_info")
+            if isinstance(info, dict):
+                for key, value in info.items():
+                    if str(key).casefold().endswith(".context_length"):
+                        try:
+                            limit = int(value)
+                        except (TypeError, ValueError):
+                            limit = 0
+                        break
+        if limit > 0:
+            self.local_context_limit = limit
+            self.local_context_source = "ollama_api"
+
+    def _guard_local_context(self, messages: list[dict[str, Any]], max_tokens: int) -> None:
+        limit = self.local_context_limit
+        if not limit:
+            return
+        characters = 0
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            characters += len(str(message.get("content") or ""))
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") if isinstance(call, dict) else None
+                if isinstance(function, dict):
+                    characters += len(str(function.get("arguments") or ""))
+        estimated_tokens = characters // 4 + int(max_tokens or 0)
+        if estimated_tokens <= int(limit * 0.95):
+            return
+        raise PermanentError(
+            f"本地模型上下文窗口约 {limit} tokens，本次请求约 {estimated_tokens} tokens；"
+            "为避免 Ollama 静默截断提示词，请提高模型的 num_ctx（例如 Modelfile: `PARAMETER num_ctx 32768`），"
+            "或缩短任务描述/上下文后重试。"
         )
 
     @classmethod
@@ -1588,7 +1668,7 @@ class OpenAICompatibleProvider:
             raise PermanentError("SCIDEV_TEMPERATURE 必须是 0 到 2 之间的数字") from exc
         if not 0.0 <= temperature <= 2.0:
             raise PermanentError("SCIDEV_TEMPERATURE 必须是 0 到 2 之间的数字")
-        return cls(
+        provider = cls(
             base_url,
             api_key,
             model,
@@ -1598,6 +1678,8 @@ class OpenAICompatibleProvider:
             presence_penalty=presence_penalty,
             temperature=temperature,
         )
+        provider._detect_local_context_limit()
+        return provider
 
     @staticmethod
     def _tool_arguments_match_schema(
@@ -2008,6 +2090,7 @@ class OpenAICompatibleProvider:
         reasoning_effort: str | None = None,
         on_metrics: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        self._guard_local_context(messages, max_tokens)
         body_data: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -4970,6 +5053,24 @@ class CodingAgent:
         self._save_session(session)
         return session
 
+    _CHANGE_REQUEST_VERBS = (
+        "创建", "新建", "写入", "修改", "修复", "删除", "重命名", "实现",
+        "添加", "更新", "重构", "create", "write", " add ", "fix", "change",
+        "update", "remove", "delete", "rename", "implement", "refactor",
+    )
+    _CHANGE_REQUEST_QUESTION_MARKERS = (
+        "解释", "为什么", "如何", "怎么", "怎样", "是什么", "说明", "吗", "？", "?",
+        "explain", "why ", "how ", "what is",
+    )
+
+    @classmethod
+    def _prompt_requests_file_changes(cls, prompt: str) -> bool:
+        """Conservative heuristic: does this prompt ask to modify the project?"""
+        text = " ".join(str(prompt or "").casefold().split())
+        if not text or any(marker in text for marker in cls._CHANGE_REQUEST_QUESTION_MARKERS):
+            return False
+        return any(verb in text for verb in cls._CHANGE_REQUEST_VERBS)
+
     def _auto_commit_warning(
         self,
         skipped_paths: dict[str, dict[str, str | int]],
@@ -5282,6 +5383,17 @@ class CodingAgent:
         payload = task.get("payload") if isinstance(task, dict) else None
         if not isinstance(payload, dict):
             raise PermanentError("编码任务缺少有效 payload")
+        task_lock = shared_thread_lock("coding_task", self.project_root)
+        if not task_lock.acquire(blocking=False):
+            raise PermanentError(
+                "同一项目已有编码任务在运行；请等待其完成后再提交新任务，避免并发改动互相覆盖或被一起提交。"
+            )
+        try:
+            return self._run_locked(task, payload)
+        finally:
+            task_lock.release()
+
+    def _run_locked(self, task: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
         self._cancel.clear()
         self._tool_loop_signature = None
         self._tool_loop_repeats = 0
@@ -5776,6 +5888,20 @@ class CodingAgent:
         verification_report: dict[str, Any],
     ) -> dict[str, Any]:
         """Auto-commit the verified change and build the completion payload."""
+        no_change_warning = ""
+        if not changed_paths and self._prompt_requests_file_changes(prompt):
+            no_change_warning = (
+                "未检测到文件改动：任务描述看起来要求修改项目，但本次没有写入任何文件。"
+                "如果确实无需改动，请忽略此提醒。"
+            )
+            session["no_changes_detected"] = True
+            payload = {
+                "session_id": session_id,
+                "message": no_change_warning,
+                "prompt": " ".join(prompt.split())[:500],
+            }
+            self.ledger.append("no_changes_detected", payload)
+            self._emit("no_changes_detected", payload)
         if content:
             self._emit("assistant", {"session_id": session_id, "turn": turn, "text": content})
         self._save_session(session)
@@ -5798,6 +5924,10 @@ class CodingAgent:
             }
             self.ledger.append("git_auto_commit_skipped_paths", payload)
             self._emit("git_auto_commit_skipped_paths", payload)
+        if no_change_warning:
+            session["final_message"] = (
+                f"{session.get('final_message') or content}\n\n{no_change_warning}"
+            ).strip()
         session["updated_at"] = now_iso()
         conversation_summary = self._summarize_session(provider, session, phase="final", turn=turn)
         self._save_session(session)
@@ -5825,6 +5955,7 @@ class CodingAgent:
                 "summary_path": session.get("summary_path", ""),
                 "git_auto_commit_skipped_paths": skipped_paths,
                 "git_auto_commit_warning": commit_warning,
+                "no_changes_detected": bool(no_change_warning),
                 "verification_report": verification_report,
                 "semantic_acceptance_report": acceptance_report,
             },
@@ -5837,6 +5968,7 @@ class CodingAgent:
             "summary_path": session.get("summary_path", ""),
             "git_auto_commit_skipped_paths": skipped_paths,
             "git_auto_commit_warning": commit_warning,
+            "no_changes_detected": bool(no_change_warning),
             "verification_report": verification_report,
             "semantic_acceptance_report": acceptance_report,
         }
