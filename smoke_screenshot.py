@@ -526,7 +526,7 @@ def capture_summary_settings_panel(window: ClientWindow, app: QApplication, outp
             ("compact", (820, 600)),
         ):
             name = f"summary-settings-{suffix}"
-            image = capture(window, app, output_dir, name, size)
+            capture(window, app, output_dir, name, size)
             verify_screenshot_content(window, name)
             verify_workbench_layout(window, name)
     finally:
