@@ -4695,7 +4695,11 @@ class CancellationTests(unittest.TestCase):
             self.assertEqual((toolbox.last_command_execution or {}).get("status"), "cancelled")
 
     def test_agent_cancel_interrupts_an_approved_command(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="scidev-agent-command-cancel-") as temp:
+        # A killed child can briefly keep its cwd open on Windows; cleanup must
+        # not turn that race into a test failure.
+        with tempfile.TemporaryDirectory(
+            prefix="scidev-agent-command-cancel-", ignore_cleanup_errors=True,
+        ) as temp:
             root = Path(temp)
             (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
             agent = CodingAgent(
