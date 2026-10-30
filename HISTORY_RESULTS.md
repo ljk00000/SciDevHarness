@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-31 02:25（Asia/Shanghai）· Windows CI 3.12/3.13 时序失败修复
+- 现象：push `abeabe9` 后 Windows CI #106 中 3.13/3.14 成功，3.12 失败；注解为 `test_cancel_interrupts_an_in_flight_model_stream` 的 `8.265 not less than 8`。
+- 根因：测试在固定 0.6 秒后取消，并断言整体 8 秒内结束；CI 上 worker 线程/流启动偶发晚到，取消本身仍生效，总时长超阈值即误报。
+- 修复：测试等待 `SlowStream.__iter__` 真正开始（`threading.Event`），再记录取消请求时间，只断言取消后 5 秒内停止；总时长上限放宽到 20 秒。CI #107 随后在 3.13 暴露第二个竞争：被杀子进程短暂占用临时目录 cwd，`TemporaryDirectory` 清理抛 `WinError 32`；`test_agent_cancel_interrupts_an_approved_command` 与 `test_cancel_terminates_a_running_command` 改用 `ignore_cleanup_errors=True`，只忽略清理竞争，不动取消断言。
+- 验证：CI #108（清理修复）与 #109（两项都含）三套 Python 3.12/3.13/3.14 全部成功；#109 用时 10 分 19 秒。本地全量 569 项 0 失败、13 跳过、覆盖率 79%，ruff 通过。
+- 说明：没有降低断言强度来掩盖功能缺陷；取消后会话状态、错误信息、事件账本断言保持不变。
+
 ## 2026-10-31 01:05（Asia/Shanghai）· 本地 Qwen 第六轮（审批/审核取消、参数与错误回声）
 - 探针 `scripts/probe_weak_model.py` 扩到 36 个场景：越界行号、额外参数、真实命令超时、.env 读取、补丁删除、审批中停止、审核中停止、非 Git 目录、非 Git 且不提交、既有脏改动、覆盖已有文件、Add File 已存在、拒绝补丁、部分批准；并发场景仍单列。
 - 修复：
