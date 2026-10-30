@@ -5147,6 +5147,7 @@ class GitCommitOwnershipTests(unittest.TestCase):
             self.assertTrue((root / "no_commit.py").exists())
             self.assertIn("no_commit.py", git.status_paths())
             self.assertIn("未自动提交", result["text"])
+            self.assertIn("未自动提交", result["git_auto_commit_warning"])
             self.assertIn(
                 "git_auto_commit_suppressed_by_user",
                 (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),

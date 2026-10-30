@@ -6294,11 +6294,13 @@ class CodingAgent:
         session["verification_required"] = False
         session["final_message"] = content
         commit_paths, skipped_paths = self.git.filter_auto_commit_paths(changed_paths)
+        suppressed_note = ""
         if self.prompt_forbids_auto_commit(prompt):
             session["git_result_sha"] = ""
             session["git_auto_commit_suppressed"] = bool(commit_paths)
             if commit_paths:
                 note = "按你的要求未自动提交；改动保留在工作区，请在 Git 面板审核后手动提交。"
+                suppressed_note = note
                 content = f"{content.rstrip()}\n\n{note}".strip()
                 session["final_message"] = content
                 self.ledger.append(
@@ -6348,7 +6350,12 @@ class CodingAgent:
                 "Harness 未重复提交，请核对提交内容是否符合预期。"
             )
             commit_warning = f"{commit_warning}\n{external_warning}".strip()
-        if commit_warning:
+        if suppressed_note:
+            commit_warning = f"{suppressed_note}\n{commit_warning}".strip() if commit_warning else suppressed_note
+            # The final message already carries the note; only expose the
+            # warning to the UI so it does not report "无新提交".
+            session["git_auto_commit_warning"] = commit_warning
+        if commit_warning and not suppressed_note:
             session["git_auto_commit_warning"] = commit_warning
             session["final_message"] = f"{content.rstrip()}\n\n{commit_warning}".strip()
             payload = {
