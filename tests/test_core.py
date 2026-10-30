@@ -4665,7 +4665,9 @@ class ProjectTaskIsolationTests(unittest.TestCase):
 
 class CancellationTests(unittest.TestCase):
     def test_cancel_terminates_a_running_command(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="scidev-command-cancel-") as temp:
+        with tempfile.TemporaryDirectory(
+            prefix="scidev-command-cancel-", ignore_cleanup_errors=True,
+        ) as temp:
             root = Path(temp)
             toolbox = CodingToolbox(root, EventLedger(root), command_approval=lambda _c, _t: True)
             command = f'"{sys.executable}" -c "import time; time.sleep(10)"'
