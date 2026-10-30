@@ -11,7 +11,7 @@
   6. 命令输出中文乱码（cmd 默认 OEM 代码页）；Windows 改用 UTF-8 代码页启动并注入 PYTHONIOENCODING，解码按 UTF-8 → OEM/本地编码回退。
   7. read_file 把目录报成“文件不存在”；现在明确提示路径是目录并引导 list_files。
 - 探针自身修复：阻塞命令改用 sleep、取消断言只在真实取消后生效、manual-commit 未触发自动重试、超时场景不再误报缺提交、数组/补丁场景误报修正、Git 路径 quotepath、事件账本读取重试；未触发路径单独记为 coverage_gaps。
-- 验证：真实 7B 全场景探针 flagged=[]（23 场景 + 并发；manual-commit 模型未实际尝试 git，仅记为覆盖缺口，拦截逻辑由单测覆盖）；全量隔离套件 558 项 0 失败、13 跳过、覆盖率 79%；ruff/mypy/编译通过。
+- 验证：真实 7B 全场景探针 flagged=[]（23 场景 + 并发；manual-commit 模型未实际尝试 git，仅记为覆盖缺口，拦截逻辑由单测覆盖）；全量隔离套件 558 项 0 失败、13 跳过、覆盖率 79%；ruff/mypy/编译通过；官方 Ollama smoke 重跑通过（首次 7B 被拒 replace_in_file 后放弃，属模型随机性）。
 
 ## 2026-10-30（Asia/Shanghai）· 本地 Qwen 第四轮（已完成）
 - 新增可重复的真实模型探针 `scripts/probe_weak_model.py`：11 个对抗场景（问答、子目录创建、路径越界、阻塞命令取消、改 bug、中文路径、手动提交、删除已跟踪文件、超窗、4B 小窗口、同项目并发），输出 `.research/weak_model_probe.json`。

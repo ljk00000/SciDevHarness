@@ -368,6 +368,12 @@ def run_smoke(base_url: str, model: str, api_key: str) -> dict[str, Any]:
         return real_urlopen(request, timeout=timeout)
 
     with tempfile.TemporaryDirectory(prefix="scidev-live-ollama-") as temporary:
+        # When the system temp directory falls back inside this checkout, Git
+        # would discover the outer repository and refuse the disposable one.
+        # Stop discovery at the temp parent; the smoke workspace is its own repo.
+        os.environ.setdefault(
+            "GIT_CEILING_DIRECTORIES", str(Path(temporary).resolve().parent)
+        )
         root = Path(temporary)
         (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
         bug_fix_task = next(task for task in CODING_TASKS if task.mode == "fix")
