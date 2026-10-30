@@ -1,5 +1,18 @@
 # 历史与结果
 
+## 2026-10-30 23:45（Asia/Shanghai）· 本地 Qwen 第五轮（停机、提示回声与用户否决）
+- 探针 `scripts/probe_weak_model.py` 扩到 23 个场景，并支持 `--only`、场景未触发时自动重试、原始被拒工具文本记录、覆盖缺口与行为异常分离（coverage_gaps）。
+- 修复 7 项：
+  1. 流式取消：provider 增加 `should_cancel` 回调，`_stream_message` 逐行检查；智能体把 TaskCancelled 转换为 cancelled 会话。真实 7B 生成中停止 2.1 s 生效，原实现要等整段生成结束。
+  2. 内部提示回声：工具调用被拒时插入的英文占位句会被弱模型复述；现在识别为 model_internal_prompt_echo，追问一次后仍复述则明确 failed，不再“completed”。
+  3. 多工具调用：同一 `<tool_call>`/`<tool_request>`/`<tool_response>` 或 json 代码块内的多个 JSON 对象，逐个校验后整批执行；任一非法则整体拒绝。真实 7B 一次创建 two_a.py/two_b.py，单提交收齐。
+  4. 示例保护：提示含“只要示例/不要调用工具”等明确否定时，write_file/replace_in_file/apply_patch/run_command/委派全部拒绝；第二次仍调用则 TaskAborted 停止，文件与提交均为零。
+  5. 用户否决提交：提示含“先不要提交/无需提交”等时跳过自动提交，改动保留在工作区并提示手动提交；不再误报“未检测到文件改动”。
+  6. 命令输出编码：Windows 通过 cmd.exe + `chcp 65001` 启动，子进程注入 PYTHONIOENCODING/PYTHONUTF8；输出解码优先 UTF-8，失败回退 OEM/本地代码页。`echo 你好` 与 `python -c print(你好)` 均不再出现替换字符。
+  7. read_file 对目录返回“路径是目录，请用 list_files”，不再误导为文件不存在。
+- 测试：新增流式取消、并行文本工具调用、内部提示回声、示例保护（含重复调用停止）、用户否决提交、目录读取、命令非 ASCII 输出与 GBK 回退、多对象解析等回归；全量隔离套件 558 项 0 失败、13 跳过、覆盖率 79%；ruff/mypy/编译通过。
+- 真实模型证据：全场景探针 flagged=[]；阻塞命令取消 2.8 s、流式取消 2.1 s、越界写入被拒、拒绝命令未执行、.git/config 未变、超时 99999 收敛为 300、并行双文件单提交、示例请求零改动、不要提交请求零提交；manual-commit 场景模型两次都只在文本中请求确认、没有实际运行 git，因此记为覆盖缺口而非 Harness 缺陷（拦截由 GitCommitOwnershipTests 覆盖）。
+
 ## 2026-10-30（Asia/Shanghai）· 本地 Qwen 第四轮（弱模型边界）
 - 新增 `scripts/probe_weak_model.py`：真实本地模型对抗探针，11 个场景（问答、子目录创建、路径越界、阻塞命令取消、改 bug、中文路径、手动 git 提交、删除已跟踪文件、超窗提示、4B 小窗口、同项目并发），输出 `.research/weak_model_probe.json`；7B 与 4B 均可跑。
 - 修复：

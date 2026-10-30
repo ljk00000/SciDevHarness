@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import locale
 import subprocess
 import sys
 import tempfile
@@ -67,7 +68,7 @@ class BackgroundProcessTests(unittest.TestCase):
             ledger = EventLedger(root)
             toolbox = CodingToolbox(root, ledger, command_approval=lambda *_args: True)
             process = Mock(returncode=7)
-            process.communicate.return_value = ("failure detail", None)
+            process.communicate.return_value = (b"failure detail", None)
             try:
                 with patch("scidev_core.background_process_options", return_value={"creationflags": 123}):
                     with patch("scidev_core.subprocess.Popen", return_value=process) as launch:
@@ -188,7 +189,7 @@ class ProcessHardeningTests(unittest.TestCase):
             process = Mock(returncode=-9)
             process.communicate.side_effect = [
                 subprocess.TimeoutExpired("cmd", 1),
-                ("partial output", None),
+                (b"partial output", None),
             ]
             try:
                 with (
@@ -200,6 +201,39 @@ class ProcessHardeningTests(unittest.TestCase):
                 self.assertIn("timed_out", result)
             finally:
                 toolbox.close()
+
+    def test_run_command_preserves_non_ascii_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = EventLedger(Path(temporary))
+            toolbox = CodingToolbox(Path(temporary), ledger, command_approval=lambda *_args: True)
+            previous_io = os.environ.pop("PYTHONIOENCODING", None)
+            previous_utf8 = os.environ.pop("PYTHONUTF8", None)
+            try:
+                command = f'"{sys.executable}" -c "print(chr(20320) + chr(22909))"'
+                result = toolbox.run_command(command, timeout_seconds=30)
+            finally:
+                if previous_io is not None:
+                    os.environ["PYTHONIOENCODING"] = previous_io
+                if previous_utf8 is not None:
+                    os.environ["PYTHONUTF8"] = previous_utf8
+                toolbox.close()
+            self.assertIn("你好", result)
+            self.assertNotIn("\ufffd", result)
+
+    def test_utf8_command_output_is_preferred(self) -> None:
+        from scidev_core import decode_process_output
+
+        self.assertEqual(decode_process_output("你好".encode("utf-8")), "你好")
+
+    @unittest.skipUnless(
+        os.name == "nt"
+        and locale.getpreferredencoding(False).lower() in {"cp936", "gbk"},
+        "Chinese Windows console code page",
+    )
+    def test_gbk_command_output_falls_back_to_the_console_code_page(self) -> None:
+        from scidev_core import decode_process_output
+
+        self.assertEqual(decode_process_output("你好".encode("gbk")), "你好")
 
     def test_streaming_terminal_kill_stops_the_tree(self) -> None:
         from scidev_process import StreamingCommand

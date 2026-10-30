@@ -31,6 +31,7 @@ from scidev_core import (
     RetryableError,
     SummarySettings,
     SvgArtifactAdapter,
+    TaskCancelled,
     atomic_write_bytes,
     manual_git_mutation_reason,
     parse_porcelain_z,
@@ -3343,7 +3344,7 @@ class CoreTests(unittest.TestCase):
                 ledger,
                 command_approval=lambda command, timeout: approvals.append((command, timeout)) or True,
             )
-            process_result = type("ProcessResult", (), {"returncode": 0, "communicate": lambda self, timeout: ("ok", None)})()
+            process_result = type("ProcessResult", (), {"returncode": 0, "communicate": lambda self, timeout: (b"ok", None)})()
             with patch("scidev_core.subprocess.Popen", return_value=process_result) as process:
                 result = toolbox.run_command("python -V", timeout_seconds=400)
             process.assert_called_once()
@@ -3363,7 +3364,7 @@ class CoreTests(unittest.TestCase):
                 self.calls += 1
                 if self.calls == 1:
                     raise subprocess.TimeoutExpired("pytest", timeout)
-                return "partial output", None
+                return b"partial output", None
 
             def kill(self):
                 self.returncode = -9
@@ -4191,6 +4192,34 @@ class CoreTests(unittest.TestCase):
         with self.assertRaisesRegex(RetryableError, "before a completion marker"):
             OpenAICompatibleProvider._stream_message(BytesIO(partial_stream))
 
+    def test_stream_stops_between_sse_lines_when_cancelled(self) -> None:
+        cancel = threading.Event()
+        chunk = b'data: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n'
+        response = BytesIO(chunk * 200)
+        seen: list[str] = []
+
+        def on_delta(text: str) -> None:
+            seen.append(text)
+            cancel.set()
+
+        with self.assertRaisesRegex(TaskCancelled, "任务已取消"):
+            OpenAICompatibleProvider._stream_message(
+                response,
+                on_delta=on_delta,
+                should_cancel=cancel.is_set,
+            )
+        self.assertEqual(seen, ["x"])
+
+    def test_read_file_reports_a_directory_instead_of_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-read-dir-") as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(root, EventLedger(root))
+            (root / "docs").mkdir()
+            message = toolbox.read_file("docs")
+            self.assertIn("路径是目录", message)
+            self.assertIn("list_files", message)
+            self.assertNotIn("文件不存在", message)
+
     def test_git_probe_is_safe_when_git_cli_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             git = GitManager(Path(temp))
@@ -4748,6 +4777,72 @@ class CancellationTests(unittest.TestCase):
                 (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
             )
 
+    def test_cancel_interrupts_an_in_flight_model_stream(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-stream-cancel-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            agent = CodingAgent(
+                root, EventLedger(root), GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            provider = OpenAICompatibleProvider(
+                "http://127.0.0.1:9/v1", "test", "fake-stream", streaming=True,
+            )
+
+            class SlowStream:
+                status = 200
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_exc):
+                    return False
+
+                def __iter__(self):
+                    chunk = (
+                        b'data: {"choices":[{"index":0,"delta":{"content":"x"},'
+                        b'"finish_reason":null}]}\n\n'
+                    )
+                    for _ in range(600):
+                        time.sleep(0.02)
+                        yield chunk
+                    yield b"data: [DONE]\n\n"
+
+            errors: list[BaseException] = []
+            started = time.monotonic()
+
+            def execute() -> None:
+                try:
+                    with patch(
+                        "scidev_core.OpenAICompatibleProvider.from_env", return_value=provider,
+                    ), patch("scidev_core.urlopen", return_value=SlowStream()):
+                        agent.run({"task_id": "stream-cancel", "payload": {
+                            "session_id": "stream-cancel",
+                            "prompt": "详细解释 Python 的 GIL，越长越好。",
+                            "planning_mode": "off",
+                        }})
+                except BaseException as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+            worker = threading.Thread(target=execute, daemon=True)
+            worker.start()
+            time.sleep(0.6)
+            agent.request_cancel()
+            worker.join(10)
+            self.assertFalse(worker.is_alive())
+            self.assertLess(time.monotonic() - started, 8)
+            self.assertTrue(errors)
+            self.assertIn("任务已取消", str(errors[-1]))
+            session = json.loads(
+                (root / ".research" / "sessions" / "stream-cancel.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session["status"], "cancelled")
+            self.assertIn(
+                "coding_session_cancelled",
+                (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+            )
+
 
 class ToolLoopGuardTests(unittest.TestCase):
     def test_identical_failing_tool_calls_stop_instead_of_burning_turns(self) -> None:
@@ -5010,6 +5105,53 @@ class GitCommitOwnershipTests(unittest.TestCase):
             )
             self.assertIn("没有产生可提交的改动", str(session.get("final_message")))
 
+    def test_explicit_no_commit_request_keeps_changes_in_the_workspace(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-no-commit-request-") as temp:
+            root = Path(temp)
+            git = self._init_repo(root)
+            baseline = git.head_sha()
+            provider = ScriptedPlanningProvider(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_write",
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": json.dumps({
+                                "path": "no_commit.py",
+                                "content": "print('pending')\n",
+                            }),
+                        },
+                    }],
+                },
+                {"role": "assistant", "content": "已创建，未提交。", "tool_calls": []},
+                {"role": "assistant", "content": "已创建，未提交。", "tool_calls": []},
+            )
+            agent = CodingAgent(
+                root,
+                EventLedger(root),
+                git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {
+                    "session_id": "no-commit-request",
+                    "prompt": "创建 no_commit.py，但先不要提交，改动保留在工作区。",
+                    "planning_mode": "off",
+                }})
+            self.assertEqual(result["git_result_sha"], "")
+            self.assertEqual(git.head_sha(), baseline)
+            self.assertTrue((root / "no_commit.py").exists())
+            self.assertIn("no_commit.py", git.status_paths())
+            self.assertIn("未自动提交", result["text"])
+            self.assertIn(
+                "git_auto_commit_suppressed_by_user",
+                (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+            )
+
 
 class MalformedToolCallTests(unittest.TestCase):
     def test_invalid_native_tool_arguments_are_reported_to_the_model(self) -> None:
@@ -5053,6 +5195,220 @@ class MalformedToolCallTests(unittest.TestCase):
                 (root / ".research" / "sessions" / "malformed-args.json").read_text(encoding="utf-8")
             )
             self.assertEqual(session.get("status"), "completed")
+
+    def test_multiple_objects_in_one_tool_envelope_are_all_parsed(self) -> None:
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"],
+                    "additionalProperties": False,
+                },
+            },
+        }]
+        message = {
+            "role": "assistant",
+            "content": (
+                "<tool_call>"
+                '{"name": "write_file", "arguments": {"path": "a.py", "content": "print(1)"}}'
+                '{"name": "write_file", "arguments": {"path": "b.py", "content": "print(2)"}}'
+                "</tool_call>"
+            ),
+        }
+        fenced = {
+            "role": "assistant",
+            "content": (
+                "```json\n"
+                '{"name": "write_file", "arguments": {"path": "a.py", "content": "print(1)"}}\n'
+                '{"name": "write_file", "arguments": {"path": "b.py", "content": "print(2)"}}\n'
+                "```"
+            ),
+        }
+        for label, candidate in (("tagged", message), ("fenced", fenced)):
+            with self.subTest(label):
+                result = OpenAICompatibleProvider._coerce_text_tool_calls(candidate, tools)
+                calls = result.get("tool_calls") or []
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(
+                    [json.loads(call["function"]["arguments"])["path"] for call in calls],
+                    ["a.py", "b.py"],
+                )
+                self.assertNotIn("tool_parse_error", result)
+
+    def test_agent_executes_two_textual_tool_calls_from_one_reply(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-two-text-calls-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            git.init()
+            git.commit_changes("baseline")
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            provider = OpenAICompatibleProvider(
+                "http://127.0.0.1:11434/v1", "ollama", "weak", streaming=False,
+                text_tool_call_fallback=True,
+            )
+            first = json.dumps({"choices": [{"message": {
+                "role": "assistant",
+                "content": (
+                    "<tool_call>"
+                    '{"name": "write_file", "arguments": {"path": "a.py", "content": "print(1)\\n"}}'
+                    '{"name": "write_file", "arguments": {"path": "b.py", "content": "print(2)\\n"}}'
+                    "</tool_call>"
+                ),
+            }}]}).encode("utf-8")
+            second = json.dumps({"choices": [{"message": {
+                "role": "assistant", "content": "两个文件都创建好了。",
+            }}]}).encode("utf-8")
+            calls = {"count": 0}
+
+            def fake_urlopen(request, timeout=3.0):  # noqa: ANN001, ARG001
+                calls["count"] += 1
+                return BytesIO(first if calls["count"] == 1 else second)
+
+            with patch(
+                "scidev_core.OpenAICompatibleProvider.from_env", return_value=provider,
+            ), patch("scidev_core.urlopen", side_effect=fake_urlopen):
+                result = agent.run({"payload": {
+                    "session_id": "two-text-calls",
+                    "prompt": "创建 a.py 和 b.py 两个文件。",
+                    "planning_mode": "off",
+                }})
+            self.assertTrue(result["git_result_sha"])
+            self.assertTrue((root / "a.py").exists())
+            self.assertTrue((root / "b.py").exists())
+            self.assertEqual(git.status_paths(), set())
+
+    def test_explicit_example_only_prompt_blocks_mutating_tool_calls(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-example-only-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            git = GitManager(root)
+            git.init()
+            git.commit_changes("baseline")
+            ledger = EventLedger(root)
+            provider = ScriptedPlanningProvider(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "example-write",
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": json.dumps({
+                                "path": "example_only.py",
+                                "content": "print('example')\n",
+                            }),
+                        },
+                    }],
+                },
+                {"role": "assistant", "content": "示例如上，未创建文件。", "tool_calls": []},
+            )
+            agent = CodingAgent(
+                root,
+                ledger,
+                git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                result = agent.run({"payload": {
+                    "session_id": "example-only",
+                    "prompt": (
+                        "请给出 write_file 的示例（用 ```json 代码块），"
+                        "但千万不要真的创建任何文件，也不要调用工具。"
+                    ),
+                    "planning_mode": "off",
+                }})
+            self.assertFalse((root / "example_only.py").exists())
+            self.assertEqual(git.status_paths(), set())
+            self.assertFalse(result["git_result_sha"])
+            self.assertFalse(result["no_changes_detected"])
+            self.assertIn(
+                "只给示例",
+                (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+            )
+
+    def test_repeated_forbidden_mutation_stops_with_a_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-example-repeat-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            write_call = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "example-write",
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": json.dumps({
+                            "path": "example_only.py",
+                            "content": "print('example')\n",
+                        }),
+                    },
+                }],
+            }
+            provider = ScriptedPlanningProvider(dict(write_call), dict(write_call))
+            agent = CodingAgent(
+                root,
+                EventLedger(root),
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "用户明确要求"):
+                    agent.run({"payload": {
+                        "session_id": "example-repeat",
+                        "prompt": "给出示例即可，千万不要真的创建任何文件，也不要调用工具。",
+                        "planning_mode": "off",
+                    }})
+            self.assertFalse((root / "example_only.py").exists())
+            session = json.loads(
+                (root / ".research" / "sessions" / "example-repeat.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session.get("status"), "failed")
+            self.assertIn("用户明确要求", session.get("error", ""))
+
+    def test_echoed_internal_rejection_prompt_is_not_reported_as_completed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-echo-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            echo = {
+                "role": "assistant",
+                "content": "The Harness rejected an invalid tool-call response before execution.",
+                "tool_calls": [],
+            }
+            provider = ScriptedPlanningProvider(echo, dict(echo), dict(echo))
+            agent = CodingAgent(
+                root,
+                EventLedger(root),
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "复述"):
+                    agent.run({"payload": {
+                        "session_id": "echo-session",
+                        "prompt": "创建 hello.py",
+                        "planning_mode": "off",
+                    }})
+            session = json.loads(
+                (root / ".research" / "sessions" / "echo-session.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session.get("status"), "failed")
+            self.assertIn("复述", session.get("error", ""))
 
 
 class LocalModelContextTests(unittest.TestCase):

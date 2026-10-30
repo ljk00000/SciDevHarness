@@ -484,7 +484,7 @@ class VerificationAgentTests(unittest.TestCase):
             self.output = output
 
         def communicate(self, timeout=None):
-            return self.output, None
+            return self.output.encode("utf-8"), None
 
     def _run(
         self,

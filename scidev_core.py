@@ -8,6 +8,7 @@ import errno
 import ipaddress
 import json
 import difflib
+import locale
 import math
 import os
 import re
@@ -44,7 +45,7 @@ from scidev_multi_agent import (
     validate_parallel_delegations,
 )
 from scidev_planning import PLAN_TOOL, TaskPlan, planning_mode
-from scidev_process import background_process_options, terminate_process_tree
+from scidev_process import background_process_options, shell_command_arguments, terminate_process_tree
 from scidev_patching import PatchEngine, PatchError, PatchReviewRejected
 from scidev_usage import ModelRequestUsage
 from scidev_verification import VerificationTracker
@@ -326,6 +327,42 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{stamp}_{uuid.uuid4().hex[:6]}"
 
 
+def decode_process_output(raw: bytes) -> str:
+    """Decode captured command output without losing non-ASCII text.
+
+    Python children are forced to UTF-8 by ``run_command``; native Windows
+    tools such as ``echo``/``pytest`` may still emit the OEM code page (for
+    example cp936 on Chinese Windows). Prefer UTF-8, then the console code
+    page, and only then replace undecodable bytes.
+    """
+    if not raw:
+        return ""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    candidates: list[str] = []
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            candidates.append(f"cp{ctypes.windll.kernel32.GetOEMCP()}")
+        except (AttributeError, OSError, ValueError):
+            pass
+    try:
+        preferred = locale.getpreferredencoding(False)
+    except (LookupError, ValueError):
+        preferred = ""
+    if preferred:
+        candidates.append(preferred)
+    for encoding in candidates:
+        try:
+            return raw.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 class RetryableError(RuntimeError):
     """An operation failed for a reason that may disappear later."""
 
@@ -336,6 +373,14 @@ class RetryableError(RuntimeError):
 
 class PermanentError(RuntimeError):
     """An operation should not be retried automatically."""
+
+
+class TaskCancelled(PermanentError):
+    """The user stopped the task while a provider stream was still running."""
+
+
+class TaskAborted(PermanentError):
+    """A safety guard must stop the run instead of feeding an error back."""
 
 
 class EventLedger:
@@ -1974,40 +2019,129 @@ class OpenAICompatibleProvider:
         parse_content = re.sub(r"(?m)^[ \t]*\d+[ \t]*:[ \t]?", "", content)
 
         patterns = (
-            (re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.IGNORECASE | re.DOTALL), False),
-            (re.compile(r"<tool_request>\s*(.*?)\s*</tool_request>", re.IGNORECASE | re.DOTALL), False),
+            (
+                re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.IGNORECASE | re.DOTALL),
+                False,
+                True,
+            ),
+            (
+                re.compile(r"<tool_request>\s*(.*?)\s*</tool_request>", re.IGNORECASE | re.DOTALL),
+                False,
+                True,
+            ),
             # Some Ollama templates surface a line-numbered tool envelope using
             # this wrapper. Accept it only when the entire body is still a
             # schema-valid declared tool call below.
             (
                 re.compile(r"\A\s*<tool_response>\s*(.*?)\s*</tool_response>\s*\Z", re.IGNORECASE | re.DOTALL),
                 True,
+                True,
             ),
-            (re.compile(r"```(?:json|xml)\s*(.*?)```", re.IGNORECASE | re.DOTALL), False),
+            (re.compile(r"```(?:json|xml)\s*(.*?)```", re.IGNORECASE | re.DOTALL), False, True),
             # Some local models omit the requested wrapper. Only accept a JSON
             # object that occupies the entire response; prose/code examples
             # must never be promoted to executable workspace actions.
-            (re.compile(r"\A\s*(\{.*\})\s*\Z", re.DOTALL), False),
+            (re.compile(r"\A\s*(\{.*\})\s*\Z", re.DOTALL), False, False),
         )
         matches = sorted(
             (
-                (match, strip_line_numbers)
-                for pattern, strip_line_numbers in patterns
+                (match, strip_line_numbers, allow_multiple)
+                for pattern, strip_line_numbers, allow_multiple in patterns
                 for match in pattern.finditer(parse_content)
             ),
             key=lambda item: item[0].start(),
         )
+
+        def parse_payload_sequence(text: str) -> list[Any] | None:
+            """Read several JSON objects separated by whitespace/commas."""
+            decoder = json.JSONDecoder()
+            payloads: list[Any] = []
+            index = 0
+            length = len(text)
+            while index < length:
+                while index < length and text[index] in " \t\r\n,":
+                    index += 1
+                if index >= length:
+                    break
+                try:
+                    payload, index = decoder.raw_decode(text, index)
+                except json.JSONDecodeError:
+                    return None
+                payloads.append(payload)
+            return payloads if len(payloads) >= 2 else None
+
+        def build_call(
+            payload: Any,
+        ) -> tuple[dict[str, Any] | None, str, str, str]:
+            """Validate one textual envelope; return (call, name, reason, detail)."""
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != {"name", "arguments"}
+                or not isinstance(payload.get("name"), str)
+            ):
+                attempted_name = payload.get("name") if isinstance(payload, dict) else None
+                if isinstance(attempted_name, str) and attempted_name in allowed:
+                    return (
+                        None,
+                        attempted_name,
+                        "invalid_envelope",
+                        "envelope_must_contain_only_name_and_arguments",
+                    )
+                return None, "", "", ""
+            name = payload["name"]
+            if name not in allowed:
+                return None, "", "", ""
+            arguments = payload.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError as exc:
+                    return (
+                        None,
+                        name,
+                        "invalid_arguments_json",
+                        f"invalid_arguments_json at character {exc.pos}: {exc.msg}"[:180],
+                    )
+            if not isinstance(arguments, dict):
+                return None, name, "arguments_not_object", "arguments_must_be_an_object"
+            schema_errors: list[str] = []
+            if not OpenAICompatibleProvider._tool_arguments_match_schema(
+                arguments,
+                allowed[name],
+                error_out=schema_errors,
+            ):
+                return (
+                    None,
+                    name,
+                    "arguments_schema_mismatch",
+                    schema_errors[0] if schema_errors else "schema_mismatch",
+                )
+            return (
+                {
+                    "id": new_id("call"),
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    },
+                },
+                "",
+                "",
+                "",
+            )
+
         tool_calls: list[dict[str, Any]] = []
         consumed_spans: list[tuple[int, int]] = []
         rejected_tool_name = ""
         rejected_reason = ""
         rejected_detail = ""
-        for match, strip_line_numbers in matches:
+        for match, strip_line_numbers, allow_multiple in matches:
             candidate = match.group(1).strip()
             if strip_line_numbers:
                 candidate = re.sub(r"(?m)^[ \t]*\d+[ \t]*:[ \t]?", "", candidate)
+            payloads: list[Any] | None = None
             try:
-                payload = json.loads(candidate)
+                payloads = [json.loads(candidate)]
             except json.JSONDecodeError as exc:
                 attempted_name = re.search(r'"name"\s*:\s*"([^"\\]+)"', candidate)
                 if attempted_name and attempted_name.group(1) in allowed:
@@ -2025,63 +2159,36 @@ class OpenAICompatibleProvider:
                         rejected_detail = (
                             f"invalid_json at character {decode_error.pos}: {decode_error.msg}"
                         )[:180]
-                    continue
+                    payloads = parse_payload_sequence(candidate) if allow_multiple else None
                 except TypeError:
-                    continue
-                if candidate[end:].strip() != "}":
-                    if attempted_name and attempted_name.group(1) in allowed:
-                        rejected_reason = "invalid_json"
-                        rejected_detail = "unexpected_trailing_content"
-                    continue
+                    payloads = None
+                else:
+                    trailing = candidate[end:].strip()
+                    if trailing == "}":
+                        payloads = [payload]
+                    elif allow_multiple:
+                        # A weak model may place several objects inside one
+                        # <tool_call> wrapper; accept the batch only if every
+                        # envelope validates below.
+                        payloads = parse_payload_sequence(candidate)
+                        if payloads is None and attempted_name and attempted_name.group(1) in allowed:
+                            rejected_reason = "invalid_json"
+                            rejected_detail = "unexpected_trailing_content"
             except TypeError:
+                payloads = None
+            if not payloads:
                 continue
-            if (
-                not isinstance(payload, dict)
-                or set(payload) != {"name", "arguments"}
-                or not isinstance(payload.get("name"), str)
-            ):
-                attempted_name = payload.get("name") if isinstance(payload, dict) else None
-                if isinstance(attempted_name, str) and attempted_name in allowed:
-                    rejected_tool_name = attempted_name
-                    rejected_reason = "invalid_envelope"
-                    rejected_detail = "envelope_must_contain_only_name_and_arguments"
+            built = [build_call(item) for item in payloads]
+            if any(call is None for call, *_rest in built):
+                for call, name, reason, detail in built:
+                    if call is None and name:
+                        rejected_tool_name = name
+                        rejected_reason = reason
+                        rejected_detail = detail
+                        break
                 continue
-            name = payload["name"]
-            arguments = payload.get("arguments")
-            if name not in allowed:
-                continue
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError as exc:
-                    rejected_tool_name = name
-                    rejected_reason = "invalid_arguments_json"
-                    rejected_detail = f"invalid_arguments_json at character {exc.pos}: {exc.msg}"[:180]
-                    continue
-            if not isinstance(arguments, dict):
-                rejected_tool_name = name
-                rejected_reason = "arguments_not_object"
-                rejected_detail = "arguments_must_be_an_object"
-                continue
-            schema_errors: list[str] = []
-            if not OpenAICompatibleProvider._tool_arguments_match_schema(
-                arguments,
-                allowed[name],
-                error_out=schema_errors,
-            ):
-                rejected_tool_name = name
-                rejected_reason = "arguments_schema_mismatch"
-                rejected_detail = schema_errors[0] if schema_errors else "schema_mismatch"
-                continue
-            tool_calls.append(
-                {
-                    "id": new_id("call"),
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": json.dumps(arguments, ensure_ascii=False),
-                    },
-                }
+            tool_calls.extend(
+                call for call, *_rest in built if call is not None
             )
             consumed_spans.append((match.start(), match.end()))
 
@@ -2159,13 +2266,20 @@ class OpenAICompatibleProvider:
         on_delta: Callable[[str], None] | None = None,
         on_usage: Callable[[dict[str, Any]], None] | None = None,
         on_bytes: Callable[[int], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
-        """Assemble an OpenAI-compatible SSE response, including fragmented tool calls."""
+        """Assemble an OpenAI-compatible SSE response, including fragmented tool calls.
+
+        ``should_cancel`` is polled between SSE lines so a user pressing Stop
+        does not have to wait for a long local generation to finish.
+        """
         content_parts: list[str] = []
         tool_parts: dict[int, dict[str, Any]] = {}
         saw_done = False
         saw_finish = False
         for raw_line in response:
+            if should_cancel is not None and should_cancel():
+                raise TaskCancelled("任务已取消，已停止等待模型继续生成。")
             if on_bytes:
                 on_bytes(len(raw_line) if isinstance(raw_line, bytes) else len(str(raw_line).encode("utf-8")))
             line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else str(raw_line)
@@ -2259,6 +2373,7 @@ class OpenAICompatibleProvider:
         tool_choice: str = "auto",
         reasoning_effort: str | None = None,
         on_metrics: Callable[[dict[str, Any]], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         max_tokens = self._guard_local_context(messages, max_tokens, tools)
         body_data: dict[str, Any] = {
@@ -2352,6 +2467,7 @@ class OpenAICompatibleProvider:
                             on_delta=None if buffer_text_tool_response else on_delta,
                             on_usage=save_usage,
                             on_bytes=add_response_bytes,
+                            should_cancel=should_cancel,
                         )
                         metrics["response_body_complete"] = True
                     else:
@@ -2963,8 +3079,12 @@ class CodingToolbox:
 
     def read_file(self, path: str, start_line: int = 1, end_line: int = 400) -> str:
         target = self._resolve(path, allow_root=False)
-        if not target.exists() or not target.is_file():
+        if not target.exists():
             return f"文件不存在：{path}"
+        if target.is_dir():
+            return f"路径是目录，不能按文件读取：{path}；请用 list_files 查看目录内容。"
+        if not target.is_file():
+            return f"路径不是普通文件，不能读取：{path}"
         relative = target.relative_to(self.project_root).as_posix()
         key = relative.casefold()
         if key in self._context_readonly_paths and key not in self._context_overrides_by_key:
@@ -3410,25 +3530,39 @@ class CodingToolbox:
         self.ledger.append("tool_called", {"tool": "run_command", "command": command})
         execution["started_at"] = now_iso()
         execution_started = time.monotonic()
+        # Force UTF-8 for captured children: cmd.exe defaults to the OEM code
+        # page (for example cp936), so Chinese pytest/build output would be
+        # decoded as replacement characters by the UTF-8 reader below.
+        child_environment = dict(os.environ)
+        child_environment["PYTHONIOENCODING"] = "utf-8"
+        child_environment["PYTHONUTF8"] = "1"
+        if os.name == "nt":
+            # cmd.exe needs an explicit UTF-8 code page for native tools.
+            launch_command: Any = shell_command_arguments(command)
+            launch_extra: dict[str, Any] = {}
+        else:
+            # Preserve the previous POSIX behaviour (plain shell) instead of
+            # switching to the terminal's login-shell wrapper.
+            launch_command = command
+            launch_extra = {"shell": True}
         try:
             process = subprocess.Popen(
-                command,
+                launch_command,
                 cwd=self.project_root,
-                shell=True,
+                env=child_environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                **launch_extra,
                 **background_process_options(),
             )
             with self._active_command_lock:
                 self._active_command = process
             try:
-                output, _ = process.communicate(timeout=timeout)
+                output_bytes, _ = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 terminate_process_tree(process)
-                output, _ = process.communicate()
+                output_bytes, _ = process.communicate()
+                output = decode_process_output(output_bytes or b"")
                 self._finish_command_execution(
                     execution,
                     "timed_out",
@@ -3437,12 +3571,13 @@ class CodingToolbox:
                 )
                 return (
                     f"命令超时（{timeout}s），已终止。\n执行状态：timed_out；退出码：{process.returncode}"
-                    f"\n{(output or '')[-20000:]}"
+                    f"\n{output[-20000:]}"
                 )
             finally:
                 with self._active_command_lock:
                     if self._active_command is process:
                         self._active_command = None
+            output = decode_process_output(output_bytes or b"")
             if self._command_cancel.is_set():
                 self._finish_command_execution(
                     execution,
@@ -3453,7 +3588,7 @@ class CodingToolbox:
                 return (
                     "命令已取消，进程树已终止。\n"
                     f"执行状态：cancelled；退出码：{process.returncode}\n"
-                    f"{(output or '')[-4000:]}"
+                    f"{output[-4000:]}"
                 )
         except OSError as exc:
             self._finish_command_execution(
@@ -3462,7 +3597,7 @@ class CodingToolbox:
                 elapsed_ms=int((time.monotonic() - execution_started) * 1000),
             )
             raise PermanentError(f"命令启动失败：{exc}") from exc
-        output = (output or "")[-24000:]
+        output = output[-24000:]
         status = "passed" if process.returncode == 0 else "failed"
         self._finish_command_execution(
             execution,
@@ -3789,6 +3924,10 @@ class CodingAgent:
     MAX_SVG_ARTIFACT_TURNS = 10
     MAX_TOOL_FORMAT_RETRIES = 2
     MAX_EMPTY_RESPONSE_RETRIES = 2
+    # Weak models sometimes parrot the assistant placeholder the Harness
+    # inserted after rejecting malformed tool calls; that echo is not a result.
+    MAX_INTERNAL_ECHO_RETRIES = 1
+    INTERNAL_REJECTION_ECHO = "The Harness rejected an invalid tool-call response before execution."
     MAX_IDENTICAL_TOOL_RESULTS = 3
     MAX_PLAN_COMPLETION_RETRIES = 2
     MAX_SPECIALIST_CALLS_PER_TASK = 3
@@ -3800,6 +3939,37 @@ class CodingAgent:
     SVG_LOCAL_REPAIR_TOOLS = frozenset({"read_file", "replace_in_file", "apply_patch", "git_diff"})
     SVG_ARTIFACT_TOOLS = frozenset({"read_file", "write_file", "replace_in_file", "apply_patch", "git_diff"})
     BROWSER_TOOL_NAMES = CodingToolbox.BROWSER_TOOL_NAMES
+    # Tools that can create, modify, delete or execute something in the project.
+    MUTATING_TOOL_NAMES = frozenset({
+        "write_file",
+        "replace_in_file",
+        "apply_patch",
+        "run_command",
+        "delegate_research",
+        "delegate_parallel_research",
+    })
+    # "Show me an example, do NOT actually create anything" requests must not
+    # turn a model's demonstration into a real workspace change.
+    _EXAMPLE_ONLY_WITH_NEGATION = re.compile(
+        r"(?=.*(?:示例|例子|example))"
+        r"(?=.*(?:不要|别|无需|不需要|禁止|切勿|千万\s*(?:不要|别))"
+        r".{0,16}(?:真的|实际|直接|动手|去)?"
+        r".{0,8}(?:执行|调用|运行|创建|新建|写入|修改|生成|提交))",
+        re.IGNORECASE | re.DOTALL,
+    )
+    _NO_TOOL_CALL_REQUEST = re.compile(
+        r"(?:不要|别|禁止|切勿|千万\s*(?:不要|别))"
+        r".{0,16}(?:真的|实际|直接|去)?"
+        r".{0,8}(?:调用|执行)"
+        r"(?:任何|这些|该)?\s*(?:工具|tool)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    _NO_COMMIT_REQUEST = re.compile(
+        r"(?:不要|别|先\s*(?:不要|别)|暂时\s*(?:不要|别)|无需|不需要|请勿|切勿|禁止)"
+        r".{0,10}(?:自动)?\s*(?:提交|commit)"
+        r"|\b(?:do\s+not|don't|dont|never)\s+(?:auto[\s-]?)?commit\b",
+        re.IGNORECASE,
+    )
     EXPLICIT_COMMAND_INTENT = re.compile(
         r"\b(?:run|execute)\s+(?:(?:the|a)\s+)?(?:commands?|scripts?|tests?|test suite|checks?)\b"
         r"|\b(?:pytest|npm\s+test|python(?:\.exe)?\s+-m\s+pytest)\b"
@@ -3831,6 +4001,25 @@ class CodingAgent:
 - 保持比例与留白，避免遮挡、重叠和 `viewBox` 裁切。简单 SVG 少于 60 个元素并闭合标签；关键部件用可见几何表达，语义 `id` 唯一且不代替图形。
 - 创建后尽可能实际渲染，并对照原请求检查对象与关系。结构预检通过不证明视觉或语义正确；只有工具确实确认后才能声称已完成渲染/验证。简单图像/SVG 不用 shell 或下载。"""
 
+
+    @classmethod
+    def prompt_forbids_mutating_tools(cls, prompt: str) -> bool:
+        """Honor explicit "example only / do not call tools" instructions.
+
+        Weak models routinely ignore that sentence and emit a real tool call.
+        The Harness keeps read-only inspection available but refuses any
+        mutation so a demonstration cannot create or commit files.
+        """
+        text = str(prompt or "")
+        return bool(
+            cls._NO_TOOL_CALL_REQUEST.search(text)
+            or cls._EXAMPLE_ONLY_WITH_NEGATION.search(text)
+        )
+
+    @classmethod
+    def prompt_forbids_auto_commit(cls, prompt: str) -> bool:
+        """Let an explicit "don't commit yet" request keep changes local."""
+        return bool(cls._NO_COMMIT_REQUEST.search(str(prompt or "")))
 
     @classmethod
     def _system_prompt_for_task(cls, prompt: str) -> str:
@@ -6088,7 +6277,11 @@ class CodingAgent:
             self._emit("no_changes_detected", payload)
             return message
 
-        if not changed_paths and self._prompt_requests_file_changes(prompt):
+        if (
+            not changed_paths
+            and self._prompt_requests_file_changes(prompt)
+            and not self.prompt_forbids_mutating_tools(prompt)
+        ):
             no_change_warning = flag_no_changes(
                 "未检测到文件改动：任务描述看起来要求修改项目，但本次没有写入任何文件。"
                 "如果确实无需改动，请忽略此提醒。"
@@ -6101,7 +6294,23 @@ class CodingAgent:
         session["verification_required"] = False
         session["final_message"] = content
         commit_paths, skipped_paths = self.git.filter_auto_commit_paths(changed_paths)
-        session["git_result_sha"] = self.git.commit_paths(f"[codex] {summary}", commit_paths)
+        if self.prompt_forbids_auto_commit(prompt):
+            session["git_result_sha"] = ""
+            session["git_auto_commit_suppressed"] = bool(commit_paths)
+            if commit_paths:
+                note = "按你的要求未自动提交；改动保留在工作区，请在 Git 面板审核后手动提交。"
+                content = f"{content.rstrip()}\n\n{note}".strip()
+                session["final_message"] = content
+                self.ledger.append(
+                    "git_auto_commit_suppressed_by_user",
+                    {"session_id": session_id, "paths": sorted(commit_paths)},
+                )
+                self._emit(
+                    "git_auto_commit_suppressed_by_user",
+                    {"session_id": session_id, "paths": sorted(commit_paths), "message": note},
+                )
+        else:
+            session["git_result_sha"] = self.git.commit_paths(f"[codex] {summary}", commit_paths)
         session["git_auto_commit_skipped_paths"] = skipped_paths
         external_commit = ""
         if not session["git_result_sha"]:
@@ -6121,8 +6330,10 @@ class CodingAgent:
         if (
             not session["git_result_sha"]
             and not skipped_paths
+            and not commit_paths
             and not no_change_warning
             and self._prompt_requests_file_changes(prompt)
+            and not self.prompt_forbids_mutating_tools(prompt)
         ):
             # The model "edited" a file but nothing actually differs, so the
             # auto-commit was a no-op; say so instead of ending silently.
@@ -6259,6 +6470,30 @@ class CodingAgent:
                 if name not in allowed_tool_names:
                     raise PermanentError(f"Tool {name!r} is not available for this task.")
                 if (
+                    name in self.MUTATING_TOOL_NAMES
+                    and self.prompt_forbids_mutating_tools(prompt)
+                ):
+                    attempts = int(session.get("forbidden_mutation_attempts", 0) or 0) + 1
+                    session["forbidden_mutation_attempts"] = attempts
+                    if attempts >= 2:
+                        message = (
+                            "用户明确要求只给示例或不要调用工具，但模型仍重复调用写操作；"
+                            "Harness 已拒绝并停止任务，未修改任何文件。"
+                        )
+                        self.ledger.append(
+                            "forbidden_mutation_repeated",
+                            {
+                                "session_id": session_id,
+                                "tool": name,
+                                "attempts": attempts,
+                            },
+                        )
+                        raise TaskAborted(message)
+                    raise PermanentError(
+                        "用户明确要求只给示例或不要实际执行/调用工具；Harness 已拒绝该写操作，"
+                        "请直接用文字回复，不要再次调用工具。"
+                    )
+                if (
                     svg_preflight_pending
                     and name == "replace_in_file"
                     and "path" not in arguments
@@ -6365,6 +6600,8 @@ class CodingAgent:
                         )
                     else:
                         result = "工具调用缺少安全执行记录；是否执行过无法确定，本次没有运行。"
+            except TaskAborted:
+                raise
             except PatchReviewRejected as exc:
                 patch_stop_reason = str(exc)
                 result = f"工具执行失败：PatchReviewRejected: {exc}"
@@ -6624,6 +6861,7 @@ class CodingAgent:
         turn_limit = run_state["turn_limit"]
         workspace_revision = run_state["workspace_revision"]
         empty_response_retries = 0
+        internal_echo_retries = 0
 
         for turn in range(1, turn_limit + 1):
             self._raise_if_cancelled(session, session_id)
@@ -6670,6 +6908,7 @@ class CodingAgent:
                         "assistant_delta",
                         {"session_id": session_id, "turn": turn, "text": text},
                     )
+                    stream_options["should_cancel"] = self._cancel.is_set
                     reasoning_effort = (os.getenv("SCIDEV_REASONING_EFFORT") or "").strip()
                     if reasoning_effort:
                         stream_options["reasoning_effort"] = reasoning_effort
@@ -6699,13 +6938,19 @@ class CodingAgent:
                         "tool_count": len(tool_definitions),
                     },
                 )
-                message = provider.chat(
-                    request_messages,
-                    tools=tool_definitions,
-                    max_tokens=12000,
-                    request_id=request_id,
-                    **stream_options,
-                )
+                try:
+                    message = provider.chat(
+                        request_messages,
+                        tools=tool_definitions,
+                        max_tokens=12000,
+                        request_id=request_id,
+                        **stream_options,
+                    )
+                except TaskCancelled:
+                    # Turn the stream abort into the normal cancelled session
+                    # terminal state instead of a generic failure.
+                    self._raise_if_cancelled(session, session_id)
+                    raise
             content = self._text_content(message.get("content"))
             tool_calls = message.get("tool_calls") or []
             tool_parse_error = message.get("tool_parse_error")
@@ -6811,6 +7056,48 @@ class CodingAgent:
                         retry_feedback,
                         reason="invalid tool-call response",
                     )
+                session["updated_at"] = now_iso()
+                self._save_session(session)
+                continue
+            if (
+                not tool_calls
+                and content.strip().startswith(self.INTERNAL_REJECTION_ECHO)
+            ):
+                # The model repeated the Harness placeholder instead of doing
+                # work and instead of answering. Never present that as a
+                # completed task; ask once for a real result, then stop.
+                internal_echo_retries += 1
+                echo_event = {
+                    "session_id": session_id,
+                    "turn": turn,
+                    "retry": internal_echo_retries,
+                }
+                self.ledger.append("model_internal_prompt_echo", echo_event)
+                self._emit("model_internal_prompt_echo", echo_event)
+                if internal_echo_retries > self.MAX_INTERNAL_ECHO_RETRIES:
+                    error = (
+                        "模型复述了 Harness 的内部提示，没有给出任务结果或调用工具；"
+                        "为避免把内部提示当成完成答复，本次任务已停止。请重试或更换模型。"
+                    )
+                    session["status"] = "failed"
+                    session["error"] = error
+                    session["updated_at"] = now_iso()
+                    self.ledger.append(
+                        "coding_session_failed",
+                        {"session_id": session_id, "error": error},
+                    )
+                    self._save_session(session)
+                    self._emit("failed", {"session_id": session_id, "error": error})
+                    raise PermanentError(error)
+                self._append_followup_prompt(
+                    messages,
+                    session,
+                    session_id,
+                    turn,
+                    "上一条回复复述了 Harness 的内部提示，没有给出任务结果。"
+                    "请直接给出最终答复，或调用一个可用工具；不要复述内部提示。",
+                    reason="internal_prompt_echo",
+                )
                 session["updated_at"] = now_iso()
                 self._save_session(session)
                 continue

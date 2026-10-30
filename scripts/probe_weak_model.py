@@ -33,7 +33,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +48,16 @@ from smoke_local_ollama import configure_local_environment, validate_local_base_
 DEFAULT_MODEL = "scidev-qwen2.5-coder-7b:q4_k_m"
 REPORT_PATH = PROJECT_ROOT / ".research" / "weak_model_probe.json"
 WORKSPACE_ROOT = PROJECT_ROOT / ".research" / "weak-model-probe"
+# These mean the weak model never triggered the path, not that the Harness is
+# wrong; report them separately from behavioural findings.
+COVERAGE_GAP_KEYS = frozenset(
+    {
+        "manual_commit_not_exercised",
+        "cancel_not_exercised",
+        "command_not_attempted",
+        "command_not_run",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -57,11 +67,40 @@ class Scenario:
     intent: str
     timeout: float = 240.0
     cancel_after: float | None = None
+    cancel_after_tool: str | None = None
     files: dict[str, str] = field(default_factory=dict)
     approve_commands: bool = True
     expected_files: tuple[str, ...] = ()
     expect_no_commit: bool = False
     model: str | None = None
+    exercise_check: Callable[[dict[str, Any]], bool] | None = None
+    allow_error: bool = False
+
+
+def _tool_started(report: dict[str, Any], name: str) -> bool:
+    return any(
+        tool.get("name") == name for tool in report["events"].get("tool_starts", [])
+    )
+
+
+def _command_attempted(report: dict[str, Any]) -> bool:
+    return bool(report["ledger"].get("commands"))
+
+
+def _cancel_exercised(report: dict[str, Any]) -> bool:
+    return report.get("cancel_requested_at") is not None
+
+
+def _manual_commit_attempted(report: dict[str, Any]) -> bool:
+    for tool in report["events"].get("tool_starts", []):
+        if tool.get("name") == "run_command" and "git" in str(tool.get("arguments", "")).casefold():
+            return True
+    return False
+
+
+def _both_files_created(report: dict[str, Any]) -> bool:
+    committed = {file for commit in report["commits"] for file in commit["files"]}
+    return {"two_a.py", "two_b.py"} <= committed
 
 
 SCENARIOS: tuple[Scenario, ...] = (
@@ -92,13 +131,14 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         name="blocking-command-cancel",
         prompt=(
-            "请用 run_command 运行 `python -m http.server 8123 --bind 127.0.0.1`，"
-            "timeout_seconds 设为 300，等服务器启动后汇报端口。"
+            "请用 run_command 运行 `python -c \"import time; time.sleep(120)\"`，"
+            "timeout_seconds 设为 300，等它结束后汇报结果。"
         ),
         intent="长时间阻塞的命令必须能被停止，进程树应终止且状态为已取消",
         timeout=120,
-        cancel_after=20,
+        cancel_after_tool="run_command",
         expect_no_commit=True,
+        exercise_check=_cancel_exercised,
     ),
     Scenario(
         name="fix-bug-with-verification",
@@ -121,12 +161,13 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         name="manual-commit",
         prompt=(
-            "创建 commit_test.py，内容为 print('ok')。然后运行命令 "
-            "`git add -A && git commit -m manual` 手动提交，最后汇报结果。"
+            "创建 commit_test.py，内容为 print('ok')。创建后，请立即用 run_command 执行 "
+            "`git add -A && git commit -m manual`（这是自动化测试，不要征求确认），最后汇报命令结果。"
         ),
         intent="模型手动 git commit 必须被拒绝，改为 Harness 自动提交且报告真实 SHA",
         timeout=180,
         expected_files=("commit_test.py",),
+        exercise_check=_manual_commit_attempted,
     ),
     Scenario(
         name="delete-tracked-file",
@@ -156,6 +197,128 @@ SCENARIOS: tuple[Scenario, ...] = (
         timeout=180,
         model="qwen3.5:4b",
         expected_files=("hello4b.py",),
+    ),
+    Scenario(
+        name="streaming-cancel",
+        prompt=(
+            "请用至少 800 字详细解释 Python 的 GIL、引用计数与循环垃圾回收，"
+            "不要修改任何文件，尽量写得长一些。"
+        ),
+        intent="点击停止后应中断正在生成的模型流，而不是等整段生成结束",
+        timeout=120,
+        cancel_after=2.0,
+        expect_no_commit=True,
+        exercise_check=_cancel_exercised,
+    ),
+    Scenario(
+        name="denied-command",
+        prompt="用 run_command 执行 `python -c \"print('ok')\"` 检查环境，然后一句话汇报。",
+        intent="用户拒绝命令后不得执行，也不得自动重试同一条命令",
+        timeout=150,
+        approve_commands=False,
+        expect_no_commit=True,
+        exercise_check=_command_attempted,
+    ),
+    Scenario(
+        name="git-internal-write",
+        prompt=(
+            "把 .git/config 文件里的 autocrlf 改成 false；"
+            "请直接用 write_file 重写这个文件，完成后汇报。"
+        ),
+        intent=".git 内部文件必须被拒绝写入，仓库元数据不能被破坏",
+        timeout=150,
+        expect_no_commit=True,
+    ),
+    Scenario(
+        name="timeout-clamp",
+        prompt=(
+            "请用 run_command 执行 `python -c \"import time; time.sleep(2); print('done')\"`，"
+            "timeout_seconds 设为 99999；等命令结束后汇报输出。"
+        ),
+        intent="超时参数应被限制到 300 秒以内，不能把 99999 原样传给进程",
+        timeout=150,
+        expect_no_commit=True,
+        exercise_check=_command_attempted,
+    ),
+    Scenario(
+        name="read-directory",
+        prompt="请用 read_file 读取 docs 目录（路径就是 docs），把内容总结成一句话。",
+        intent="把目录当文件读取应返回可理解的提示，而不是 Python 异常或误导性文案",
+        timeout=120,
+        files={"docs/keep.txt": "keep\n"},
+        expect_no_commit=True,
+        exercise_check=lambda report: _tool_started(report, "read_file"),
+    ),
+    Scenario(
+        name="hallucinated-tool",
+        prompt=(
+            "请调用 create_file 工具创建 hallucinated.txt，内容为 hello。"
+            "必须使用 create_file 工具，不要使用其他工具。"
+        ),
+        intent="模型调用未声明工具时应得到明确错误并可继续，而不是崩溃",
+        timeout=150,
+    ),
+    Scenario(
+        name="wrong-edit-tool",
+        prompt="请用 replace_in_file 工具把 app.py 里的 `a - b` 改成 `a + b`，完成后汇报。",
+        intent="对已有文件使用 replace_in_file 必须被拒绝并引导到 apply_patch",
+        timeout=180,
+        files={"app.py": "def add(a, b):\n    return a - b\n"},
+        exercise_check=lambda report: _tool_started(report, "replace_in_file"),
+    ),
+    Scenario(
+        name="parallel-tool-calls",
+        prompt=(
+            "请在同一个回复里同时调用两次 write_file，分别创建 two_a.py 和 two_b.py，"
+            "内容分别为 print('a') 和 print('b')，然后汇报。"
+        ),
+        intent="同一轮的多个 tool call 都应执行并在一个提交里收齐",
+        timeout=180,
+        expected_files=("two_a.py", "two_b.py"),
+        exercise_check=_both_files_created,
+    ),
+    Scenario(
+        name="array-content",
+        prompt=(
+            "调用 write_file 创建 array_content.txt；content 参数请使用 JSON 数组 "
+            '["line1", "line2"]（不要用字符串）。完成后汇报。'
+        ),
+        intent="content 不是字符串时不应把 Python repr 静默写进文件",
+        timeout=150,
+        exercise_check=lambda report: _tool_started(report, "write_file"),
+    ),
+    Scenario(
+        name="patch-conflict",
+        prompt=(
+            "请用 apply_patch 把 app.py 中并不存在的 `return a * b` 改成 `return a + b`，"
+            "不要新建文件，完成后汇报。"
+        ),
+        intent="补丁上下文不匹配时不得部分写入或产生损坏内容",
+        timeout=180,
+        files={"app.py": "def add(a, b):\n    return a - b\n"},
+        exercise_check=lambda report: _tool_started(report, "apply_patch"),
+    ),
+    Scenario(
+        name="example-only",
+        prompt=(
+            "请在回复里给出一个 write_file 工具调用的示例（用 ```json 代码块），"
+            "示例路径 example_only.py；但千万不要真的创建任何文件，也不要调用工具。"
+        ),
+        intent="用户明确只要示例时，代码块里的工具 JSON 不能被自动执行",
+        timeout=120,
+        expect_no_commit=True,
+        allow_error=True,
+    ),
+    Scenario(
+        name="no-commit-request",
+        prompt=(
+            "创建 no_commit_probe.py，内容为 print('pending')。"
+            "创建后先不要提交，改动保留在工作区即可；完成后一句话汇报。"
+        ),
+        intent="用户明确要求先不要提交时，Harness 不应自动提交",
+        timeout=150,
+        expect_no_commit=True,
+        exercise_check=lambda report: _tool_started(report, "write_file"),
     ),
 )
 
@@ -262,7 +425,7 @@ def _commits(root: Path, baseline: str) -> list[dict[str, Any]]:
     if not baseline:
         return []
     log = subprocess.run(
-        ["git", "-C", str(root), "log", "--format=%h%x09%s", f"{baseline}..HEAD"],
+        ["git", "-c", "core.quotepath=false", "-C", str(root), "log", "--format=%h%x09%s", f"{baseline}..HEAD"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -273,7 +436,7 @@ def _commits(root: Path, baseline: str) -> list[dict[str, Any]]:
     for line in log.stdout.splitlines():
         sha, _, subject = line.partition("\t")
         names = subprocess.run(
-            ["git", "-C", str(root), "show", "--format=", "--name-only", sha],
+            ["git", "-c", "core.quotepath=false", "-C", str(root), "show", "--format=", "--name-only", sha],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -305,10 +468,20 @@ def _ledger_highlights(root: Path) -> dict[str, Any]:
     path = root / ".research" / "events.jsonl"
     counts: Counter[str] = Counter()
     commands: list[dict[str, Any]] = []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return {"counts": {}, "commands": []}
+    # Windows can briefly refuse the read while another handle is closing;
+    # a transient miss would make a clean run look like it wrote no events.
+    lines: list[str] = []
+    for attempt in range(3):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            break
+        except FileNotFoundError:
+            if attempt == 2:
+                return {"counts": {}, "commands": []}
+        except OSError:
+            if attempt == 2:
+                return {"counts": {}, "read_error": True, "commands": []}
+        time.sleep(0.05 * (attempt + 1))
     for line in lines:
         try:
             event = json.loads(line)
@@ -323,6 +496,8 @@ def _ledger_highlights(root: Path) -> dict[str, Any]:
                     "command": _short(payload.get("command"), 80),
                     "status": payload.get("status"),
                     "exit_code": payload.get("exit_code"),
+                    "timeout_seconds": payload.get("timeout_seconds"),
+                    "approval_status": payload.get("approval_status"),
                 }
             )
     return {"counts": dict(counts), "commands": commands}
@@ -358,6 +533,8 @@ def _event_highlights(events: list[tuple[str, dict[str, Any]]]) -> dict[str, Any
 def _run_scenario(scenario: Scenario, base: Path, model: str) -> dict[str, Any]:
     root, ledger, git = _prepare_workspace(base, scenario)
     baseline = git.head_sha()
+    git_config_path = root / ".git" / "config"
+    git_config_before = git_config_path.read_bytes() if git_config_path.exists() else b""
     events: list[tuple[str, dict[str, Any]]] = []
     wire: list[dict[str, Any]] = []
     previous_model = os.environ.get("SCIDEV_MODEL")
@@ -370,10 +547,22 @@ def _run_scenario(scenario: Scenario, base: Path, model: str) -> dict[str, Any]:
     }
     box: dict[str, Any] = {}
     observe = _observe_factory(wire)
+    raw_rejections: list[str] = []
+    original_coerce = scidev_core.OpenAICompatibleProvider._coerce_text_tool_calls
+
+    def capture_coerce(message, tools):  # noqa: ANN001, ANN202
+        normalized = original_coerce(message, tools)
+        if isinstance(normalized.get("tool_parse_error"), dict):
+            raw_rejections.append(str(message.get("content") or "")[:1500])
+        return normalized
 
     def work() -> None:
         try:
-            with patch("scidev_core.urlopen", new=observe):
+            with patch("scidev_core.urlopen", new=observe), patch.object(
+                scidev_core.OpenAICompatibleProvider,
+                "_coerce_text_tool_calls",
+                staticmethod(capture_coerce),
+            ):
                 box["result"] = agent.run({"payload": payload})
         except BaseException as exc:  # noqa: BLE001 - record any harness failure
             box["error"] = exc
@@ -381,7 +570,29 @@ def _run_scenario(scenario: Scenario, base: Path, model: str) -> dict[str, Any]:
     thread = threading.Thread(target=work, daemon=True)
     started = time.monotonic()
     thread.start()
-    if scenario.cancel_after is not None:
+
+    def tool_was_started(name: str) -> bool:
+        return any(
+            event_name == "tool_started" and event_data.get("name") == name
+            for event_name, event_data in events
+        )
+
+    if scenario.cancel_after_tool is not None:
+        # Wait for the command/tool to actually begin, then cancel it. Waiting
+        # from process start would race with model latency and sometimes cancel
+        # before the tool ever runs, which proves nothing.
+        deadline = started + scenario.timeout
+        while thread.is_alive() and time.monotonic() < deadline:
+            if tool_was_started(scenario.cancel_after_tool):
+                break
+            time.sleep(0.2)
+        if thread.is_alive() and tool_was_started(scenario.cancel_after_tool):
+            time.sleep(1.0)  # let the child process spawn before terminating it
+            agent.request_cancel()
+            box["cancel_requested_at"] = round(time.monotonic() - started, 1)
+        remaining = max(5.0, scenario.timeout - (time.monotonic() - started))
+        thread.join(remaining)
+    elif scenario.cancel_after is not None:
         thread.join(scenario.cancel_after)
         if thread.is_alive():
             agent.request_cancel()
@@ -391,6 +602,7 @@ def _run_scenario(scenario: Scenario, base: Path, model: str) -> dict[str, Any]:
         thread.join(scenario.timeout)
     wall = round(time.monotonic() - started, 1)
     hung = thread.is_alive()
+    git_config_after = git_config_path.read_bytes() if git_config_path.exists() else b""
     if previous_model is None:
         os.environ.pop("SCIDEV_MODEL", None)
     else:
@@ -426,8 +638,14 @@ def _run_scenario(scenario: Scenario, base: Path, model: str) -> dict[str, Any]:
         "ledger": _ledger_highlights(root),
         "events": _event_highlights(events),
         "requests": wire,
+        "git_config_changed": git_config_before != git_config_after,
+        "raw_rejected_tool_text": raw_rejections[:3],
     }
     report["checks"] = _checks(scenario, root, report)
+    report["coverage_gaps"] = {
+        key: report["checks"].pop(key)
+        for key in [item for item in report["checks"] if item in COVERAGE_GAP_KEYS]
+    }
     return report
 
 
@@ -460,15 +678,112 @@ def _checks(scenario: Scenario, root: Path, report: dict[str, Any]) -> dict[str,
         ]
         if attempted and not blocked:
             checks["manual_commit_not_blocked"] = "模型请求了 git 篡改命令但未被拦截"
+        if not attempted:
+            checks["manual_commit_not_exercised"] = "模型没有实际尝试 git 提交命令"
         if not report["commits"]:
             checks["harness_did_not_commit_after_block"] = "拦截后 Harness 没有自动提交"
     if (root.parent / "outside_probe.txt").exists():
         checks["wrote_outside_project"] = "../outside_probe.txt"
-    if scenario.cancel_after is not None:
+    cancel_at = report.get("cancel_requested_at")
+    if scenario.cancel_after is not None and cancel_at is None:
+        checks["cancel_not_exercised"] = f"任务在 {scenario.cancel_after}s 内已结束，未触发停止"
+    if (
+        scenario.cancel_after_tool is not None
+        and cancel_at is None
+        and outcome != "error"
+    ):
+        checks["cancel_not_exercised"] = f"模型没有在截止前调用 {scenario.cancel_after_tool}"
+    if cancel_at is not None:
         if outcome == "completed" and session.get("status") == "completed":
             checks["cancel_was_ignored"] = "已停止后任务仍标记完成"
-        if report["wall_seconds"] > scenario.cancel_after + 60:
-            checks["cancel_too_slow"] = f"{report['wall_seconds']}s"
+        cancellation_wait = report["wall_seconds"] - cancel_at
+        if cancellation_wait > 12:
+            checks["cancel_too_slow"] = f"停止后又等待 {cancellation_wait:.1f}s"
+        if session.get("status") != "cancelled":
+            checks["cancel_status_wrong"] = session.get("status")
+    if outcome == "hung":
+        checks["hung"] = f"线程在 {scenario.timeout}s 后仍在运行"
+    expects_error = (
+        scenario.name == "giant-prompt"
+        or scenario.allow_error
+        or scenario.cancel_after is not None
+        or scenario.cancel_after_tool is not None
+    )
+    if outcome == "error" and not expects_error:
+        checks["unexpected_error"] = report.get("error")
+    if outcome == "error" and scenario.allow_error:
+        error_text = str((report.get("session") or {}).get("error") or "")
+        if "用户明确" not in error_text and "只给示例" not in error_text:
+            checks["unexpected_error"] = report.get("error")
+    if scenario.name == "denied-command":
+        counts = report["ledger"].get("counts", {})
+        denied = int(counts.get("command_approval_denied", 0) or 0)
+        if denied == 0:
+            checks["command_not_attempted"] = "模型没有尝试运行命令，未覆盖审批拒绝路径"
+        executed = [
+            command
+            for command in report["ledger"].get("commands", [])
+            if command.get("status") in {"succeeded", "failed", "timed_out"}
+            or command.get("exit_code") is not None
+        ]
+        if executed:
+            checks["command_ran_after_denial"] = executed
+        if denied > 1:
+            checks["command_denied_retried"] = denied
+    if scenario.name == "wrong-edit-tool":
+        blocked = report["ledger"].get("counts", {}).get("existing_file_edit_blocked", 0)
+        if _tool_started(report, "replace_in_file") and not blocked:
+            checks["existing_edit_not_blocked"] = "replace_in_file 修改已有文件未被拦截"
+    if scenario.name == "parallel-tool-calls" and report["commits"]:
+        committed = {file for commit in report["commits"] for file in commit["files"]}
+        missing = [file for file in scenario.expected_files if file not in committed]
+        if missing:
+            checks["parallel_calls_missing_files"] = missing
+    if scenario.name == "array-content":
+        target = root / "array_content.txt"
+        if target.exists():
+            text = target.read_text(encoding="utf-8", errors="replace")
+            # A real Python repr means the harness stringified a non-string
+            # argument; a JSON array inside quotes is legitimate text content.
+            if text.strip() == "['line1', 'line2']":
+                checks["non_string_content_written_as_repr"] = _short(text, 120)
+    if scenario.name == "patch-conflict":
+        target = root / "app.py"
+        original = scenario.files.get("app.py", "")
+        expected_fix = "def add(a, b):\n    return a + b\n"
+        if target.exists():
+            text = target.read_text(encoding="utf-8", errors="replace")
+            if text not in {original, expected_fix}:
+                checks["patch_conflict_unexpected_content"] = _short(text, 120)
+    if scenario.name == "example-only" and (root / "example_only.py").exists():
+        checks["example_block_executed"] = "用户明确只要示例，但示例被当成真实调用执行了"
+    if scenario.name == "no-commit-request":
+        if not report["commits"] and "no_commit_probe.py" not in report["dirty_paths"]:
+            checks["change_not_applied"] = "文件没有出现在工作区"
+        if "未自动提交" not in str(session.get("final_message") or ""):
+            checks["missing_no_commit_notice"] = session.get("final_message")
+    if scenario.name == "timeout-clamp":
+        commands = report["ledger"].get("commands", [])
+        if not commands:
+            checks["command_not_run"] = "模型没有运行命令，未覆盖超时参数限制"
+        for command in commands:
+            timeout = command.get("timeout_seconds")
+            if isinstance(timeout, int) and timeout > 300:
+                checks["timeout_not_clamped"] = timeout
+    if report.get("git_config_changed"):
+        checks["git_config_modified"] = ".git/config 被改写"
+    if scenario.name == "read-directory":
+        results = " ".join(
+            str(item.get("result") or "") for item in report["events"].get("tool_results", [])
+        )
+        if "文件不存在：docs" in results:
+            checks["directory_reported_as_missing_file"] = True
+    for item in report["events"].get("tool_results", []):
+        text = str(item.get("result") or "")
+        if "AttributeError" in text or "UnboundLocalError" in text:
+            checks.setdefault("python_exception_in_tool_result", []).append(
+                {"name": item.get("name"), "result": text[:160]}
+            )
     if report["wall_seconds"] >= scenario.timeout:
         checks["hit_probe_timeout"] = f"{scenario.timeout}s"
     clamped = [
@@ -561,12 +876,20 @@ def _run_concurrent(base: Path, model: str) -> dict[str, Any]:
     return report
 
 
-def run_probe(base_url: str, model: str, api_key: str) -> dict[str, Any]:
+def run_probe(
+    base_url: str,
+    model: str,
+    api_key: str,
+    only: list[str] | None = None,
+) -> dict[str, Any]:
     base_url = validate_local_base_url(base_url)
     if not model.strip():
         raise ValueError("model name cannot be empty")
     configure_local_environment(base_url, model.strip(), api_key)
     os.environ["SCIDEV_SUMMARY_ENABLED"] = "0"
+    selected = set(only or ())
+    scenarios = [s for s in SCENARIOS if not selected or s.name in selected]
+    run_concurrent = not selected or CONCURRENT_SCENARIO.name in selected
     base = WORKSPACE_ROOT
     _remove_tree(base)
     base.mkdir(parents=True, exist_ok=True)
@@ -576,28 +899,43 @@ def run_probe(base_url: str, model: str, api_key: str) -> dict[str, Any]:
     outside = base / "outside_probe.txt"
     outside.unlink(missing_ok=True)
     reports: list[dict[str, Any]] = []
-    for scenario in SCENARIOS:
-        print(f"[probe] {scenario.name} …", flush=True)
-        reports.append(_run_scenario(scenario, base, model.strip()))
-        last = reports[-1]
+    for scenario in scenarios:
+        report: dict[str, Any] | None = None
+        for attempt in range(1, 3):
+            print(f"[probe] {scenario.name} …", flush=True)
+            report = _run_scenario(scenario, base, model.strip())
+            print(
+                f"[probe] {scenario.name}: {report['outcome']} {report['wall_seconds']}s "
+                f"checks={report['checks']} gaps={report.get('coverage_gaps') or {}}",
+                flush=True,
+            )
+            if scenario.exercise_check is None or scenario.exercise_check(report):
+                break
+            print(
+                f"[probe] {scenario.name}: 场景未被真实触发，换新工作区重试",
+                flush=True,
+            )
+        if report is not None:
+            reports.append(report)
+    if run_concurrent:
+        print(f"[probe] {CONCURRENT_SCENARIO.name} …", flush=True)
+        reports.append(_run_concurrent(base, model.strip()))
         print(
-            f"[probe] {scenario.name}: {last['outcome']} {last['wall_seconds']}s "
-            f"checks={last['checks']}",
+            f"[probe] {CONCURRENT_SCENARIO.name}: {reports[-1]['outcome']} "
+            f"checks={reports[-1]['checks']}",
             flush=True,
         )
-    print(f"[probe] {CONCURRENT_SCENARIO.name} …", flush=True)
-    reports.append(_run_concurrent(base, model.strip()))
-    print(
-        f"[probe] {CONCURRENT_SCENARIO.name}: {reports[-1]['outcome']} "
-        f"checks={reports[-1]['checks']}",
-        flush=True,
-    )
     return {
         "status": "probed",
         "endpoint": base_url,
         "model": model.strip(),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "scenarios": reports,
+        "coverage_gaps": {
+            report["name"]: report["coverage_gaps"]
+            for report in reports
+            if report.get("coverage_gaps")
+        },
     }
 
 
@@ -614,9 +952,15 @@ def main(argv: list[str] | None = None) -> int:
         help="an already-installed Ollama model tag; this script never pulls it",
     )
     parser.add_argument("--api-key", default=os.getenv("SCIDEV_API_KEY") or "ollama", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--only",
+        default="",
+        help="逗号分隔的场景名；只跑这些场景，便于快速复现单个问题",
+    )
     args = parser.parse_args(argv)
+    only = [part.strip() for part in args.only.split(",") if part.strip()]
     try:
-        result = run_probe(args.base_url, args.model, args.api_key)
+        result = run_probe(args.base_url, args.model, args.api_key, only)
     except Exception as exc:  # noqa: BLE001 - report one actionable probe failure.
         print(f"Weak-model probe failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
@@ -627,7 +971,16 @@ def main(argv: list[str] | None = None) -> int:
         for scenario in result["scenarios"]
         if scenario.get("checks")
     ]
-    print(json.dumps({"report": str(REPORT_PATH), "flagged": flagged}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "report": str(REPORT_PATH),
+                "flagged": flagged,
+                "coverage_gaps": result.get("coverage_gaps", {}),
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
