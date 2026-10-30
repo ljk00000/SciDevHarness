@@ -4861,6 +4861,7 @@ class CancellationTests(unittest.TestCase):
                     return False
 
                 def __iter__(self):
+                    stream_started.set()
                     chunk = (
                         b'data: {"choices":[{"index":0,"delta":{"content":"x"},'
                         b'"finish_reason":null}]}\n\n'
@@ -4872,6 +4873,7 @@ class CancellationTests(unittest.TestCase):
 
             errors: list[BaseException] = []
             started = time.monotonic()
+            stream_started = threading.Event()
 
             def execute() -> None:
                 try:
@@ -4888,11 +4890,13 @@ class CancellationTests(unittest.TestCase):
 
             worker = threading.Thread(target=execute, daemon=True)
             worker.start()
-            time.sleep(0.6)
+            self.assertTrue(stream_started.wait(15), "model stream never started")
+            cancel_requested = time.monotonic()
             agent.request_cancel()
             worker.join(10)
             self.assertFalse(worker.is_alive())
-            self.assertLess(time.monotonic() - started, 8)
+            self.assertLess(time.monotonic() - cancel_requested, 5)
+            self.assertLess(time.monotonic() - started, 20)
             self.assertTrue(errors)
             self.assertIn("任务已取消", str(errors[-1]))
             session = json.loads(
