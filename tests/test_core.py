@@ -26,6 +26,7 @@ from scidev_core import (
     EventLedger,
     GitManager,
     OpenAICompatibleProvider,
+    PatchError,
     PermanentError,
     RetryQueue,
     RetryableError,
@@ -4220,6 +4221,66 @@ class CoreTests(unittest.TestCase):
             self.assertIn("list_files", message)
             self.assertNotIn("文件不存在", message)
 
+    def test_read_file_beyond_the_end_reports_the_real_line_count(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-read-range-") as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(root, EventLedger(root))
+            (root / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+            message = toolbox.read_file("app.py", start_line=999)
+            self.assertIn("起始行 999 超出文件总行数 3", message)
+            self.assertNotIn("（空文件）", message)
+            (root / "empty.py").write_text("", encoding="utf-8")
+            self.assertIn("（空文件）", toolbox.read_file("empty.py"))
+            with self.assertRaisesRegex(PermanentError, "start_line/end_line 必须是整数"):
+                toolbox.read_file("app.py", start_line="abc")
+            with self.assertRaisesRegex(PermanentError, "depth 必须是整数"):
+                toolbox.list_files(".", depth="all")
+
+    def test_tool_rejects_undocumented_arguments_with_a_clear_message(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-tool-args-") as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(root, EventLedger(root))
+            with self.assertRaisesRegex(PermanentError, "不支持参数：reason"):
+                toolbox.execute(
+                    "write_file",
+                    {"path": "note.txt", "content": "hello\n", "reason": "because"},
+                )
+            self.assertFalse((root / "note.txt").exists())
+            with self.assertRaisesRegex(PermanentError, "缺少必填参数：content"):
+                toolbox.execute("write_file", {"path": "note.txt"})
+
+    def test_file_tools_reject_non_string_payloads_instead_of_writing_repr(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-non-string-args-") as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(root, EventLedger(root))
+            with self.assertRaisesRegex(PermanentError, "content 必须是字符串"):
+                toolbox.execute(
+                    "write_file",
+                    {"path": "array.txt", "content": ["line1", "line2"]},
+                )
+            self.assertFalse((root / "array.txt").exists())
+            (root / "app.py").write_text("value = 1\n", encoding="utf-8")
+            with self.assertRaisesRegex(PermanentError, "old_text/new_text 必须是字符串"):
+                toolbox.execute(
+                    "replace_in_file",
+                    {"path": "app.py", "old_text": ["value = 1"], "new_text": "value = 2\n"},
+                )
+            with self.assertRaisesRegex(PermanentError, "patch 必须是非空字符串"):
+                toolbox.execute("apply_patch", {"patch": [{"path": "app.py"}]})
+
+    def test_patch_with_read_file_line_numbers_gets_a_specific_hint(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-patch-line-numbers-") as temp:
+            root = Path(temp)
+            (root / "app.py").write_text("old line\n", encoding="utf-8")
+            toolbox = CodingToolbox(root, EventLedger(root))
+            patch = (
+                "*** Begin Patch\n*** Update File: app.py\n@@\n"
+                "1: old line\n+new line\n*** End Patch\n"
+            )
+            with self.assertRaisesRegex(PatchError, "行号前缀"):
+                toolbox.apply_patch(patch)
+            self.assertEqual((root / "app.py").read_text(encoding="utf-8"), "old line\n")
+
     def test_git_probe_is_safe_when_git_cli_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             git = GitManager(Path(temp))
@@ -4843,6 +4904,86 @@ class CancellationTests(unittest.TestCase):
                 (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
             )
 
+    def test_cancel_during_command_approval_does_not_execute(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-approval-cancel-") as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(
+                root,
+                EventLedger(root),
+                command_approval=lambda _command, _timeout: (time.sleep(1.0), True)[1],
+            )
+            marker = root / "marker.txt"
+            errors: list[BaseException] = []
+
+            def execute() -> None:
+                try:
+                    toolbox.run_command("echo ran > marker.txt", timeout_seconds=10)
+                except BaseException as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+            worker = threading.Thread(target=execute, daemon=True)
+            worker.start()
+            time.sleep(0.2)
+            toolbox.cancel_running_command()
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertFalse(marker.exists())
+            self.assertTrue(errors)
+            self.assertIn("任务已取消", str(errors[-1]))
+            self.assertEqual(toolbox.last_command_execution["status"], "cancelled")
+
+    def test_cancel_during_patch_review_does_not_apply(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-patch-cancel-") as temp:
+            root = Path(temp)
+            source = root / "app.py"
+            original = "def add(a, b):\n    return a - b\n"
+            source.write_text(original, encoding="utf-8")
+            review_started = threading.Event()
+            cancel = threading.Event()
+
+            def review(preview: dict[str, Any]) -> set[int]:
+                review_started.set()
+                time.sleep(1.0)
+                return {int(hunk["id"]) for hunk in preview["hunks"]}
+
+            toolbox = CodingToolbox(root, EventLedger(root), patch_review=review)
+            toolbox.cancel_event = cancel
+            patch = (
+                "*** Begin Patch\n*** Update File: app.py\n@@\n"
+                "-    return a - b\n+    return a + b\n*** End Patch\n"
+            )
+            errors: list[BaseException] = []
+
+            def execute() -> None:
+                try:
+                    toolbox.apply_patch(patch)
+                except BaseException as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+            worker = threading.Thread(target=execute, daemon=True)
+            worker.start()
+            self.assertTrue(review_started.wait(5))
+            cancel.set()
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
+            self.assertTrue(errors)
+            self.assertIn("任务已取消", str(errors[-1]))
+            self.assertIn(
+                "patch_cancelled_before_apply",
+                (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
+            )
+
+    def test_agent_shares_its_cancel_event_with_the_toolbox(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-cancel-share-") as temp:
+            root = Path(temp)
+            agent = CodingAgent(
+                root, EventLedger(root), GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            self.assertIs(agent.toolbox.cancel_event, agent._cancel)
+
 
 class ToolLoopGuardTests(unittest.TestCase):
     def test_identical_failing_tool_calls_stop_instead_of_burning_turns(self) -> None:
@@ -5105,6 +5246,12 @@ class GitCommitOwnershipTests(unittest.TestCase):
             )
             self.assertIn("没有产生可提交的改动", str(session.get("final_message")))
 
+    def test_no_commit_detection_ignores_reports_and_requires_a_commit_request(self) -> None:
+        self.assertTrue(CodingAgent.prompt_forbids_auto_commit("先不要提交，改动保留在工作区"))
+        self.assertTrue(CodingAgent.prompt_forbids_auto_commit("不要提交任何改动"))
+        self.assertFalse(CodingAgent.prompt_forbids_auto_commit("不需要提交测试报告，只改代码"))
+        self.assertFalse(CodingAgent.prompt_forbids_auto_commit("直接修改代码并提交"))
+
     def test_explicit_no_commit_request_keeps_changes_in_the_workspace(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-no-commit-request-") as temp:
             root = Path(temp)
@@ -5196,6 +5343,129 @@ class MalformedToolCallTests(unittest.TestCase):
                 (root / ".research" / "sessions" / "malformed-args.json").read_text(encoding="utf-8")
             )
             self.assertEqual(session.get("status"), "completed")
+
+    def test_tool_error_echo_is_retried_instead_of_reported_as_completed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-tool-error-echo-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            git.init()
+            git.commit_changes("baseline")
+
+            class EchoProvider:
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def chat(self, messages, tools=None, max_tokens=12000, request_id="", **_options):
+                    self.calls += 1
+                    if self.calls == 1:
+                        return {
+                            "role": "assistant",
+                            "content": "尝试应用补丁。",
+                            "tool_calls": [{
+                                "id": "call_patch",
+                                "type": "function",
+                                "function": {
+                                    "name": "apply_patch",
+                                    "arguments": json.dumps({"patch": (
+                                        "*** Begin Patch\n*** Update File: app.py\n@@\n"
+                                        "1: old line\n+new line\n*** End Patch\n"
+                                    )}),
+                                },
+                            }],
+                        }
+                    if self.calls == 2:
+                        for message in reversed(messages):
+                            if message.get("role") == "tool":
+                                return {
+                                    "role": "assistant",
+                                    "content": str(message.get("content") or ""),
+                                    "tool_calls": [],
+                                }
+                    return {"role": "assistant", "content": "已修正问题，任务结束。", "tool_calls": []}
+
+            provider = EchoProvider()
+            agent = CodingAgent(
+                root, ledger, git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                agent.run({
+                    "payload": {
+                        "session_id": "tool-error-echo",
+                        "prompt": "把 app.py 中的 old line 改成 new line",
+                        "planning_mode": "off",
+                    },
+                })
+            events = (root / ".research" / "events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("model_tool_error_echo", events)
+            session = json.loads(
+                (root / ".research" / "sessions" / "tool-error-echo.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session.get("status"), "completed")
+            self.assertIn("已修正问题", str(session.get("final_message") or ""))
+
+    def test_repeated_tool_error_echo_fails_instead_of_completing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-tool-error-echo-twice-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            git = GitManager(root)
+            git.init()
+            git.commit_changes("baseline")
+
+            class AlwaysEchoProvider:
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def chat(self, messages, tools=None, max_tokens=12000, request_id="", **_options):
+                    self.calls += 1
+                    if self.calls == 1:
+                        return {
+                            "role": "assistant",
+                            "content": "尝试应用补丁。",
+                            "tool_calls": [{
+                                "id": "call_patch",
+                                "type": "function",
+                                "function": {
+                                    "name": "apply_patch",
+                                    "arguments": json.dumps({"patch": (
+                                        "*** Begin Patch\n*** Update File: app.py\n@@\n"
+                                        "1: old line\n+new line\n*** End Patch\n"
+                                    )}),
+                                },
+                            }],
+                        }
+                    for message in reversed(messages):
+                        if message.get("role") == "tool":
+                            return {
+                                "role": "assistant",
+                                "content": str(message.get("content") or ""),
+                                "tool_calls": [],
+                            }
+                    return {"role": "assistant", "content": "空", "tool_calls": []}
+
+            agent = CodingAgent(
+                root, ledger, git,
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=False,
+            )
+            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=AlwaysEchoProvider()):
+                with self.assertRaises(PermanentError):
+                    agent.run({
+                        "payload": {
+                            "session_id": "tool-error-echo-twice",
+                            "prompt": "把 app.py 中的 old line 改成 new line",
+                            "planning_mode": "off",
+                        },
+                    })
+            session = json.loads(
+                (root / ".research" / "sessions" / "tool-error-echo-twice.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(session.get("status"), "failed")
+            self.assertIn("复述了工具执行失败信息", str(session.get("error") or ""))
 
     def test_multiple_objects_in_one_tool_envelope_are_all_parsed(self) -> None:
         tools = [{
@@ -5339,6 +5609,23 @@ class MalformedToolCallTests(unittest.TestCase):
                 "只给示例",
                 (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
             )
+
+    def test_english_example_only_prompt_also_blocks_mutations(self) -> None:
+        self.assertTrue(
+            CodingAgent.prompt_forbids_mutating_tools(
+                "Show me an example write_file call, but do not actually create any files."
+            )
+        )
+        self.assertTrue(
+            CodingAgent.prompt_forbids_mutating_tools(
+                "Explain the tool and do not call any tools."
+            )
+        )
+        self.assertFalse(
+            CodingAgent.prompt_forbids_mutating_tools(
+                "Show an example and then create app.py."
+            )
+        )
 
     def test_repeated_forbidden_mutation_stops_with_a_clear_error(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-example-repeat-") as temp:

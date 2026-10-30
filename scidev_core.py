@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import copy
 import errno
+import inspect
 import ipaddress
 import json
 import difflib
@@ -2584,6 +2585,9 @@ class CodingToolbox:
         self._active_command_lock = threading.Lock()
         self._active_command: subprocess.Popen[str] | None = None
         self._command_cancel = threading.Event()
+        # Shared with CodingAgent.request_cancel so a review dialog cannot apply
+        # a patch after the user pressed Stop.
+        self.cancel_event: threading.Event | None = None
         self.last_patch_result: dict[str, Any] | None = None
         self.context_overrides: dict[str, str] = {}
         self._context_overrides_by_key: dict[str, str] = {}
@@ -3044,7 +3048,11 @@ class CodingToolbox:
             return f"路径不存在：{path}"
         if base.is_file():
             return str(base.relative_to(self.project_root))
-        max_depth = max(1, min(int(depth or 3), 5))
+        try:
+            requested_depth = int(depth or 3)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise PermanentError("list_files 的 depth 必须是整数") from exc
+        max_depth = max(1, min(requested_depth, 5))
         result: list[str] = []
         queue_items: list[tuple[Path, int, str]] = [(base, 0, "")]
         while queue_items and len(result) < 500:
@@ -3108,8 +3116,19 @@ class CodingToolbox:
         if len(text.encode("utf-8")) > self.MAX_CONTEXT_FILE_BYTES:
             raise PermanentError(f"源文件过大（上限 {self.MAX_CONTEXT_FILE_BYTES} bytes）")
         lines = text.splitlines()
-        start = max(1, int(start_line or 1))
-        end = min(len(lines), max(start, int(end_line or 400)), start + 399)
+        try:
+            start = max(1, int(start_line or 1))
+            requested_end = int(end_line or 400)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise PermanentError("read_file 的 start_line/end_line 必须是整数") from exc
+        if not lines:
+            return "（空文件）" + note
+        if start > len(lines):
+            return (
+                f"起始行 {start} 超出文件总行数 {len(lines)}；"
+                f"请从 1 到 {len(lines)} 之间读取。" + note
+            )
+        end = min(len(lines), max(start, requested_end), start + 399)
         selected = []
         output_chars = 0
         for number in range(start, end + 1):
@@ -3128,6 +3147,13 @@ class CodingToolbox:
         return result
 
     def write_file(self, path: str, content: str) -> str:
+        if not isinstance(path, str) or not path.strip():
+            raise PermanentError("write_file 的 path 必须是非空字符串")
+        if not isinstance(content, str):
+            raise PermanentError(
+                "write_file 的 content 必须是字符串；数组或对象请先序列化为文本，"
+                "避免把 Python repr 静默写进文件。"
+            )
         target = self._resolve(path, allow_root=False)
         self._assert_editor_context_readonly(target)
         encoded = str(content).encode("utf-8")
@@ -3178,6 +3204,10 @@ class CodingToolbox:
             if old_text or new_text or replace_all:
                 raise PermanentError("Do not mix batch edits with single-replacement arguments")
             return self.replace_many_in_file(path, edits)
+        if not isinstance(path, str) or not path.strip():
+            raise PermanentError("replace_in_file 的 path 必须是非空字符串")
+        if not isinstance(old_text, str) or not isinstance(new_text, str):
+            raise PermanentError("replace_in_file 的 old_text/new_text 必须是字符串")
         target = self._resolve(path, allow_root=False)
         self._assert_editor_context_readonly(target)
         if not target.exists() or not target.is_file():
@@ -3231,6 +3261,8 @@ class CodingToolbox:
         return self._append_visual_review(target, relative, result)
 
     def replace_many_in_file(self, path: str, edits: list[dict[str, Any]]) -> str:
+        if not isinstance(path, str) or not path.strip():
+            raise PermanentError("replace_in_file 的 path 必须是非空字符串")
         if not isinstance(edits, list) or not 1 <= len(edits) <= 50:
             raise PermanentError("Batch edits must contain between 1 and 50 replacements")
         normalized: list[tuple[str, str, bool]] = []
@@ -3310,8 +3342,18 @@ class CodingToolbox:
         return self._append_visual_review(target, relative, result)
 
     def apply_patch(self, patch: str) -> str:
+        if not isinstance(patch, str) or not patch.strip():
+            raise PermanentError("apply_patch 的 patch 必须是非空字符串")
         self.last_patch_result = None
-        plan = self.patch_engine.prepare(patch)
+        try:
+            plan = self.patch_engine.prepare(patch)
+        except PatchError as exc:
+            if re.search(r"(?m)^\s*\d+:\s", patch):
+                raise PatchError(
+                    f"{exc}\n提示：补丁里出现了 read_file 的行号前缀（如 `1: `）。"
+                    "行号只用于定位，不能粘贴进补丁；请去掉行号和冒号，直接使用文件原文。"
+                ) from exc
+            raise
         for file_plan in plan.files:
             target = (self.project_root / file_plan.path).resolve()
             try:
@@ -3340,6 +3382,14 @@ class CodingToolbox:
             reason = f"补丁审核界面失败，未修改文件：{type(exc).__name__}: {exc}"
             self.ledger.append("patch_review_rejected", {"patch_id": plan.patch_id, "reason": reason})
             raise PatchReviewRejected(reason) from exc
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            # Stop was pressed while the review dialog was open; never apply
+            # the approved hunks after that.
+            self.ledger.append(
+                "patch_cancelled_before_apply",
+                {"patch_id": plan.patch_id, "paths": [item.path for item in plan.files]},
+            )
+            raise TaskCancelled("任务已取消，未应用补丁。")
         if selected is None:
             reason = "用户拒绝了补丁，未修改文件；必须停止，不得使用其他写文件工具绕过。"
             self.ledger.append("patch_review_rejected", {"patch_id": plan.patch_id, "reason": reason})
@@ -3522,6 +3572,18 @@ class CodingToolbox:
                 {"command": command, "reason": reason},
             )
             raise PermanentError(f"命令未执行：{reason}。Agent 不应重试该命令。")
+        if self._command_cancel.is_set():
+            # Stop was pressed while the approval dialog was open; never spawn
+            # the child after that, even if the dialog eventually approved it.
+            execution["approval_status"] = "cancelled"
+            self._finish_command_execution(
+                execution, "cancelled", elapsed_ms=int((time.monotonic() - method_started) * 1000),
+            )
+            self.ledger.append(
+                "command_cancelled_before_start",
+                {"command": command[:1000]},
+            )
+            raise TaskCancelled("任务已取消，命令未执行。")
         execution["approval_status"] = "approved"
         self.ledger.append(
             "command_approval_granted",
@@ -3667,6 +3729,35 @@ class CodingToolbox:
         handler = handlers.get(name)
         if handler is None:
             raise PermanentError(f"未知工具：{name}")
+        if not isinstance(arguments, dict):
+            raise PermanentError(f"工具 {name} 的参数必须是 JSON 对象")
+        try:
+            parameters = inspect.signature(handler).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if parameters and not any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            unknown = sorted(set(arguments) - set(parameters))
+            if unknown:
+                raise PermanentError(
+                    f"工具 {name} 不支持参数：{', '.join(unknown)}；"
+                    f"可用参数：{', '.join(parameters)}"
+                )
+            missing = sorted(
+                parameter_name
+                for parameter_name, parameter in parameters.items()
+                if parameter.default is inspect.Parameter.empty
+                and parameter.kind
+                in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+                and parameter_name not in arguments
+            )
+            if missing:
+                raise PermanentError(
+                    f"工具 {name} 缺少必填参数：{', '.join(missing)}；"
+                    f"可用参数：{', '.join(parameters)}"
+                )
         return str(handler(**arguments))
 
     def close(self) -> None:
@@ -3927,6 +4018,13 @@ class CodingAgent:
     # Weak models sometimes parrot the assistant placeholder the Harness
     # inserted after rejecting malformed tool calls; that echo is not a result.
     MAX_INTERNAL_ECHO_RETRIES = 1
+    MAX_TOOL_ERROR_ECHO_RETRIES = 1
+    TOOL_ERROR_ECHO_PREFIXES = (
+        "工具执行失败：",
+        "PatchError:",
+        "PermanentError:",
+        "PatchReviewRejected:",
+    )
     INTERNAL_REJECTION_ECHO = "The Harness rejected an invalid tool-call response before execution."
     MAX_IDENTICAL_TOOL_RESULTS = 3
     MAX_PLAN_COMPLETION_RETRIES = 2
@@ -3964,10 +4062,23 @@ class CodingAgent:
         r"(?:任何|这些|该)?\s*(?:工具|tool)",
         re.IGNORECASE | re.DOTALL,
     )
+    _NO_TOOL_CALL_REQUEST_EN = re.compile(
+        r"\b(?:do\s+not|don't|dont|never)\s+(?:actually\s+)?"
+        r"(?:call|use|run|execute)\s+(?:any\s+)?tools?\b",
+        re.IGNORECASE,
+    )
+    _EXAMPLE_ONLY_WITH_NEGATION_EN = re.compile(
+        r"(?=.*\bexamples?\b)"
+        r"(?=.*\b(?:do\s+not|don't|dont|never)\s+(?:actually\s+)?"
+        r"(?:run|execute|call|create|write|modify|change|commit)\b)",
+        re.IGNORECASE | re.DOTALL,
+    )
     _NO_COMMIT_REQUEST = re.compile(
         r"(?:不要|别|先\s*(?:不要|别)|暂时\s*(?:不要|别)|无需|不需要|请勿|切勿|禁止)"
         r".{0,10}(?:自动)?\s*(?:提交|commit)"
-        r"|\b(?:do\s+not|don't|dont|never)\s+(?:auto[\s-]?)?commit\b",
+        r"(?!\s*(?:测试|实验)?报告|文档|作业|论文|表单|申请|邮件)"
+        r"|\b(?:do\s+not|don't|dont|never)\s+(?:auto[\s-]?)?commit\b"
+        r"(?!\s+(?:tests?|docs?|reports?|papers?)\b)",
         re.IGNORECASE,
     )
     EXPLICIT_COMMAND_INTENT = re.compile(
@@ -4013,7 +4124,9 @@ class CodingAgent:
         text = str(prompt or "")
         return bool(
             cls._NO_TOOL_CALL_REQUEST.search(text)
+            or cls._NO_TOOL_CALL_REQUEST_EN.search(text)
             or cls._EXAMPLE_ONLY_WITH_NEGATION.search(text)
+            or cls._EXAMPLE_ONLY_WITH_NEGATION_EN.search(text)
         )
 
     @classmethod
@@ -4063,6 +4176,7 @@ class CodingAgent:
             enforce_patch_review_for_existing=True,
             browser_approval=browser_approval,
         )
+        self.toolbox.cancel_event = self._cancel
 
     def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self.event_callback:
@@ -6607,6 +6721,9 @@ class CodingAgent:
                         )
                     else:
                         result = "工具调用缺少安全执行记录；是否执行过无法确定，本次没有运行。"
+            except TaskCancelled:
+                self._raise_if_cancelled(session, session_id)
+                raise
             except TaskAborted:
                 raise
             except PatchReviewRejected as exc:
@@ -6869,6 +6986,7 @@ class CodingAgent:
         workspace_revision = run_state["workspace_revision"]
         empty_response_retries = 0
         internal_echo_retries = 0
+        tool_error_echo_retries = 0
 
         for turn in range(1, turn_limit + 1):
             self._raise_if_cancelled(session, session_id)
@@ -7104,6 +7222,58 @@ class CodingAgent:
                     "上一条回复复述了 Harness 的内部提示，没有给出任务结果。"
                     "请直接给出最终答复，或调用一个可用工具；不要复述内部提示。",
                     reason="internal_prompt_echo",
+                )
+                session["updated_at"] = now_iso()
+                self._save_session(session)
+                continue
+            last_tool_error = ""
+            if not tool_calls:
+                for message in reversed(messages):
+                    if message.get("role") == "tool":
+                        candidate = str(message.get("content") or "").strip()
+                        if candidate.startswith(self.TOOL_ERROR_ECHO_PREFIXES):
+                            last_tool_error = candidate
+                        break
+            if (
+                not tool_calls
+                and content
+                and last_tool_error
+                and content.strip() == last_tool_error
+            ):
+                # Some weak models copy the failed tool result verbatim and stop.
+                # Do not present that as a completed task.
+                tool_error_echo_retries += 1
+                echo_event = {
+                    "session_id": session_id,
+                    "turn": turn,
+                    "retry": tool_error_echo_retries,
+                    "tool_error": last_tool_error[:300],
+                }
+                self.ledger.append("model_tool_error_echo", echo_event)
+                self._emit("model_tool_error_echo", echo_event)
+                if tool_error_echo_retries > self.MAX_TOOL_ERROR_ECHO_RETRIES:
+                    error = (
+                        "模型复述了工具执行失败信息，没有修正问题或给出任务结果；"
+                        "为避免把错误当成完成答复，本次任务已停止。"
+                    )
+                    session["status"] = "failed"
+                    session["error"] = error
+                    session["updated_at"] = now_iso()
+                    self.ledger.append(
+                        "coding_session_failed",
+                        {"session_id": session_id, "error": error},
+                    )
+                    self._save_session(session)
+                    self._emit("failed", {"session_id": session_id, "error": error})
+                    raise PermanentError(error)
+                self._append_followup_prompt(
+                    messages,
+                    session,
+                    session_id,
+                    turn,
+                    "上一条回复原样复述了工具执行失败信息，没有修正问题或给出最终结果。"
+                    "请根据错误提示修正后再试一次；如果无法完成，请明确说明原因。",
+                    reason="tool_error_echo",
                 )
                 session["updated_at"] = now_iso()
                 self._save_session(session)

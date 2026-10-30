@@ -1,5 +1,18 @@
 # 历史与结果
 
+## 2026-10-31 01:05（Asia/Shanghai）· 本地 Qwen 第六轮（审批/审核取消、参数与错误回声）
+- 探针 `scripts/probe_weak_model.py` 扩到 36 个场景：越界行号、额外参数、真实命令超时、.env 读取、补丁删除、审批中停止、审核中停止、非 Git 目录、非 Git 且不提交、既有脏改动、覆盖已有文件、Add File 已存在、拒绝补丁、部分批准；并发场景仍单列。
+- 修复：
+  1. 命令审批期间停止：`run_command` 在审批返回、启动子进程前检查 `_command_cancel`，已停止则把执行记录标记 cancelled 并抛 TaskCancelled，不再产生副作用；7B 实测审批延迟 3 s、取消后 4.1 s 内结束，命令未执行。
+  2. 补丁审核期间停止：`CodingToolbox.cancel_event` 与 `CodingAgent._cancel` 共享；审核返回后若已停止，记录 `patch_cancelled_before_apply` 并取消，补丁不落盘。
+  3. 工具参数：`CodingToolbox.execute` 用 `inspect.signature` 校验未知/缺少的必填参数；write_file 的 content、replace_in_file 的 old_text/new_text、apply_patch 的 patch 必须是字符串，数组等不再被 `str()` 成 Python repr 静默写入。
+  4. read_file 越界：起始行超过总行数时返回“起始行 N 超出文件总行数 M”，不再显示“空文件”；start_line/end_line 非整数、list_files depth 非整数给出明确错误。
+  5. 补丁行号提示：`apply_patch` 捕获准备阶段的 PatchError 时，若补丁含 `1: ` 这类 read_file 行号前缀，附加“去掉行号和冒号”的提示；7B 多次复制行号后得到可操作反馈。
+  6. 工具错误回声：模型把工具失败结果原样作为最终答复时，记录 `model_tool_error_echo`，追问一次；仍复述则 failed，避免把错误显示成完成。
+  7. 提交意图误判：`不需要提交测试报告` 之类不再被当成“不要提交代码”；英文示例/禁止工具提示也纳入写操作保护。
+- 探针修复：非 Git 目录按既有契约预期“自动初始化 Git 并提交”，不再误报 `.git/config` 改写；空基线用 `HEAD` 统计提交；patch 拒绝/部分批准、cancel-during-patch-review 的覆盖缺口单独归类；补回被编辑覆盖丢失的 patch-add-existing/patch-rejected 场景。
+- 验证：真实 7B 全场景探针（36 + 并发）flagged=[]；`manual-commit` 仍因模型只给文本、不实际运行 git 记为覆盖缺口（拦截逻辑由单测覆盖）；`cancel-during-patch-review` 已实测 `patch_previewed` → 取消 → `patch_cancelled_before_apply`，文件未变、无提交。全量隔离套件 569 项 0 失败、13 跳过、覆盖率 79%；ruff/mypy/编译通过。过程中本机 Ollama 服务退出过两次，重启后复测，不是代码缺陷。
+
 ## 2026-10-30 23:45（Asia/Shanghai）· 本地 Qwen 第五轮（停机、提示回声与用户否决）
 - 探针 `scripts/probe_weak_model.py` 扩到 23 个场景，并支持 `--only`、场景未触发时自动重试、原始被拒工具文本记录、覆盖缺口与行为异常分离（coverage_gaps）。
 - 修复 7 项：
