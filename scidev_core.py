@@ -40,6 +40,7 @@ from scidev_visual import VisualArtifactReviewer
 from scidev_context import ProjectContext
 from scidev_memory import ProjectMemory
 from scidev_mcp import MCPError, MCPManager
+from scidev_hooks import HookError, HookRunner
 from scidev_multi_agent import (
     DELEGATE_PARALLEL_RESEARCH_TOOL,
     DELEGATE_RESEARCH_TOOL,
@@ -4353,6 +4354,7 @@ class CodingAgent:
         self.event_callback = event_callback
         self.summary_settings = summary_settings or SummarySettings.load(self.project_root)
         self.project_memory = ProjectMemory(self.project_root)
+        self.hooks = HookRunner(self.project_root, ledger=ledger)
         self.single_user_prompt_only = single_user_prompt_only
         self.require_verification = bool(require_verification)
         self.prefer_environment_provider = bool(prefer_environment_provider)
@@ -6217,6 +6219,14 @@ class CodingAgent:
                 payload.get("context_overrides"),
                 payload.get("context_readonly_paths"),
             )
+            try:
+                self.hooks.run("task_start", {
+                    "task_id": str(task.get("task_id") or ""),
+                    "session_id": str(payload.get("session_id") or ""),
+                    "prompt": str(payload.get("prompt") or "")[:8000],
+                }, blocking=True)
+            except HookError as exc:
+                raise PermanentError(f"task_start hook 阻止任务：{exc}") from exc
             return self._run_with_editor_context(task)
         except Exception as exc:
             self._mark_session_failed_after_error(payload, exc)
@@ -6830,6 +6840,14 @@ class CodingAgent:
                     {"session_id": session_id, "paths": sorted(commit_paths), "message": note},
                 )
         else:
+            try:
+                self.hooks.run("before_commit", {
+                    "session_id": session_id,
+                    "paths": sorted(commit_paths),
+                    "prompt": prompt[:8000],
+                }, blocking=True)
+            except HookError as exc:
+                raise PermanentError(f"before_commit hook 阻止提交：{exc}") from exc
             session["git_result_sha"] = self.git.commit_paths(f"[codex] {summary}", commit_paths)
         session["git_auto_commit_skipped_paths"] = skipped_paths
         external_commit = ""
@@ -6991,6 +7009,12 @@ class CodingAgent:
                 arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
                 if not isinstance(arguments, dict):
                     raise ValueError("工具参数必须是 JSON 对象")
+                self.hooks.run("before_tool", {
+                    "session_id": session_id,
+                    "turn": turn,
+                    "tool": name,
+                    "arguments": arguments,
+                }, blocking=True)
                 if name == "run_command":
                     command_for_record = str(arguments.get("command") or "")
                 if name not in allowed_tool_names:
@@ -7139,6 +7163,16 @@ class CodingAgent:
                 result = f"浏览器操作已由用户拒绝：{exc}"
             except Exception as exc:  # Other tool errors go back to the model for correction.
                 result = f"工具执行失败：{type(exc).__name__}: {exc}"
+            try:
+                self.hooks.run("after_tool", {
+                    "session_id": session_id,
+                    "turn": turn,
+                    "tool": name,
+                    "success": bool(tool_succeeded),
+                    "result": str(result)[:8000],
+                }, blocking=False)
+            except Exception:  # noqa: BLE001 - after_tool is advisory only
+                pass
             signature = (
                 name,
                 json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str),

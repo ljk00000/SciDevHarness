@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-11-01 01:35（Asia/Shanghai）· 生命周期 hooks
+- 新增 `scidev_hooks.py`：读取 `.research/hooks.json`（必须显式 `"enabled": true`），支持 `task_start`、`before_tool`、`after_tool`、`before_commit`。
+- 命令不经 shell，限制在工作区内，超时 0.5–60s、输出 8KB；事件和 16KB 上下文通过环境变量传入；`task_start`/`before_tool`/`before_commit` 非零退出阻止继续，`after_tool` 只记录。
+- Agent 在任务开始、每次工具调用前后、自动提交前触发 hooks；`before_commit` 阻止提交时任务失败并保留改动。
+- 新增 `tests/test_hooks.py` 4 项：禁用不运行、上下文传递、阻塞失败、after_tool 非阻塞；全量套件 632 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：只有固定四个事件；无异步/并行 hooks；无 UI 配置；hooks 命令由项目配置文件信任，不是 OS 沙箱。
+
 ## 2026-11-01 00:50（Asia/Shanghai）· MCP stdio 工具
 - 新增 `scidev_mcp.py`：读取 `.research/mcp.json`（必须显式 `"enabled": true`），启动 stdio server，完成 initialize/tools/list；把工具以 `mcp__<server>__<tool>` 加入模型工具列表，tools/call 返回文本内容。
 - `CodingToolbox.all_definitions()` 在静态工具后追加 MCP 工具；`execute` 对 MCP 调用要求命令审批，只读模式禁用；server 启动失败只记录错误，不阻塞内置工具。
