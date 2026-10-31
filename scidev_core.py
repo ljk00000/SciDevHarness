@@ -3659,11 +3659,14 @@ class CodingToolbox:
         if process is not None and process.poll() is None:
             terminate_process_tree(process)
 
+    def reset_command_cancel(self) -> None:
+        """Clear a previous task's cancellation before a new task starts."""
+        self._command_cancel.clear()
+
     def run_command(self, command: str, timeout_seconds: int = 120) -> str:
         if not isinstance(command, str):
             raise PermanentError("run_command 的 command 必须是字符串")
         command = command.strip()
-        self._command_cancel.clear()
         execution = {
             "command_id": new_id("cmd"),
             "command": command[:1000],
@@ -6269,6 +6272,7 @@ class CodingAgent:
 
     def _run_locked(self, task: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
         self._cancel.clear()
+        self.toolbox.reset_command_cancel()
         self._tool_loop_signature = None
         self._tool_loop_repeats = 0
         self._task_active = True
