@@ -6990,6 +6990,8 @@ class CodingAgent:
             "verification_report": verification_report,
             "semantic_acceptance_report": acceptance_report,
             "checkpoint_id": self.last_checkpoint.checkpoint_id if self.last_checkpoint else "",
+            "turn_count": int(turn),
+            "usage": ModelRequestUsage.snapshot(session),
         }
 
     def _execute_tool_calls(

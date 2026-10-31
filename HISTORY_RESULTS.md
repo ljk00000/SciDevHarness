@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-11-01 03:10（Asia/Shanghai）· 真实仓库 eval
+- 新增 `scidev_eval.py`：读取 suite JSON，把 workspace 模板复制到临时目录，应用 setup 文件，运行 CLI/自定义 runner，再用确定性 check 命令判定成功。
+- 报告包含 total/passed/failed、pass rate、平均轮数、总/平均 token、耗时、相对上次 pass rate 的 regression；可指定稳定 `--output` 比较。
+- Agent/CLI 返回新增 `turn_count` 和 `usage`；新增 `scidev_cli.py eval --suite ... --output ... [--json]`；示例 `evals/smoke/suite.json` 3 个任务。
+- 新增 `tests/test_eval.py` 2 项和 CLI 缺失 suite 测试；全量套件 646 项 0 失败、14 跳过、覆盖率 79%。
+- 边界：默认调用真实 CLI/模型，需要 provider；check 是外部命令，不证明语义完全正确；suite 是 JSON，无 Web UI/并行执行。
+
 ## 2026-11-01 02:40（Asia/Shanghai）· 图片任务附件
 - 新增 `scidev_attachments.py`：校验 PNG/JPEG/GIF/WebP 魔数、MIME、大小和数量；单张 5 MB、最多 4 张、总计 12 MB；文件名去路径。
 - Agent 会话创建时把图片作为 `image_url` 内容块加入用户消息；已有会话的新任务附加到最后一条用户消息；会话保存附件元数据。

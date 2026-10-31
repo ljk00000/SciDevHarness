@@ -68,6 +68,11 @@ class CliTests(unittest.TestCase):
         self.assertFalse(agent.kwargs["prefer_environment_provider"])
         self.assertEqual(agent.payload["payload"]["prompt"], "fix it")
 
+    def test_eval_rejects_a_missing_suite(self) -> None:
+        code, output, _root = self._run(["eval", "--suite", "{root}/missing.json"])
+        self.assertEqual(code, 2)
+        self.assertIn("suite not found", output)
+
     def test_invalid_image_is_rejected_before_starting_the_agent(self) -> None:
         code, output, _root = self._run([
             "exec", "--workspace", "{root}", "--task", "look",

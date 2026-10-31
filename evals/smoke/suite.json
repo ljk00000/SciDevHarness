@@ -1,0 +1,31 @@
+{
+  "name": "smoke",
+  "tasks": [
+    {
+      "id": "fix-add",
+      "prompt": "修复 math_utils.py 的 add 函数：它现在做减法，应返回两个参数之和。保持其他文件不变。",
+      "setup": {
+        "math_utils.py": "def add(a, b):\n    return a - b\n"
+      },
+      "check": ["python", "-c", "import math_utils; assert math_utils.add(2, 3) == 5"],
+      "timeout": 180
+    },
+    {
+      "id": "create-notes",
+      "prompt": "在工作区创建 NOTES.md，内容恰好是 `hello eval` 一行（不要额外内容）。",
+      "setup": {},
+      "check": ["python", "-c", "from pathlib import Path; assert Path('NOTES.md').read_text(encoding='utf-8').strip() == 'hello eval'"],
+      "timeout": 180
+    },
+    {
+      "id": "fix-unittest",
+      "prompt": "修复 test_calc.py 中失败的测试：calc.mul 应返回乘积。",
+      "setup": {
+        "calc.py": "def mul(a, b):\n    return a + b\n",
+        "test_calc.py": "import unittest\nimport calc\n\n\nclass CalcTests(unittest.TestCase):\n    def test_mul(self):\n        self.assertEqual(calc.mul(3, 4), 12)\n"
+      },
+      "check": ["python", "-m", "unittest", "-q"],
+      "timeout": 180
+    }
+  ]
+}

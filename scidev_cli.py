@@ -16,6 +16,7 @@ from typing import Any
 from scidev_core import CodingAgent, EventLedger, GitManager, PermanentError, SummarySettings, new_id
 from scidev_policy import ExecutionMode
 from scidev_attachments import AttachmentError, load_image_file
+from scidev_eval import EvalError, EvalRunner
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -75,6 +76,14 @@ def _parser() -> argparse.ArgumentParser:
     sessions_parser.add_argument("--workspace", required=True, help="project directory")
     sessions_parser.add_argument("--json", action="store_true", help="emit a JSON array")
     sessions_parser.add_argument("--limit", type=int, default=20, help="maximum sessions (default: 20)")
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="run a real-repository evaluation suite",
+        description="Run isolated fixed tasks and deterministic checks, then write a JSON report.",
+    )
+    eval_parser.add_argument("--suite", required=True, help="eval suite JSON path")
+    eval_parser.add_argument("--output", default="", help="report JSON path (default: timestamped under .research/evals)")
+    eval_parser.add_argument("--json", action="store_true", help="print the report as JSON")
     return parser
 
 
@@ -101,6 +110,8 @@ def _result_payload(result: dict[str, Any]) -> dict[str, Any]:
         "verification_report": result.get("verification_report"),
         "no_changes_detected": bool(result.get("no_changes_detected")),
         "checkpoint_id": result.get("checkpoint_id", ""),
+        "turn_count": int(result.get("turn_count", 0) or 0),
+        "usage": result.get("usage") or {},
     }
 
 
@@ -168,11 +179,42 @@ def _sessions_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _eval_command(args: argparse.Namespace) -> int:
+    suite_path = Path(args.suite).expanduser().resolve()
+    if not suite_path.is_file():
+        print(f"suite not found: {suite_path}", file=sys.stderr)
+        return 2
+    output_path = Path(args.output).expanduser().resolve() if args.output else None
+    try:
+        runner = EvalRunner(Path.cwd(), suite_path, output_path=output_path)
+        report = runner.run()
+    except EvalError as exc:
+        print(f"eval suite rejected: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False))
+    else:
+        print(
+            f"{report['suite']}: {report['passed']}/{report['total']} passed "
+            f"({report['pass_rate']:.1%}), avg turns {report['average_turns']}, "
+            f"tokens {report['total_tokens']}, {report['elapsed_seconds']:.1f}s"
+        )
+        if report.get("regression") is not None:
+            print(f"regression vs previous: {report['regression']:+.1%}")
+        print(f"report: {runner.output_path}")
+        for item in report["results"]:
+            if not item["success"]:
+                print(f"FAIL {item['task_id']}: {item['error'] or item['check_output'][:200]}")
+    return 0 if report["failed"] == 0 else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.command == "sessions":
         return _sessions_command(args)
+    if args.command == "eval":
+        return _eval_command(args)
     if args.command != "exec":
         parser.print_help()
         return 2
