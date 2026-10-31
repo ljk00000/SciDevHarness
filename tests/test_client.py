@@ -3541,21 +3541,34 @@ class TerminalUiTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
+    def _wait_terminal(self, window: ClientWindow) -> None:
+        deadline = time.monotonic() + 10
+        while (
+            (window.terminal_process is not None or window.terminal_pty is not None)
+            and time.monotonic() < deadline
+        ):
+            self.app.processEvents()
+            QTest.qWait(10)
+        self.app.processEvents()
+
     @unittest.skipUnless(os.name == "nt", "Windows terminal console handle")
     def test_terminal_child_has_no_external_console(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-terminal-no-console-") as temp:
             window = ClientWindow(Path(temp))
             try:
-                script = "import ctypes; print('console=' + str(ctypes.windll.kernel32.GetConsoleWindow()))"
+                script = (
+                    "import ctypes; h=ctypes.windll.kernel32.GetConsoleWindow(); "
+                    "print('console=' + str(h)); "
+                    "print('visible=' + str(ctypes.windll.user32.IsWindowVisible(h)))"
+                )
                 window.terminal_input.setText(subprocess.list2cmdline([sys.executable, "-c", script]))
                 window._run_terminal_command()
-                deadline = time.monotonic() + 10
-                while window.terminal_process is not None and time.monotonic() < deadline:
-                    self.app.processEvents()
-                    QTest.qWait(10)
+                self._wait_terminal(window)
                 self.assertIsNone(window.terminal_process, "terminal process did not finish")
-                self.assertIn("console=0", window.terminal_output.toPlainText())
-                self.assertIn("[退出码 0]", window.terminal_output.toPlainText())
+                self.assertIsNone(window.terminal_pty, "terminal PTY did not finish")
+                text = window.terminal_output.toPlainText()
+                self.assertIn("visible=0", text)
+                self.assertIn("[退出码 0]", text)
             finally:
                 window.close()
                 self.app.processEvents()
@@ -3575,13 +3588,10 @@ class TerminalUiTests(unittest.TestCase):
                     subprocess.list2cmdline([sys.executable, "-c", script, "argument with spaces"])
                 )
                 window._run_terminal_command()
-
-                deadline = time.monotonic() + 10
-                while window.terminal_process is not None and time.monotonic() < deadline:
-                    self.app.processEvents()
-                    QTest.qWait(10)
+                self._wait_terminal(window)
 
                 self.assertIsNone(window.terminal_process, "terminal process did not finish")
+                self.assertIsNone(window.terminal_pty, "terminal PTY did not finish")
                 terminal_text = window.terminal_output.toPlainText()
                 self.assertIn("stdout-sentinel", terminal_text)
                 self.assertIn("stderr-sentinel", terminal_text)
@@ -3607,14 +3617,12 @@ class TerminalUiTests(unittest.TestCase):
                     "sys.stderr.buffer.write(bytes([0xad,0x97])); sys.stderr.buffer.flush()"
                 )
                 window.terminal_input.setText(subprocess.list2cmdline([sys.executable, "-c", script]))
-                window._run_terminal_command()
-
-                deadline = time.monotonic() + 10
-                while window.terminal_process is not None and time.monotonic() < deadline:
-                    self.app.processEvents()
-                    QTest.qWait(10)
+                with patch("scidev_client.PTYSession.available", return_value=False):
+                    window._run_terminal_command()
+                self._wait_terminal(window)
 
                 self.assertIsNone(window.terminal_process, "terminal process did not finish")
+                self.assertIsNone(window.terminal_pty, "terminal PTY did not finish")
                 terminal_text = window.terminal_output.toPlainText()
                 self.assertIn("中", terminal_text)
                 self.assertIn("字", terminal_text)

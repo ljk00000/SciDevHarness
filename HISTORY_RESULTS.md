@@ -1,5 +1,13 @@
 # 历史与结果
 
+## 2026-11-01 02:00（Asia/Shanghai）· ConPTY 终端
+- 新增 `scidev_pty.py`：Windows 优先用 `pywinpty` 的 ConPTY 启动命令，后台线程读取输出，非阻塞 `drain`，支持 `write` 交互输入、`setwinsize` 和退出码。
+- 终端命令写入临时 `.cmd` 文件后再由 `cmd.exe /d /c` 执行，保留用户命令中的引号；输出清理 ANSI/OSC 和异常长空白；命令结束删除临时文件。
+- 客户端终端优先 ConPTY；运行中再次回车会作为 stdin 发送；ConPTY 不可用或启动失败时回退隐藏窗口管道。
+- `pywinpty>=3.0` 加入 Windows 运行依赖；终端 UI 测试改为同时等待 pipe/PTY 结束，UTF-8 分片测试固定走 pipe 解码器。
+- 新增 `tests/test_pty.py` 4 项：ANSI 清理、命令执行/退出码、stdin、不可用显式报错；全量套件 636 项 0 失败、14 跳过、覆盖率 79%。新增测试文件触发的项目上下文排序回归，已让 `tests/` 同分时权重降为 0.8。
+- 边界：每条命令一个 ConPTY，不是持久 shell；无完整 VT 仿真/颜色/光标；不是 OS 沙箱；pywinpty 缺失时回退管道。
+
 ## 2026-11-01 01:35（Asia/Shanghai）· 生命周期 hooks
 - 新增 `scidev_hooks.py`：读取 `.research/hooks.json`（必须显式 `"enabled": true`），支持 `task_start`、`before_tool`、`after_tool`、`before_commit`。
 - 命令不经 shell，限制在工作区内，超时 0.5–60s、输出 8KB；事件和 16KB 上下文通过环境变量传入；`task_start`/`before_tool`/`before_commit` 非零退出阻止继续，`after_tool` 只记录。

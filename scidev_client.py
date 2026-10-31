@@ -112,6 +112,7 @@ from scidev_core import (
 from scidev_icons import activity_icon
 from scidev_highlighting import LanguageHighlighter, PythonHighlighter
 from scidev_lsp import collect_diagnostics as collect_lsp_diagnostics
+from scidev_pty import PTYSession, PTYUnavailable
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
 from scidev_verification import VerificationTracker
@@ -2774,6 +2775,7 @@ class ClientWindow(QMainWindow):
         self.task_history_tree: QTreeWidget | None = None
         self.window_max_button: QToolButton | None = None
         self.terminal_process: StreamingCommand | None = None
+        self.terminal_pty: PTYSession | None = None
         self._terminal_buffer = ""
         self._terminal_decoders: dict[str, Any] = {}
         self._terminal_started_at = 0.0
@@ -4563,7 +4565,7 @@ class ClientWindow(QMainWindow):
         self.terminal_output = QPlainTextEdit()
         self.terminal_output.setObjectName("TerminalOutput")
         self.terminal_output.setReadOnly(True)
-        self.terminal_output.setPlaceholderText("在项目目录中运行命令，输出会保留在当前会话")
+        self.terminal_output.setPlaceholderText("在项目目录中运行命令；ConPTY 命令运行中可直接输入并回车")
         terminal_layout.addWidget(self.terminal_output, 1)
         terminal_row = QHBoxLayout()
         terminal_row.setContentsMargins(0, 0, 0, 0)
@@ -8009,6 +8011,14 @@ class ClientWindow(QMainWindow):
         command = self.terminal_input.text().strip()
         if not command:
             return
+        if self.terminal_pty is not None and self.terminal_pty.is_alive():
+            self.terminal_input.clear()
+            try:
+                self.terminal_pty.write(command + "\r\n")
+                self._append_terminal_output(command + "\n")
+            except PTYUnavailable as exc:
+                self._append_terminal_output(f"\n[ConPTY 输入失败: {exc}]\n")
+            return
         if self.terminal_process is not None and self.terminal_process.exit_code() is None:
             self._append_terminal_output("\n[已有命令正在运行]\n")
             return
@@ -8026,6 +8036,26 @@ class ClientWindow(QMainWindow):
         if os.name == "nt":
             environment["PYTHONUTF8"] = "1"
             environment["PYTHONIOENCODING"] = "utf-8"
+        if PTYSession.available():
+            pty = PTYSession()
+            try:
+                pty.start(command, self.terminal_cwd, environment)
+            except PTYUnavailable as exc:
+                pty.close()
+                self._append_terminal_output(f"\n[ConPTY 不可用，回退管道: {exc}]\n")
+            else:
+                self.terminal_pty = pty
+                self._terminal_started_at = time.monotonic()
+                self._terminal_timer.start()
+                self.ledger.append(
+                    "terminal_command",
+                    {
+                        "command": command,
+                        "cwd": self.terminal_cwd.relative_to(self.project_root).as_posix() or ".",
+                        "backend": "conpty",
+                    },
+                )
+                return
         process = StreamingCommand()
         self.terminal_process = process
         try:
@@ -8041,10 +8071,23 @@ class ClientWindow(QMainWindow):
             {
                 "command": command,
                 "cwd": self.terminal_cwd.relative_to(self.project_root).as_posix() or ".",
+                "backend": "pipe",
             },
         )
 
     def _poll_terminal_output(self) -> None:
+        pty = self.terminal_pty
+        if pty is not None:
+            self._read_terminal_output()
+            if pty.is_alive():
+                return
+            if not pty.eof and time.monotonic() - self._terminal_started_at < 0.5:
+                return
+            exit_code = pty.exit_code()
+            if exit_code is None and time.monotonic() - self._terminal_started_at < 0.3:
+                return
+            self._terminal_finished(int(exit_code or 0))
+            return
         process = self.terminal_process
         if process is None:
             self._terminal_timer.stop()
@@ -8060,6 +8103,13 @@ class ClientWindow(QMainWindow):
         self._terminal_finished(exit_code)
 
     def _read_terminal_output(self) -> None:
+        pty = self.terminal_pty
+        if pty is not None:
+            output = pty.drain()
+            if output:
+                self._terminal_buffer += output
+                self._append_terminal_output(output)
+            return
         process = self.terminal_process
         if process is None:
             return
@@ -8087,6 +8137,11 @@ class ClientWindow(QMainWindow):
         self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
 
     def _terminal_finished(self, exit_code: int) -> None:
+        pty = self.terminal_pty
+        if pty is not None:
+            self._read_terminal_output()
+            pty.close()
+            self.terminal_pty = None
         self._read_terminal_output()
         pending_text = "".join(
             decoder.decode(b"", final=True) for decoder in self._terminal_decoders.values()
@@ -8937,6 +8992,9 @@ class ClientWindow(QMainWindow):
             self._resolve_patch_review(request, None)
         if self.terminal_process is not None:
             self.terminal_process.kill()
+        if self.terminal_pty is not None:
+            self.terminal_pty.close()
+            self.terminal_pty = None
         self._terminal_timer.stop()
         self.worker.stop()
         self.agent.toolbox.close()

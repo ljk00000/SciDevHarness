@@ -140,11 +140,11 @@ class BootstrapTests(unittest.TestCase):
         ]
         self.assertEqual(
             runtime_requirements,
-            ["PySide6-Essentials>=6.11,<7"],
+            ["PySide6-Essentials>=6.11,<7", 'pywinpty>=3.0; sys_platform == "win32"'],
         )
         self.assertEqual(
             project_metadata["project"]["dependencies"],
-            ["PySide6-Essentials>=6.11,<7"],
+            ["PySide6-Essentials>=6.11,<7", "pywinpty>=3.0; sys_platform == 'win32'"],
         )
 
         essentials = metadata.distribution("PySide6_Essentials")

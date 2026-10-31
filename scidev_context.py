@@ -849,10 +849,14 @@ class ProjectContext:
                 path = source.path.casefold()
                 symbols = " ".join(name for _, name in source.symbols).casefold()
                 text = source.text.casefold()
-                score = self._focus_score(source.path, focus) + sum(
+                term_score = sum(
                     weight * (8 * (term in path) + 5 * (term in symbols) + (term in text))
                     for term, weight in terms.items()
                 )
+                # Implementation files should normally outrank equally matching
+                # tests when the model asks how a feature works.
+                role_weight = 0.8 if path.startswith(("tests/", "test/")) else 1.0
+                score = self._focus_score(source.path, focus) + role_weight * term_score
                 if score:
                     ranked.append((score, source))
             ranked.sort(key=lambda item: (-item[0], item[1].path))
