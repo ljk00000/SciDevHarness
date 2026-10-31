@@ -732,7 +732,7 @@ class CoreTests(unittest.TestCase):
             self.assertNotIn("UNSAVED_SOURCE_SECRET_marker", json.dumps(stored))
 
     def test_retry_queue_retries_transient_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             ledger = EventLedger(Path(temp))
             attempts = []
 
@@ -757,7 +757,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(rows[task_id]["status"], "succeeded")
 
     def test_retry_queue_honors_bounded_server_retry_after(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             ledger = EventLedger(Path(temp))
             retry_scheduled = threading.Event()
 
@@ -799,7 +799,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(row["next_retry_at"] - now, 3600.0)
 
     def test_retry_queue_start_is_idempotent_and_restartable(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             queue = RetryQueue(EventLedger(Path(temp)), {})
             threads = []
             try:
@@ -828,7 +828,7 @@ class CoreTests(unittest.TestCase):
                     thread.join(timeout=2)
 
     def test_retry_queue_reports_restart_while_previous_worker_is_stopping(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             ledger = EventLedger(Path(temp))
             handler_entered = threading.Event()
             release_handler = threading.Event()
@@ -873,7 +873,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
 
     def test_retry_queue_recovers_interrupted_coding_task(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             ledger = EventLedger(Path(temp))
             task_id = ledger.create_task("coding", {"session_id": "interrupted"}, max_attempts=2)
             claimed = ledger.claim_due_task()
