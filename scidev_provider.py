@@ -33,6 +33,7 @@ class ProviderConfig:
     temperature: float = 0.2
     presence_penalty: float | None = None
     reasoning_effort: str = ""
+    fallback_model: str = ""
     source: str = "environment"
     credential_profile: str = "default"
 
@@ -138,6 +139,7 @@ def _env_values() -> dict[str, Any]:
         "temperature": os.getenv("SCIDEV_TEMPERATURE", "0.2"),
         "presence_penalty": os.getenv("SCIDEV_PRESENCE_PENALTY", ""),
         "reasoning_effort": os.getenv("SCIDEV_REASONING_EFFORT", ""),
+        "fallback_model": os.getenv("SCIDEV_FALLBACK_MODEL", ""),
         "api_key": os.getenv("SCIDEV_API_KEY") or os.getenv("OPENAI_API_KEY") or "",
     }
 
@@ -154,6 +156,7 @@ def load(project_root: Path, *, require_key: bool = False) -> ProviderConfig:
         "temperature": saved.get("temperature", 0.2),
         "presence_penalty": saved.get("presence_penalty"),
         "reasoning_effort": saved.get("reasoning_effort", ""),
+        "fallback_model": saved.get("fallback_model", ""),
         "api_key": "",
     }
     base_url, model, timeout, temperature, penalty = validate_config(
@@ -187,6 +190,7 @@ def load(project_root: Path, *, require_key: bool = False) -> ProviderConfig:
         temperature=temperature,
         presence_penalty=penalty,
         reasoning_effort=_reasoning_effort(values.get("reasoning_effort")),
+        fallback_model=str(values.get("fallback_model") or "").strip()[:160],
         source=source,
         credential_profile=str(saved.get("credential_profile") or "default"),
     )
@@ -202,6 +206,7 @@ def save(
     temperature: Any = 0.2,
     presence_penalty: Any = None,
     reasoning_effort: str = "",
+    fallback_model: str = "",
     streaming: bool = True,
     text_tool_call_fallback: bool = False,
     credential_profile: str = "default",
@@ -226,6 +231,7 @@ def save(
         "temperature": temp,
         "presence_penalty": penalty,
         "reasoning_effort": _reasoning_effort(reasoning_effort),
+        "fallback_model": str(fallback_model or "").strip()[:160],
         "streaming": bool(streaming),
         "text_tool_call_fallback": bool(text_tool_call_fallback),
         "credential_profile": credential_profile,

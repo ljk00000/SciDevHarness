@@ -5118,7 +5118,14 @@ class ClientWindow(QMainWindow):
             if key_state == "credential"
             else "输入 API Key（保存到 Windows 凭据管理器）"
         )
-        settings_layout.addWidget(self.provider_key_edit, 26, 1, 1, 3)
+        self.provider_key_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        settings_layout.addWidget(self.provider_key_edit, 26, 1)
+        self.provider_fallback_label = QLabel("回退模型")
+        settings_layout.addWidget(self.provider_fallback_label, 26, 2)
+        self.provider_fallback_edit = QLineEdit(provider.fallback_model if provider else "")
+        self.provider_fallback_edit.setPlaceholderText("可选")
+        self.provider_fallback_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        settings_layout.addWidget(self.provider_fallback_edit, 26, 3)
         self.provider_actions = QWidget()
         provider_actions_layout = QHBoxLayout(self.provider_actions)
         provider_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -5437,6 +5444,7 @@ class ClientWindow(QMainWindow):
                 model=self.provider_model_edit.text(),
                 api_key=api_key,
                 reasoning_effort=str(self.provider_reasoning_combo.currentData() or ""),
+                fallback_model=self.provider_fallback_edit.text(),
             )
         except Exception as exc:  # noqa: BLE001 - show validation/credential failures in the page
             self.provider_status_label.setText(f"保存失败：{exc}")

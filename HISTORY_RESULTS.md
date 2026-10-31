@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-31 22:50（Asia/Shanghai）· 回退模型
+- `ProviderConfig` 新增 `fallback_model`，保存到 `.research/provider.json`，支持 `SCIDEV_FALLBACK_MODEL`；Agent 设置新增“回退模型”输入框。
+- 主模型返回 HTTP 404、`model_not_found` 或模型不存在的 HTTP 400 时，Agent 用 `with_model` 切换到回退模型重试一次；只回退一次，认证/限流/网络错误不回退。
+- 新增 `provider_fallback_started/completed` 事件；回退请求 ID 加 `-fallback`，避免与主请求复用幂等键。
+- 验证：provider 配置往返、回退触发条件、Agent 读取回退配置测试；全量套件 617 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：只覆盖模型解析错误；回退模型必须使用同一 endpoint/凭据；不保证回退模型能力足够。
+
 ## 2026-10-31 22:25（Asia/Shanghai）· 推理强度与能力探测
 - `ProviderConfig` 新增 `reasoning_effort`（空/none/low/medium/high/max），保存到 `.research/provider.json`；Agent 编码请求把该值传给 provider。
 - Agent 设置模型接入新增“推理强度”下拉框；保存时校验并持久化。

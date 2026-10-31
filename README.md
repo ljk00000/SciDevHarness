@@ -119,7 +119,7 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 
 使用 OpenAI-compatible Chat Completions 接口，并要求模型支持 function/tool calling：
 
-Agent 设置 →“模型接入”可直接填写 API Base URL、模型和 API Key。API Key 只写入 Windows 凭据管理器（目标 `SciDevHarness/provider/default`），不写入 `.research/provider.json` 或审计日志；保存后下一次任务生效。项目内只保存地址、模型、超时、temperature 等非敏感字段。没有保存配置时继续使用下面的环境变量；保存了配置时环境变量作为 API Key 的后备。CLI 显式传入 `--api-base`/`--api-key`/`--model` 时会强制走环境变量路径，便于临时覆盖。推理强度可选“默认”/none/low/medium/high/max；只有 endpoint 支持时才应使用。“探测能力”会请求 `/models` 并发送一次极小的 `ping` 工具调用，显示工具调用、上下文长度和视觉元数据；这些信息由 endpoint 报告，不保证准确。
+Agent 设置 →“模型接入”可直接填写 API Base URL、模型和 API Key。API Key 只写入 Windows 凭据管理器（目标 `SciDevHarness/provider/default`），不写入 `.research/provider.json` 或审计日志；保存后下一次任务生效。项目内只保存地址、模型、超时、temperature 等非敏感字段。没有保存配置时继续使用下面的环境变量；保存了配置时环境变量作为 API Key 的后备。CLI 显式传入 `--api-base`/`--api-key`/`--model` 时会强制走环境变量路径，便于临时覆盖。推理强度可选“默认”/none/low/medium/high/max；只有 endpoint 支持时才应使用。“探测能力”会请求 `/models` 并发送一次极小的 `ping` 工具调用，显示工具调用、上下文长度和视觉元数据；这些信息由 endpoint 报告，不保证准确。可填写“回退模型”：主模型返回 HTTP 404 或模型不存在的 HTTP 400 时，本次任务自动用回退模型重试一次；其他错误不回退。
 
 Agent 设置里的“任务预算”可限制单次任务最多模型轮次（1–64）和最多 token（0 = 不限）。token 预算只统计服务端实际返回的 usage，并按任务起点扣除历史累计；用尽后任务失败、改动保留在工作区且不自动提交。轮次上限始终受 Harness 内置的 32 轮硬上限约束。
 

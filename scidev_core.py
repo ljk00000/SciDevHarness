@@ -4321,6 +4321,7 @@ class CodingAgent:
         self.require_verification = bool(require_verification)
         self.prefer_environment_provider = bool(prefer_environment_provider)
         self.provider_reasoning_effort = ""
+        self.provider_fallback_model = ""
         # Set by the desktop client when the window closes; checked between
         # model turns and tool calls so a closed workspace stops changing files.
         self._cancel = threading.Event()
@@ -6199,6 +6200,13 @@ class CodingAgent:
         reports = max(0, current["token_reports"] - ModelRequestUsage._count(baseline.get("token_reports")))
         return used, reports
 
+    @staticmethod
+    def _should_fallback_provider(exc: Exception) -> bool:
+        text = str(exc).casefold()
+        if "http 404" in text or "model_not_found" in text or "model not found" in text:
+            return True
+        return "http 400" in text and "model" in text
+
     def _build_provider(self) -> OpenAICompatibleProvider:
         if not self.prefer_environment_provider and provider_config_exists(self.project_root):
             try:
@@ -6206,6 +6214,7 @@ class CodingAgent:
             except ProviderConfigError as exc:
                 raise PermanentError(str(exc)) from exc
             self.provider_reasoning_effort = config.reasoning_effort
+            self.provider_fallback_model = config.fallback_model
             return OpenAICompatibleProvider(
                 config.base_url,
                 config.api_key,
@@ -6217,6 +6226,7 @@ class CodingAgent:
                 temperature=config.temperature,
             )
         self.provider_reasoning_effort = (os.getenv("SCIDEV_REASONING_EFFORT") or "").strip()
+        self.provider_fallback_model = (os.getenv("SCIDEV_FALLBACK_MODEL") or "").strip()
         return OpenAICompatibleProvider.from_env()
 
     def _prepare_coding_run(
@@ -7455,6 +7465,48 @@ class CodingAgent:
                     # terminal state instead of a generic failure.
                     self._raise_if_cancelled(session, session_id)
                     raise
+                except TaskAborted:
+                    raise
+                except PermanentError as exc:
+                    fallback_model = self.provider_fallback_model.strip()
+                    can_fallback = (
+                        fallback_model
+                        and fallback_model.casefold() != str(getattr(provider, "model", "")).casefold()
+                        and not session.get("provider_fallback_used")
+                        and self._should_fallback_provider(exc)
+                        and callable(getattr(provider, "with_model", None))
+                    )
+                    if not can_fallback:
+                        raise
+                    session["provider_fallback_used"] = {
+                        "from": str(getattr(provider, "model", "")),
+                        "to": fallback_model,
+                        "error": str(exc)[:300],
+                    }
+                    event = {
+                        "session_id": session_id,
+                        "turn": turn,
+                        "from": str(getattr(provider, "model", "")),
+                        "to": fallback_model,
+                        "error": str(exc)[:300],
+                    }
+                    self.ledger.append("provider_fallback_started", event)
+                    self._emit("provider_fallback_started", event)
+                    provider = provider.with_model(fallback_model)
+                    message = provider.chat(
+                        request_messages,
+                        tools=tool_definitions,
+                        max_tokens=12000,
+                        request_id=f"{request_id}-fallback",
+                        **stream_options,
+                    )
+                    completed_event = {
+                        "session_id": session_id,
+                        "turn": turn,
+                        "model": fallback_model,
+                    }
+                    self.ledger.append("provider_fallback_completed", completed_event)
+                    self._emit("provider_fallback_completed", completed_event)
             content = self._text_content(message.get("content"))
             tool_calls = message.get("tool_calls") or []
             tool_parse_error = message.get("tool_parse_error")

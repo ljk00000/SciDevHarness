@@ -10,7 +10,7 @@ import uuid
 
 import scidev_credentials as credentials
 import scidev_provider as provider
-from scidev_core import CodingAgent, EventLedger, GitManager
+from scidev_core import CodingAgent, EventLedger, GitManager, PermanentError
 
 
 class ProviderSettingsTests(unittest.TestCase):
@@ -27,6 +27,7 @@ class ProviderSettingsTests(unittest.TestCase):
                     api_key="secret-value",
                     request_timeout=30,
                     reasoning_effort="high",
+                    fallback_model="fallback-a",
                 )
                 loaded = provider.load(root, require_key=True)
 
@@ -34,6 +35,7 @@ class ProviderSettingsTests(unittest.TestCase):
             self.assertEqual(loaded.model, "model-a")
             self.assertEqual(loaded.api_key, "secret-value")
             self.assertEqual(loaded.reasoning_effort, "high")
+            self.assertEqual(loaded.fallback_model, "fallback-a")
             self.assertEqual(loaded.source, "saved")
             set_key.assert_called_once_with("secret-value", "default")
             raw = (root / ".research" / "provider.json").read_text(encoding="utf-8")
@@ -170,6 +172,20 @@ class ProviderSettingsTests(unittest.TestCase):
         self.assertIn("工具调用：支持", provider.format_capabilities(result))
         self.assertIn("128,000", provider.format_capabilities(result))
 
+    def test_fallback_trigger_is_limited_to_model_resolution_errors(self) -> None:
+        self.assertTrue(CodingAgent._should_fallback_provider(
+            PermanentError("HTTP 404: model_not_found"),
+        ))
+        self.assertTrue(CodingAgent._should_fallback_provider(
+            PermanentError("HTTP 400: unsupported model"),
+        ))
+        self.assertFalse(CodingAgent._should_fallback_provider(
+            PermanentError("HTTP 401: invalid api key"),
+        ))
+        self.assertFalse(CodingAgent._should_fallback_provider(
+            PermanentError("HTTP 429: rate limited"),
+        ))
+
     def test_agent_builds_provider_from_saved_config(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)
@@ -179,6 +195,7 @@ class ProviderSettingsTests(unittest.TestCase):
                     base_url="https://example.test/v1",
                     model="saved-model",
                     reasoning_effort="high",
+                    fallback_model="fallback-saved",
                 )
             agent = CodingAgent(
                 root, EventLedger(root), GitManager(root),
@@ -191,6 +208,7 @@ class ProviderSettingsTests(unittest.TestCase):
             self.assertEqual(built.model, "saved-model")
             self.assertEqual(built.api_key, "env-key")
             self.assertEqual(agent.provider_reasoning_effort, "high")
+            self.assertEqual(agent.provider_fallback_model, "fallback-saved")
 
 
 class CredentialManagerTests(unittest.TestCase):

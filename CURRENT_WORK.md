@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-10-31 22:50（Asia/Shanghai）· 回退模型
+- 模型接入新增“回退模型”字段；保存到 `.research/provider.json`，支持 `SCIDEV_FALLBACK_MODEL`。
+- 主模型返回 HTTP 404、`model_not_found` 或模型不存在的 HTTP 400 时，本次任务自动用回退模型重试一次；只回退一次，其他错误不回退。
+- 新增 `provider_fallback_started/completed` 事件；请求 ID 加 `-fallback`，避免与主模型请求复用幂等键。
+- 验证：provider 配置/触发条件测试；全量套件 617 项 0 失败、13 跳过、覆盖率 79%。
+
 ## 2026-10-31 22:25（Asia/Shanghai）· 推理强度与能力探测
 - 模型接入新增“推理强度”：默认/none/low/medium/high/max，保存到 `.research/provider.json`，随主模型请求发送。
 - 新增“探测能力”：异步请求 `/models`，再发送一次极小的 `ping` 工具调用，显示工具调用支持、上下文长度、视觉元数据和模型数。
