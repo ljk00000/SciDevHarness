@@ -1492,6 +1492,8 @@ class SummarySettings:
     multi_agent_model: str = ""
     context_window_tokens: int = 32768
     execution_mode: str = "workspace-write"
+    max_agent_turns: int = 32
+    max_task_tokens: int = 0
 
     @classmethod
     def config_path(cls, project_root: Path) -> Path:
@@ -1568,10 +1570,24 @@ class SummarySettings:
         execution_mode = ExecutionMode.parse(
             os.getenv("SCIDEV_EXECUTION_MODE") or data.get("execution_mode", cls.execution_mode)
         ).value
+        max_agent_turns = data.get("max_agent_turns", cls.max_agent_turns)
+        if os.getenv("SCIDEV_MAX_AGENT_TURNS") is not None:
+            max_agent_turns = os.getenv("SCIDEV_MAX_AGENT_TURNS", "").strip()
+        try:
+            max_agent_turns = max(1, min(64, int(max_agent_turns)))
+        except (TypeError, ValueError, OverflowError):
+            max_agent_turns = cls.max_agent_turns
+        max_task_tokens = data.get("max_task_tokens", cls.max_task_tokens)
+        if os.getenv("SCIDEV_MAX_TASK_TOKENS") is not None:
+            max_task_tokens = os.getenv("SCIDEV_MAX_TASK_TOKENS", "").strip()
+        try:
+            max_task_tokens = max(0, min(10_000_000, int(max_task_tokens)))
+        except (TypeError, ValueError, OverflowError):
+            max_task_tokens = cls.max_task_tokens
         return cls(bool(enabled), model, max_tokens, context_chars, retries, interval_turns, instruction,
                    bool(memory_enabled), memory_results, memory_context_chars,
                    acceptance_mode, acceptance_model, bool(multi_agent_enabled), multi_agent_model,
-                   context_window_tokens, execution_mode)
+                   context_window_tokens, execution_mode, max_agent_turns, max_task_tokens)
 
     def save(self, project_root: Path) -> None:
         path = self.config_path(project_root)
@@ -1595,6 +1611,8 @@ class SummarySettings:
                     "multi_agent_model": self.multi_agent_model.strip()[:160],
                     "model_context_window_tokens": max(1024, min(1_048_576, int(self.context_window_tokens))),
                     "execution_mode": ExecutionMode.parse(self.execution_mode).value,
+                    "max_agent_turns": max(1, min(64, int(self.max_agent_turns))),
+                    "max_task_tokens": max(0, min(10_000_000, int(self.max_task_tokens))),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -6171,6 +6189,15 @@ class CodingAgent:
             self.toolbox.set_checkpoint(None)
             self._task_active = False
 
+    @staticmethod
+    def _task_token_usage(session: dict[str, Any]) -> tuple[int, int]:
+        current = ModelRequestUsage.snapshot(session)
+        baseline = session.get("task_usage_baseline")
+        baseline = baseline if isinstance(baseline, dict) else {}
+        used = max(0, current["total_tokens"] - ModelRequestUsage._count(baseline.get("total_tokens")))
+        reports = max(0, current["token_reports"] - ModelRequestUsage._count(baseline.get("token_reports")))
+        return used, reports
+
     def _build_provider(self) -> OpenAICompatibleProvider:
         if not self.prefer_environment_provider and provider_config_exists(self.project_root):
             try:
@@ -6341,7 +6368,14 @@ class CodingAgent:
             if task_id:
                 session["plan_task_id"] = task_id
         if task_id:
+            if (
+                session.get("last_task_id") != task_id
+                or session.get("last_prompt") != prompt
+            ):
+                session["task_usage_baseline"] = ModelRequestUsage.snapshot(session)
             session["last_task_id"] = task_id
+        elif session.get("last_prompt") != prompt or "task_usage_baseline" not in session:
+            session["task_usage_baseline"] = ModelRequestUsage.snapshot(session)
         # Fail closed on a malformed saved plan: do not silently discard history or
         # let the model continue under an invalid completion gate.
         try:
@@ -6419,7 +6453,7 @@ class CodingAgent:
         last_svg_preflight_fingerprint: str | None = None
         identical_svg_preflight_retries = 0
         tool_format_retries = 0
-        turn_limit = self.MAX_TURNS
+        turn_limit = min(self.MAX_TURNS, max(1, int(self.summary_settings.max_agent_turns or self.MAX_TURNS)))
         if svg_task:
             turn_limit = min(turn_limit, self.MAX_SVG_ARTIFACT_TURNS)
         svg_repair_noop_retries = int(session.get("svg_repair_noop_retries", 0) or 0)
@@ -7312,6 +7346,23 @@ class CodingAgent:
 
         for turn in range(1, turn_limit + 1):
             self._raise_if_cancelled(session, session_id)
+            max_task_tokens = int(self.summary_settings.max_task_tokens or 0)
+            if max_task_tokens:
+                used_tokens, token_reports = self._task_token_usage(session)
+                if token_reports and used_tokens >= max_task_tokens:
+                    message = (
+                        f"任务 token 预算已用尽（{used_tokens}/{max_task_tokens}）；"
+                        "未完成改动保留在工作区，不会自动提交。"
+                    )
+                    event = {
+                        "session_id": session_id,
+                        "turn": turn,
+                        "used_tokens": used_tokens,
+                        "limit": max_task_tokens,
+                    }
+                    self.ledger.append("task_token_budget_exhausted", event)
+                    self._emit("task_token_budget_exhausted", event)
+                    raise PermanentError(message)
             if context_dirty:
                 self._refresh_project_context(session, prompt, focus_paths)
                 context_dirty = False

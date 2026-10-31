@@ -1,5 +1,12 @@
 # 当前工作
 
+## 2026-10-31 20:55（Asia/Shanghai）· 任务轮次与 token 预算
+- `SummarySettings` 新增 `max_agent_turns`（1–64，默认 32）和 `max_task_tokens`（0 = 不限）。
+- Agent 循环使用配置的轮次上限（仍受内置 32 轮硬上限约束）；每个任务记录 `task_usage_baseline`，token 预算只按本任务新增的服务端 usage 计算。
+- 预算用尽时记录 `task_token_budget_exhausted`，任务失败并保留未提交改动。
+- Agent 设置新增“任务预算”区；支持环境变量 `SCIDEV_MAX_AGENT_TURNS` / `SCIDEV_MAX_TASK_TOKENS`。
+- 验证：新增 `tests/test_budget.py` 4 项；UI 设置持久化断言补充；全量套件 613 项 0 失败、13 跳过、覆盖率 80%。
+
 ## 2026-10-31 20:10（Asia/Shanghai）· 应用内模型接入与密钥链
 - Agent 设置新增“模型接入”：API Base URL、模型、API Key、保存与异步测试连接。
 - 新增 `scidev_credentials.py`：Windows Credential Manager（CredWriteW/CredReadW/CredDeleteW），Key 不进入项目 JSON 或审计日志。

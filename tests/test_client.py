@@ -3157,6 +3157,8 @@ class SummarySettingsUiTests(unittest.TestCase):
                 self.assertTrue(window.provider_base_edit.isVisible())
                 self.assertTrue(window.provider_model_edit.isVisible())
                 self.assertTrue(window.provider_save_button.isVisible())
+                self.assertTrue(window.max_agent_turns_spin.isVisible())
+                self.assertTrue(window.max_task_tokens_spin.isVisible())
 
                 interval = 7 if window.summary_interval_spin.value() != 7 else 8
                 window.summary_interval_spin.setValue(interval)
@@ -3207,6 +3209,11 @@ class SummarySettingsUiTests(unittest.TestCase):
                 self.assertEqual(
                     window.agent.toolbox.execution_policy.mode.value, "workspace-write",
                 )
+                window.max_agent_turns_spin.setValue(12)
+                window.max_task_tokens_spin.setValue(5000)
+                saved = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["max_agent_turns"], 12)
+                self.assertEqual(saved["max_task_tokens"], 5000)
 
                 saved_provider = Mock(base_url="https://example.test/v1", model="model-x")
                 with patch("scidev_client.save_provider_config", return_value=saved_provider) as save_provider:

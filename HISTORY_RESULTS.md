@@ -1,5 +1,13 @@
 # 历史与结果
 
+## 2026-10-31 20:55（Asia/Shanghai）· 任务轮次与 token 预算
+- `SummarySettings` 新增 `max_agent_turns`（1–64，默认 32）和 `max_task_tokens`（0 = 不限）；支持 JSON 持久化和 `SCIDEV_MAX_AGENT_TURNS` / `SCIDEV_MAX_TASK_TOKENS` 覆盖。
+- Agent 循环使用配置轮次上限，仍受内置 32 轮硬上限；新任务/重试按 `task_id`/prompt 维护 `task_usage_baseline`，token 预算只统计本任务新增的服务端 usage。
+- 预算用尽时记录 `task_token_budget_exhausted` 并抛 `PermanentError`，改动保留在工作区、不自动提交。
+- Agent 设置新增“任务预算”区（最多轮次、最多 token、说明）；UI 持久化测试补充。
+- 验证：新增 `tests/test_budget.py` 4 项（配置往返/环境覆盖、非法值钳制、任务 token 差值、配置轮次生效）；全量套件 613 项 0 失败、13 跳过、覆盖率 80%。
+- 边界：token 预算只统计 endpoint 实际返回的 usage；未返回 usage 时无法执行 token 硬限；没有货币成本换算。
+
 ## 2026-10-31 20:10（Asia/Shanghai）· 应用内模型接入与密钥链
 - 新增 `scidev_credentials.py`：Windows Credential Manager 的 set/get/delete，目标 `SciDevHarness/provider/<profile>`；非 Windows 明确报告不可用，不落明文。
 - 新增 `scidev_provider.py`：`.research/provider.json` 只存 base URL、模型、超时、temperature、presence_penalty、流式/兼容开关和凭据 profile；API Key 从凭据管理器读取，环境变量作为后备；保存前校验 URL/模型/超时/temperature/penalty；异步测试 `/models`。

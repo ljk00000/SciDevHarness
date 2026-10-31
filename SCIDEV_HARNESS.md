@@ -9,6 +9,7 @@
 | 能力 | 状态 | 已实现 | 尚缺 / 边界 |
 |---|---|---|---|
 | Agent 循环 | ✅ 已实现 | 最多 32 轮模型/工具交互；工具结果回传给模型，允许根据报错继续处理；结束时核对 Git diff | 模型仍可能误判；达到轮数上限会失败，不保证一次完成 |
+| 任务预算 | ✅ 基础已实现 | Agent 设置可配置单任务最多模型轮次（1–64）和最多 token（0 = 不限）；token 按任务起点扣除历史累计，用尽后失败并保留未提交改动 | token 预算只统计服务端实际返回的 usage；未返回 usage 的 endpoint 无法执行 token 硬限；没有货币成本换算 |
 | 模型接入 | ✅ 基础已实现 | Agent 设置内可填写 API Base URL、模型和 API Key；Key 存入 Windows 凭据管理器，非敏感配置存 `.research/provider.json`；环境变量作为后备；CLI 显式 provider 参数强制覆盖；可异步测试 `/models` 连通性 | 不是 OpenAI/ChatGPT 账号登录或 OAuth；Key 仍可被同一 Windows 用户下的进程读取；只支持 OpenAI-compatible Chat Completions；未做模型能力自动探测/多 provider 路由 |
 | 编码工具 | ✅ 核心已实现 | `search_code`、`get_project_context`、`list_files`、`read_file`、`write_file`、`apply_patch`、精确/批量 `replace_in_file`、`run_command`、`git_diff`；按用户意图启用网页搜索/打开/点击/截图；可选视觉制品检查 | 网页操作逐次审批且不复用登录态；截图只本机保存；符号提取不是完整语言服务器 |
 | 项目上下文 | ✅ 核心已实现 | 本地增量缓存、代码/标识符检索、任务相关片段与符号、中英术语及复合短语加权（含旋转/碰撞等游戏机制）、环境/依赖/目录指令；未保存编辑器缓冲参与预览、搜索和读取，Agent 对这些文件只读；任务/重试/编辑后刷新 | 有界关键词检索，不含向量索引或完整依赖图；快照最多 8 个文件/1 MB，超预算的草稿排除且禁止读取旧磁盘内容；扫描/输出有界；缓存仅在当前进程内 |

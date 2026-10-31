@@ -5055,8 +5055,8 @@ class ClientWindow(QMainWindow):
         self.chat_body_stack.addWidget(self.summary_settings_scroll)
         self.chat_body_stack.setCurrentWidget(conversation)
         provider_note = QLabel(
-            "模型配置来自启动环境：SCIDEV_API_KEY / SCIDEV_MODEL / SCIDEV_BASE_URL。\n"
-            "修改后重新启动客户端；这里的“模型”只覆盖总结模型。"
+            "模型接入配置保存在项目 .research/provider.json；API Key 存入 Windows 凭据管理器。\n"
+            "没有保存配置时使用启动环境变量；保存后下一次任务生效。上面的“模型”字段只覆盖总结模型。"
         )
         provider_note.setObjectName("Hint")
         provider_note.setWordWrap(True)
@@ -5115,6 +5115,33 @@ class ClientWindow(QMainWindow):
         self.provider_status_label.setWordWrap(True)
         settings_layout.addWidget(self.provider_status_label, 27, 0, 1, 4)
         self._provider_check_thread: ProviderCheckThread | None = None
+
+        self.budget_title = QLabel("任务预算")
+        self.budget_title.setObjectName("SectionTitle")
+        settings_layout.addWidget(self.budget_title, 28, 0, 1, 4)
+        self.max_agent_turns_label = QLabel("最多模型轮次")
+        settings_layout.addWidget(self.max_agent_turns_label, 29, 0)
+        self.max_agent_turns_spin = QSpinBox()
+        self.max_agent_turns_spin.setRange(1, 64)
+        self.max_agent_turns_spin.setValue(self.summary_settings.max_agent_turns)
+        self.max_agent_turns_spin.setSuffix(" 轮")
+        self.max_agent_turns_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
+        settings_layout.addWidget(self.max_agent_turns_spin, 29, 1, 1, 3)
+        self.max_task_tokens_label = QLabel("最多 token")
+        settings_layout.addWidget(self.max_task_tokens_label, 30, 0)
+        self.max_task_tokens_spin = QSpinBox()
+        self.max_task_tokens_spin.setRange(0, 10_000_000)
+        self.max_task_tokens_spin.setSingleStep(1000)
+        self.max_task_tokens_spin.setValue(self.summary_settings.max_task_tokens)
+        self.max_task_tokens_spin.setSpecialValueText("不限")
+        self.max_task_tokens_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
+        settings_layout.addWidget(self.max_task_tokens_spin, 30, 1, 1, 3)
+        self.budget_note = QLabel(
+            "轮次硬上限最多 64；token 预算只统计服务端实际返回的 usage，0 = 不限。"
+        )
+        self.budget_note.setObjectName("Hint")
+        self.budget_note.setWordWrap(True)
+        settings_layout.addWidget(self.budget_note, 31, 0, 1, 4)
 
         self.task_plan_panel = TaskPlanPanel(
             self.planning_mode,
@@ -5441,6 +5468,8 @@ class ClientWindow(QMainWindow):
         self.summary_settings.execution_mode = ExecutionMode.parse(
             self.execution_mode_combo.currentData()
         ).value
+        self.summary_settings.max_agent_turns = self.max_agent_turns_spin.value()
+        self.summary_settings.max_task_tokens = self.max_task_tokens_spin.value()
         self.summary_settings.acceptance_mode = SemanticAcceptance.mode(self.acceptance_mode_combo.currentData())
         self.summary_settings.acceptance_model = self.acceptance_model_edit.text().strip()[:160]
         self.summary_settings.multi_agent_enabled = self.multi_agent_enabled_checkbox.isChecked()
