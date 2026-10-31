@@ -6304,12 +6304,15 @@ class CodingAgent:
             and session.get("verification_code_changed")
             and verification_report.get("status") != "passed"
         ):
-            if self.toolbox.command_approval is None and not self.toolbox.execution_policy.can_run_commands:
-                # Without an approval channel and with a read-only policy,
-                # run_command can never execute. Asking the model for checks
-                # only burns turns; fail closed with an actionable reason.
+            if (
+                self.toolbox.command_approval is None
+                and not self.toolbox.execution_policy.auto_approves(assess_command("pytest -q"))
+            ):
+                # Without an approval channel and without a policy that can
+                # auto-approve verification, run_command can never execute.
+                # Asking the model for checks only burns turns; fail closed.
                 blocked_message = (
-                    "代码改动尚未验证：当前运行没有命令审批通道，且执行策略为只读。"
+                    "代码改动尚未验证：当前运行没有命令审批通道，且执行策略不允许自动验证。"
                     "改动保留在工作区，本次不会自动提交；"
                     "请在桌面客户端中运行，或切换为“工作区可写”/提供 command_approval 后重试。"
                 )
@@ -6356,7 +6359,8 @@ class CodingAgent:
                     (
                         "Harness 验证门槛：本任务改动了代码，但尚无针对当前最终代码且完整通过的检查。"
                         f"当前证据：{status_label}。请检查项目已有测试/构建说明，选择最小相关检查；"
-                        "若检查失败，先分析错误、修复并重新运行。命令仍须逐条请求用户批准；"
+                        "若检查失败，先分析错误、修复并重新运行。命令按当前执行策略处理："
+                        "工作区可写会自动批准可识别的验证命令，手动审批模式仍需逐条批准；"
                         "不要重复用户已拒绝的命令。只有检查成功且期间代码未变后才能结束。"
                     ),
                     reason="changed code lacks a passing current-code check",
