@@ -1,5 +1,16 @@
 # 当前工作
 
+## 2026-10-31 11:50（Asia/Shanghai）· 本地 Qwen 第七轮（工具参数与文件名边界）
+- 对全部文件/检索工具做参数类型 fuzz，并用官方本地模型 smoke 复测；修复 7 项：
+  1. 零参数工具（如 git_diff）收到额外参数时跳过签名校验，直接抛 TypeError；现在零参数也会给出“不支持参数：（无）”。
+  2. read_file/list_files 对 []/{} 等假值参数静默回退默认值；现在 start_line/end_line/depth 严格校验，path 必须是非空字符串。
+  3. run_command 的数字/数组命令、bool/空值超时被静默转换；现在非字符串命令、布尔或非法超时明确拒绝，不启动进程。
+  4. replace_in_file 批量编辑的 5 条校验错误仍是英文；现在统一中文，弱模型能直接理解。
+  5. 含 NUL 的路径触发 atomic_write_bytes 清理二次异常，掩盖原始“embedded null character”；现在清理不再掩盖，`_resolve` 统一拒绝 NUL 路径。
+  6. 300 字符文件名等写盘错误直接抛 OSError；现在文件名长度、目录创建、原子写入失败都转成 PermanentError，并保留原始原因。
+  7. 新增 `_write_file_bytes` 统一 write_file/replace_in_file/批量替换的写盘错误处理。
+- 验证：工具 fuzz 无未捕获异常；官方 Ollama smoke 通过（4 个编码任务 + 修 bug + 自动提交 + 总结）；真实 7B 探针（36 + 并发）flagged=[]、coverage_gaps={}；全量隔离套件 571 项 0 失败、13 跳过、覆盖率 79%；ruff 通过。
+
 ## 2026-10-31 02:25（Asia/Shanghai）· Windows CI 3.12/3.13 时序修复（已完成）
 - CI #106 只有 Python 3.12 失败：流式取消测试用 8 秒总时长断言，CI 线程启动偏慢，8.265 秒误报；改为等流真正开始后再取消，只断言取消反应时间。
 - CI #107 又暴露 3.13 的测试清理竞争：被终止的子进程短暂占用临时目录 cwd，`TemporaryDirectory` 清理报 WinError 32；两个取消测试改用 `ignore_cleanup_errors=True`，不把清理竞争当功能失败。

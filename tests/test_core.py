@@ -3245,7 +3245,7 @@ class CoreTests(unittest.TestCase):
                     ],
                 )
             self.assertEqual(source.read_bytes(), before_failed_batch)
-            with self.assertRaisesRegex(PermanentError, "unsupported fields"):
+            with self.assertRaisesRegex(PermanentError, "不支持的字段"):
                 toolbox.replace_in_file(
                     "drawing.svg",
                     edits=[{"old_text": "pelican-eye", "new_text": "x", "unexpected": "value"}],
@@ -3334,6 +3334,19 @@ class CoreTests(unittest.TestCase):
             self.assertIn("command_approval_denied", [event["event_type"] for event in events])
             self.assertIn("command_execution_recorded", [event["event_type"] for event in events])
             self.assertEqual(toolbox.last_command_execution["status"], "not_run")
+
+    def test_run_command_rejects_non_string_commands_and_invalid_timeouts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(root, EventLedger(root))
+            with patch("scidev_core.subprocess.Popen") as process:
+                with self.assertRaisesRegex(PermanentError, "command 必须是字符串"):
+                    toolbox.run_command({"command": "echo hi"})  # type: ignore[arg-type]
+                with self.assertRaisesRegex(PermanentError, "超时参数无效"):
+                    toolbox.run_command("echo hi", timeout_seconds=True)  # type: ignore[arg-type]
+                with self.assertRaisesRegex(PermanentError, "超时参数无效"):
+                    toolbox.run_command("echo hi", timeout_seconds=[])  # type: ignore[arg-type]
+            process.assert_not_called()
 
     def test_run_command_executes_only_after_approval(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -4233,8 +4246,20 @@ class CoreTests(unittest.TestCase):
             self.assertIn("（空文件）", toolbox.read_file("empty.py"))
             with self.assertRaisesRegex(PermanentError, "start_line/end_line 必须是整数"):
                 toolbox.read_file("app.py", start_line="abc")
+            with self.assertRaisesRegex(PermanentError, "start_line/end_line 必须是整数"):
+                toolbox.read_file("app.py", start_line=[])
+            with self.assertRaisesRegex(PermanentError, "path 必须是非空字符串"):
+                toolbox.read_file(123)  # type: ignore[arg-type]
+            with self.assertRaisesRegex(PermanentError, "NUL"):
+                toolbox.read_file("a\x00b")
+            with self.assertRaisesRegex(PermanentError, "path 必须是非空字符串"):
+                toolbox.list_files(123)  # type: ignore[arg-type]
+            with self.assertRaisesRegex(PermanentError, "NUL"):
+                toolbox.list_files("a\x00b")
             with self.assertRaisesRegex(PermanentError, "depth 必须是整数"):
                 toolbox.list_files(".", depth="all")
+            with self.assertRaisesRegex(PermanentError, "depth 必须是整数"):
+                toolbox.list_files(".", depth={})  # type: ignore[arg-type]
 
     def test_tool_rejects_undocumented_arguments_with_a_clear_message(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-tool-args-") as temp:
@@ -4248,6 +4273,12 @@ class CoreTests(unittest.TestCase):
             self.assertFalse((root / "note.txt").exists())
             with self.assertRaisesRegex(PermanentError, "缺少必填参数：content"):
                 toolbox.execute("write_file", {"path": "note.txt"})
+            with self.assertRaisesRegex(PermanentError, "不支持参数：unexpected"):
+                toolbox.execute("git_diff", {"unexpected": 1})
+            with self.assertRaisesRegex(PermanentError, "edits 必须是"):
+                toolbox.execute("replace_in_file", {"path": "app.py", "edits": "x"})
+            with self.assertRaisesRegex(PermanentError, "每个 edits 项"):
+                toolbox.execute("replace_in_file", {"path": "app.py", "edits": [{}]})
 
     def test_file_tools_reject_non_string_payloads_instead_of_writing_repr(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-non-string-args-") as temp:
@@ -4267,6 +4298,23 @@ class CoreTests(unittest.TestCase):
                 )
             with self.assertRaisesRegex(PermanentError, "patch 必须是非空字符串"):
                 toolbox.execute("apply_patch", {"patch": [{"path": "app.py"}]})
+
+    def test_write_file_reports_invalid_names_as_permanent_errors(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-invalid-names-") as temp:
+            root = Path(temp)
+            toolbox = CodingToolbox(root, EventLedger(root))
+            with self.assertRaisesRegex(PermanentError, "NUL"):
+                toolbox.write_file("a\x00b", "x")
+            with self.assertRaisesRegex(PermanentError, "文件名过长"):
+                toolbox.write_file("a" * 300, "x")
+            reviewed = CodingToolbox(
+                root, EventLedger(root), enforce_patch_review_for_existing=True,
+            )
+            with self.assertRaisesRegex(PermanentError, "文件名过长"):
+                reviewed.write_file("a" * 300, "x")
+            with patch("scidev_core.atomic_write_bytes", side_effect=OSError("disk full")):
+                with self.assertRaisesRegex(PermanentError, "写入文件失败"):
+                    toolbox.write_file("ok.txt", "x")
 
     def test_patch_with_read_file_line_numbers_gets_a_specific_hint(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-patch-line-numbers-") as temp:

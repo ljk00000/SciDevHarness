@@ -236,7 +236,7 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
     finally:
         try:
             temporary.unlink(missing_ok=True)
-        except OSError:
+        except (OSError, ValueError):
             pass
 
 
@@ -2910,6 +2910,8 @@ class CodingToolbox:
 
     def _resolve(self, raw_path: str, allow_root: bool = True) -> Path:
         raw_path = str(raw_path or ".").strip()
+        if "\x00" in raw_path:
+            raise PermanentError("路径不能包含 NUL 字节")
         candidate = (self.project_root / raw_path).resolve()
         try:
             relative = candidate.relative_to(self.project_root)
@@ -3043,15 +3045,22 @@ class CodingToolbox:
         return self._svg_structure_issues(root) if root is not None else []
 
     def list_files(self, path: str = ".", depth: int = 3) -> str:
+        if not isinstance(path, str) or not path.strip():
+            raise PermanentError("list_files 的 path 必须是非空字符串")
+        if depth is None or depth == "":
+            requested_depth = 3
+        elif isinstance(depth, bool):
+            raise PermanentError("list_files 的 depth 必须是整数")
+        else:
+            try:
+                requested_depth = int(depth)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise PermanentError("list_files 的 depth 必须是整数") from exc
         base = self._resolve(path)
         if not base.exists():
             return f"路径不存在：{path}"
         if base.is_file():
             return str(base.relative_to(self.project_root))
-        try:
-            requested_depth = int(depth or 3)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise PermanentError("list_files 的 depth 必须是整数") from exc
         max_depth = max(1, min(requested_depth, 5))
         result: list[str] = []
         queue_items: list[tuple[Path, int, str]] = [(base, 0, "")]
@@ -3086,6 +3095,21 @@ class CodingToolbox:
         return "\n".join(result) or "（空目录）"
 
     def read_file(self, path: str, start_line: int = 1, end_line: int = 400) -> str:
+        if not isinstance(path, str) or not path.strip():
+            raise PermanentError("read_file 的 path 必须是非空字符串")
+
+        def _line(value: Any, default: int) -> int:
+            if value is None or value == "":
+                return default
+            if isinstance(value, bool):
+                raise PermanentError("read_file 的 start_line/end_line 必须是整数")
+            try:
+                return int(value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise PermanentError("read_file 的 start_line/end_line 必须是整数") from exc
+
+        start = max(1, _line(start_line, 1))
+        requested_end = _line(end_line, 400)
         target = self._resolve(path, allow_root=False)
         if not target.exists():
             return f"文件不存在：{path}"
@@ -3116,11 +3140,6 @@ class CodingToolbox:
         if len(text.encode("utf-8")) > self.MAX_CONTEXT_FILE_BYTES:
             raise PermanentError(f"源文件过大（上限 {self.MAX_CONTEXT_FILE_BYTES} bytes）")
         lines = text.splitlines()
-        try:
-            start = max(1, int(start_line or 1))
-            requested_end = int(end_line or 400)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise PermanentError("read_file 的 start_line/end_line 必须是整数") from exc
         if not lines:
             return "（空文件）" + note
         if start > len(lines):
@@ -3146,6 +3165,14 @@ class CodingToolbox:
             result += f"\n\n适用目录指令（以下不是文件原文）：\n{scoped}"
         return result
 
+    def _write_file_bytes(self, target: Path, data: bytes) -> None:
+        if len(target.name) > 255:
+            raise PermanentError("文件名过长（上限 255 个字符）")
+        try:
+            atomic_write_bytes(target, data)
+        except (OSError, ValueError) as exc:
+            raise PermanentError(f"写入文件失败：{exc}") from exc
+
     def write_file(self, path: str, content: str) -> str:
         if not isinstance(path, str) or not path.strip():
             raise PermanentError("write_file 的 path 必须是非空字符串")
@@ -3155,6 +3182,8 @@ class CodingToolbox:
                 "避免把 Python repr 静默写进文件。"
             )
         target = self._resolve(path, allow_root=False)
+        if len(target.name) > 255:
+            raise PermanentError("文件名过长（上限 255 个字符）")
         self._assert_editor_context_readonly(target)
         encoded = str(content).encode("utf-8")
         if len(encoded) > self.MAX_WRITE_BYTES:
@@ -3173,7 +3202,10 @@ class CodingToolbox:
             self._decode_utf8_text(original if original is not None else target.read_bytes(), target)
         elif self.enforce_patch_review_for_existing and task_key in self._task_created_file_hashes:
             raise PermanentError(f"本任务新建文件已被移除，拒绝 write_file 重新创建：{path}；请使用 apply_patch。")
-        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise PermanentError(f"创建目标目录失败：{exc}") from exc
         if self.enforce_patch_review_for_existing and not exists:
             try:
                 with target.open("xb") as stream:
@@ -3182,8 +3214,10 @@ class CodingToolbox:
                     os.fsync(stream.fileno())
             except FileExistsError as exc:
                 raise PermanentError(f"创建期间目标文件已出现，未覆盖：{path}；请使用 apply_patch。") from exc
+            except (OSError, ValueError) as exc:
+                raise PermanentError(f"写入文件失败：{exc}") from exc
         else:
-            atomic_write_bytes(target, encoded)
+            self._write_file_bytes(target, encoded)
         self._remember_task_created_file(target, encoded)
         relative = target.relative_to(self.project_root).as_posix()
         self.ledger.append("file_changed", {"operation": "write", "path": relative, "bytes": len(encoded)})
@@ -3202,7 +3236,7 @@ class CodingToolbox:
     ) -> str:
         if edits is not None:
             if old_text or new_text or replace_all:
-                raise PermanentError("Do not mix batch edits with single-replacement arguments")
+                raise PermanentError("不能同时使用 edits 与 old_text/new_text/replace_all")
             return self.replace_many_in_file(path, edits)
         if not isinstance(path, str) or not path.strip():
             raise PermanentError("replace_in_file 的 path 必须是非空字符串")
@@ -3251,7 +3285,7 @@ class CodingToolbox:
             raise PermanentError(f"拒绝写入过大文件（上限 {self.MAX_WRITE_BYTES} bytes）")
         if b"\x00" in encoded:
             raise PermanentError(f"拒绝写入包含 NUL 字节的文本文件：{path}")
-        atomic_write_bytes(target, encoded)
+        self._write_file_bytes(target, encoded)
         self._remember_task_created_file(target, encoded)
         relative = target.relative_to(self.project_root).as_posix()
         self.ledger.append("file_changed", {"operation": "replace", "path": relative, "matches": count})
@@ -3264,24 +3298,24 @@ class CodingToolbox:
         if not isinstance(path, str) or not path.strip():
             raise PermanentError("replace_in_file 的 path 必须是非空字符串")
         if not isinstance(edits, list) or not 1 <= len(edits) <= 50:
-            raise PermanentError("Batch edits must contain between 1 and 50 replacements")
+            raise PermanentError("edits 必须是 1–50 个替换对象的数组")
         normalized: list[tuple[str, str, bool]] = []
         input_characters = 0
         for edit in edits:
             if not isinstance(edit, dict):
-                raise PermanentError("Each batch edit must be an object")
+                raise PermanentError("每个 edits 项必须是对象")
             if set(edit) - {"old_text", "new_text", "replace_all"}:
-                raise PermanentError("Batch edits contain unsupported fields")
+                raise PermanentError("edits 项包含不支持的字段")
             before = edit.get("old_text")
             after = edit.get("new_text")
             replace_all = edit.get("replace_all", False)
             if not isinstance(before, str) or not before or not isinstance(after, str):
-                raise PermanentError("Each batch edit requires non-empty old_text and string new_text")
+                raise PermanentError("每个 edits 项都必须提供非空 old_text 和字符串 new_text")
             if not isinstance(replace_all, bool):
-                raise PermanentError("replace_all must be a boolean")
+                raise PermanentError("replace_all 必须是布尔值")
             input_characters += len(before) + len(after)
             if input_characters > self.MAX_WRITE_BYTES:
-                raise PermanentError("Combined batch edit text exceeds the file edit size limit")
+                raise PermanentError("批量替换文本总长度超过文件编辑上限")
             normalized.append((before, after, replace_all))
 
         target = self._resolve(path, allow_root=False)
@@ -3329,7 +3363,7 @@ class CodingToolbox:
 
         svg_root = self._validate_svg_document(target, updated)
         encoded = updated.encode("utf-8")
-        atomic_write_bytes(target, encoded)
+        self._write_file_bytes(target, encoded)
         self._remember_task_created_file(target, encoded)
         relative = target.relative_to(self.project_root).as_posix()
         self.ledger.append(
@@ -3508,7 +3542,9 @@ class CodingToolbox:
             terminate_process_tree(process)
 
     def run_command(self, command: str, timeout_seconds: int = 120) -> str:
-        command = str(command or "").strip()
+        if not isinstance(command, str):
+            raise PermanentError("run_command 的 command 必须是字符串")
+        command = command.strip()
         self._command_cancel.clear()
         execution = {
             "command_id": new_id("cmd"),
@@ -3543,12 +3579,20 @@ class CodingToolbox:
                 "Harness 负责在验证后自动提交限定路径的改动；请勿手动运行 git add/commit/reset"
                 " 等改写索引或历史的命令。直接完成改动并汇报即可。"
             )
-        try:
-            timeout = max(1, min(int(timeout_seconds or 120), 300))
-        except (TypeError, ValueError, OverflowError) as exc:
+        if timeout_seconds is None or timeout_seconds == "":
+            requested_timeout = 120
+        elif isinstance(timeout_seconds, bool):
             execution["approval_status"] = "rejected"
             self._finish_command_execution(execution, "rejected")
-            raise PermanentError("命令超时参数无效") from exc
+            raise PermanentError("命令超时参数无效")
+        else:
+            try:
+                requested_timeout = int(timeout_seconds)
+            except (TypeError, ValueError, OverflowError) as exc:
+                execution["approval_status"] = "rejected"
+                self._finish_command_execution(execution, "rejected")
+                raise PermanentError("命令超时参数无效") from exc
+        timeout = max(1, min(requested_timeout, 300))
         execution["timeout_seconds"] = timeout
         self.ledger.append(
             "command_approval_requested",
@@ -3732,18 +3776,19 @@ class CodingToolbox:
         if not isinstance(arguments, dict):
             raise PermanentError(f"工具 {name} 的参数必须是 JSON 对象")
         try:
-            parameters = inspect.signature(handler).parameters
+            parameters: dict[str, inspect.Parameter] | None = inspect.signature(handler).parameters
         except (TypeError, ValueError):
-            parameters = {}
-        if parameters and not any(
+            parameters = None
+        if parameters is not None and not any(
             parameter.kind == inspect.Parameter.VAR_KEYWORD
             for parameter in parameters.values()
         ):
+            allowed_hint = ", ".join(parameters) or "（无）"
             unknown = sorted(set(arguments) - set(parameters))
             if unknown:
                 raise PermanentError(
                     f"工具 {name} 不支持参数：{', '.join(unknown)}；"
-                    f"可用参数：{', '.join(parameters)}"
+                    f"可用参数：{allowed_hint}"
                 )
             missing = sorted(
                 parameter_name
@@ -3756,7 +3801,7 @@ class CodingToolbox:
             if missing:
                 raise PermanentError(
                     f"工具 {name} 缺少必填参数：{', '.join(missing)}；"
-                    f"可用参数：{', '.join(parameters)}"
+                    f"可用参数：{allowed_hint}"
                 )
         return str(handler(**arguments))
 

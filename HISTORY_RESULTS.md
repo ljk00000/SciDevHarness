@@ -1,5 +1,16 @@
 # 历史与结果
 
+## 2026-10-31 11:50（Asia/Shanghai）· 本地 Qwen 第七轮（工具参数与文件名边界）
+- 方法：对 CodingToolbox 全部文件/检索/命令工具做参数类型 fuzz（search_code、get_project_context、list_files、read_file、write_file、replace_in_file、apply_patch、git_diff、run_command），并跑官方 Ollama smoke。
+- 修复：
+  1. 零参数工具校验缺口：`inspect.signature` 返回空参数时 `if parameters` 直接跳过，`git_diff({"unexpected":1})` 抛 `TypeError`；改为基于 `parameters is not None` 校验，允许参数提示为“（无）”。
+  2. 假值参数静默回退：`read_file(start_line=[])`、`list_files(depth={})` 被 `or` 当成默认值；现在显式区分 None/空串与非法类型，bool 也拒绝。
+  3. 命令参数：`run_command(command=123)` 会执行字符串化命令，`timeout_seconds=True` 变 1 秒、`[]` 变 120 秒；现在非字符串命令、bool/非法超时在审批前拒绝并记录 rejected。
+  4. 批量编辑错误本地化：`Do not mix...`、`Batch edits must...`、`Each batch edit...`、`replace_all must...`、`Combined batch edit...` 全部改为中文。
+  5. NUL 路径双重异常：`a\x00b` 在 atomic_write_bytes 的 finally unlink 再抛 ValueError 掩盖原始错误；finally 现在捕获 ValueError，`_resolve` 对所有工具统一返回“路径不能包含 NUL 字节”。
+  6. 文件名/写盘边界：300 字符文件名、NUL、磁盘错误会抛裸 OSError/ValueError；新增 `_write_file_bytes`（文件名上限、异常转 PermanentError），write_file 的直接创建分支和父目录创建也给出明确中文错误。
+- 验证：fuzz 工具无未捕获异常；官方 smoke `status=passed`（hello_qwen.py 提交、4 个编码任务、first_duplicate 修复、总结）；真实 7B 探针 36 场景 + 并发 `flagged=[]` 且无覆盖缺口；全量隔离套件 571 项 0 失败、0 错误、13 跳过、覆盖率 79%；ruff 通过。
+
 ## 2026-10-31 02:25（Asia/Shanghai）· Windows CI 3.12/3.13 时序失败修复
 - 现象：push `abeabe9` 后 Windows CI #106 中 3.13/3.14 成功，3.12 失败；注解为 `test_cancel_interrupts_an_in_flight_model_stream` 的 `8.265 not less than 8`。
 - 根因：测试在固定 0.6 秒后取消，并断言整体 8 秒内结束；CI 上 worker 线程/流启动偶发晚到，取消本身仍生效，总时长超阈值即误报。
