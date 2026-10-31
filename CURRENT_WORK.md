@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-10-31 23:10（Asia/Shanghai）· Ruff LSP 诊断
+- 新增 `scidev_lsp.py`：最小 JSON-RPC stdio 客户端，启动本机 `ruff server`，初始化、didOpen、等待 `publishDiagnostics`、关闭；支持超时和进程清理。
+- 编辑器打开/修改 Python 文件时，防抖后台线程收集诊断；结果写入“问题”面板，双击跳转到行列。
+- 语法错误仍由 AST 即时显示；LSP 不可用或超时时静默跳过，不阻塞编辑器。
+- 验证：新增 `tests/test_lsp.py` 4 项（真实 Ruff LSP 语法诊断、干净文件、后缀拒绝、URI）；UI 诊断渲染测试；全量套件 622 项 0 失败、13 跳过、覆盖率 79%。
+
 ## 2026-10-31 22:50（Asia/Shanghai）· 回退模型
 - 模型接入新增“回退模型”字段；保存到 `.research/provider.json`，支持 `SCIDEV_FALLBACK_MODEL`。
 - 主模型返回 HTTP 404、`model_not_found` 或模型不存在的 HTTP 400 时，本次任务自动用回退模型重试一次；只回退一次，其他错误不回退。

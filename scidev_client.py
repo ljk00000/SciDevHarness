@@ -9,6 +9,7 @@ The coding Agent and its retry/audit services remain UI-independent in
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import ast
 import io
 import json
@@ -110,6 +111,7 @@ from scidev_core import (
 )
 from scidev_icons import activity_icon
 from scidev_highlighting import LanguageHighlighter, PythonHighlighter
+from scidev_lsp import collect_diagnostics as collect_lsp_diagnostics
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
 from scidev_verification import VerificationTracker
@@ -783,6 +785,25 @@ class ProviderCheckThread(QThread):
         except Exception as exc:  # noqa: BLE001 - a connectivity probe must not crash the UI
             ok, message = False, f"{type(exc).__name__}: {exc}"
         self.checked.emit(ok, message)
+
+
+class LSPDiagnosticsThread(QThread):
+    diagnostics_ready = Signal(str, int, object, str)
+
+    def __init__(self, root: Path, path: Path, text: str, generation: int, parent: QObject | None = None):
+        super().__init__(parent)
+        self.root = root
+        self.path = path
+        self.text = text
+        self.generation = generation
+
+    def run(self) -> None:
+        try:
+            diagnostics = collect_lsp_diagnostics(self.root, self.path, self.text, timeout=3.0)
+            payload = [asdict(item) for item in diagnostics]
+            self.diagnostics_ready.emit(str(self.path), self.generation, payload, "")
+        except Exception as exc:  # noqa: BLE001 - diagnostics are optional and must not crash the UI
+            self.diagnostics_ready.emit(str(self.path), self.generation, [], f"{type(exc).__name__}: {exc}")
 
 
 class ElidedLabel(QLabel):
@@ -2618,6 +2639,9 @@ class ClientWindow(QMainWindow):
         self._code_intel_timer.setSingleShot(True)
         self._code_intel_timer.setInterval(self.CODE_INTEL_DEBOUNCE_MS)
         self._code_intel_timer.timeout.connect(self._refresh_code_intel)
+        self._lsp_thread: LSPDiagnosticsThread | None = None
+        self._lsp_generation = 0
+        self._lsp_diagnostics: dict[str, list[dict]] = {}
         self.terminal_cwd = self.project_root
         self._entry_parent = self.project_root
         self._explorer_entry_mode = "create"
@@ -7422,6 +7446,45 @@ class ClientWindow(QMainWindow):
                 syntax_error = exc
         self._render_outline(path, text, syntax_tree)
         self._render_diagnostics(path, syntax_error)
+        if path.suffix.lower() == ".py":
+            self._schedule_lsp_diagnostics(path, text)
+
+    def _schedule_lsp_diagnostics(self, path: Path, text: str) -> None:
+        if len(text) > self.CODE_INTEL_MAX_PARSE_CHARS:
+            return
+        if self._lsp_thread is not None and self._lsp_thread.isRunning():
+            return
+        self._lsp_generation += 1
+        generation = self._lsp_generation
+        thread = LSPDiagnosticsThread(self.project_root, path, text, generation, self)
+        thread.diagnostics_ready.connect(self._on_lsp_diagnostics)
+        def clear(thread_ref=thread) -> None:
+            if self._lsp_thread is thread_ref:
+                self._lsp_thread = None
+        thread.finished.connect(clear)
+        thread.finished.connect(thread.deleteLater)
+        self._lsp_thread = thread
+        thread.start()
+
+    def _on_lsp_diagnostics(self, raw_path: str, generation: int, diagnostics: object, error: str) -> None:
+        if generation != self._lsp_generation:
+            return
+        path = Path(raw_path)
+        if error:
+            return
+        items = diagnostics if isinstance(diagnostics, list) else []
+        self._lsp_diagnostics[str(path)] = [item for item in items if isinstance(item, dict)]
+        editor = self._active_editor()
+        active_path = self._editor_paths.get(editor) if editor is not None else None
+        if editor is None or active_path is None or active_path != path:
+            return
+        text = editor.toPlainText()
+        syntax_error = None
+        try:
+            ast.parse(text or "\n")
+        except SyntaxError as exc:
+            syntax_error = exc
+        self._render_diagnostics(path, syntax_error)
 
     def _refresh_outline(self) -> None:
         self._refresh_code_intel()
@@ -7477,16 +7540,36 @@ class ClientWindow(QMainWindow):
         if not hasattr(self, "problems_tree"):
             return
         self.problems_tree.clear()
-        if path.suffix.lower() != ".py" or syntax_error is None:
+        if path.suffix.lower() != ".py":
             return
-        line_number = max(1, int(syntax_error.lineno or 1))
-        column_number = max(1, int(syntax_error.offset or 1))
-        message = str(syntax_error.msg or "语法错误")
-        item = QTreeWidgetItem([f"{path.name}:{line_number}:{column_number}  {message}"])
-        item.setData(0, Qt.ItemDataRole.UserRole, str(path))
-        item.setData(0, Qt.ItemDataRole.UserRole + 1, line_number)
-        item.setData(0, Qt.ItemDataRole.UserRole + 2, column_number)
-        self.problems_tree.addTopLevelItem(item)
+        if syntax_error is not None:
+            line_number = max(1, int(syntax_error.lineno or 1))
+            column_number = max(1, int(syntax_error.offset or 1))
+            message = str(syntax_error.msg or "语法错误")
+            item = QTreeWidgetItem([f"{path.name}:{line_number}:{column_number}  {message}"])
+            item.setData(0, Qt.ItemDataRole.UserRole, str(path))
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, line_number)
+            item.setData(0, Qt.ItemDataRole.UserRole + 2, column_number)
+            self.problems_tree.addTopLevelItem(item)
+        for diagnostic in self._lsp_diagnostics.get(str(path), []):
+            if not isinstance(diagnostic, dict):
+                continue
+            try:
+                diag_line = max(1, int(diagnostic.get("line", 1)))
+                diag_column = max(1, int(diagnostic.get("column", 1)))
+            except (TypeError, ValueError):
+                continue
+            severity = str(diagnostic.get("severity") or "error")
+            diag_message = str(diagnostic.get("message") or "LSP 诊断")[:500]
+            code = str(diagnostic.get("code") or "").strip()
+            suffix = f" [{code}]" if code else ""
+            diag_item = QTreeWidgetItem([
+                f"{path.name}:{diag_line}:{diag_column}  [{severity}] {diag_message}{suffix}"
+            ])
+            diag_item.setData(0, Qt.ItemDataRole.UserRole, str(path))
+            diag_item.setData(0, Qt.ItemDataRole.UserRole + 1, diag_line)
+            diag_item.setData(0, Qt.ItemDataRole.UserRole + 2, diag_column)
+            self.problems_tree.addTopLevelItem(diag_item)
 
     def _open_problem(self, item: QTreeWidgetItem, _column: int = 0) -> None:
         raw_path = item.data(0, Qt.ItemDataRole.UserRole)
@@ -8672,6 +8755,12 @@ class ClientWindow(QMainWindow):
         self._terminal_timer.stop()
         self.worker.stop()
         self.agent.toolbox.close()
+        lsp_thread = getattr(self, "_lsp_thread", None)
+        if lsp_thread is not None and lsp_thread.isRunning():
+            lsp_thread.wait(12000)
+            if lsp_thread.isRunning():
+                lsp_thread.terminate()
+                lsp_thread.wait(1000)
         app = QApplication.instance()
         windows = getattr(app, "_scidev_windows", []) if app is not None else []
         if self in windows:

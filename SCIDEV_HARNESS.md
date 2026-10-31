@@ -11,6 +11,7 @@
 | Agent 循环 | ✅ 已实现 | 最多 32 轮模型/工具交互；工具结果回传给模型，允许根据报错继续处理；结束时核对 Git diff | 模型仍可能误判；达到轮数上限会失败，不保证一次完成 |
 | 会话恢复 | ✅ 基础已实现 | Agent 设置列出最近会话，恢复后复用原 session id 和 messages 继续对话；CLI `sessions` 列出会话，`exec --session-id` 继续；不会自动重放已完成的工具调用 | 恢复的是会话上下文，不是完整 UI 消息回放；不自动恢复已中断的命令/进程；会话文件损坏时拒绝恢复 |
 | 任务预算 | ✅ 基础已实现 | Agent 设置可配置单任务最多模型轮次（1–64）和最多 token（0 = 不限）；token 按任务起点扣除历史累计，用尽后失败并保留未提交改动 | token 预算只统计服务端实际返回的 usage；未返回 usage 的 endpoint 无法执行 token 硬限；没有货币成本换算 |
+| 代码智能 | 🟡 Python 诊断已实现 | Python 文件异步启动本机 Ruff LSP，解析 `publishDiagnostics` 并显示在“问题”面板；双击跳到行列；语法错误仍由 AST 即时显示 | 一次性按文件诊断，不是常驻 LSP；无补全/定义跳转/重命名/引用；无 tsserver/调试器；Ruff 未安装或启动失败时静默跳过 |
 | 模型接入 | ✅ 基础已实现 | Agent 设置内可填写 API Base URL、模型、推理强度、回退模型和 API Key；Key 存入 Windows 凭据管理器，非敏感配置存 `.research/provider.json`；环境变量作为后备；CLI 显式 provider 参数强制覆盖；可异步测试 `/models` 连通性，并用一次极小 ping 工具调用探测工具调用/上下文/视觉元数据；HTTP 404/模型不存在 400 时自动用回退模型重试一次 | 不是 OpenAI/ChatGPT 账号登录或 OAuth；Key 仍可被同一 Windows 用户下的进程读取；只支持 OpenAI-compatible Chat Completions；能力探测依赖 endpoint 报告且会消耗少量 token；回退只覆盖模型解析错误，不覆盖认证/限流/网络错误 |
 | 编码工具 | ✅ 核心已实现 | `search_code`、`get_project_context`、`list_files`、`read_file`、`write_file`、`apply_patch`、精确/批量 `replace_in_file`、`run_command`、`git_diff`；按用户意图启用网页搜索/打开/点击/截图；可选视觉制品检查 | 网页操作逐次审批且不复用登录态；截图只本机保存；符号提取不是完整语言服务器 |
 | 项目上下文 | ✅ 核心已实现 | 本地增量缓存、代码/标识符检索、任务相关片段与符号、中英术语及复合短语加权（含旋转/碰撞等游戏机制）、环境/依赖/目录指令；未保存编辑器缓冲参与预览、搜索和读取，Agent 对这些文件只读；任务/重试/编辑后刷新 | 有界关键词检索，不含向量索引或完整依赖图；快照最多 8 个文件/1 MB，超预算的草稿排除且禁止读取旧磁盘内容；扫描/输出有界；缓存仅在当前进程内 |

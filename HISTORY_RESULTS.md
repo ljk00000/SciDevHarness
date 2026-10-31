@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-31 23:10（Asia/Shanghai）· Ruff LSP 诊断
+- 新增 `scidev_lsp.py`：最小 JSON-RPC stdio 客户端，启动本机 `ruff server`，完成 initialize/initialized/didOpen，等待 `textDocument/publishDiagnostics`，再 shutdown/exit；读取线程与队列实现超时，关闭时清理管道和进程。
+- 编辑器对 Python 文件做防抖后台诊断；结果写入“问题”面板，双击跳转；语法错误仍由 AST 即时显示。
+- LSP 失败/超时/未安装时静默跳过，不阻塞编辑器；关闭窗口时等待后台诊断线程。
+- 验证：新增 `tests/test_lsp.py` 4 项（真实 Ruff LSP 语法诊断、干净文件、后缀拒绝、URI）；UI 诊断渲染测试；全量套件 622 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：一次性按文件诊断，不是常驻 LSP；无补全/定义跳转/重命名/引用；无 tsserver/调试器。
+
 ## 2026-10-31 22:50（Asia/Shanghai）· 回退模型
 - `ProviderConfig` 新增 `fallback_model`，保存到 `.research/provider.json`，支持 `SCIDEV_FALLBACK_MODEL`；Agent 设置新增“回退模型”输入框。
 - 主模型返回 HTTP 404、`model_not_found` 或模型不存在的 HTTP 400 时，Agent 用 `with_model` 切换到回退模型重试一次；只回退一次，认证/限流/网络错误不回退。

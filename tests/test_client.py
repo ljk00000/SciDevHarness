@@ -3047,6 +3047,36 @@ class SummarySettingsUiTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_lsp_diagnostics_are_rendered_in_problems_panel(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-lsp-ui-") as temp:
+            root = Path(temp)
+            path = root / "sample.py"
+            path.write_text("def ok():\n    return 1\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window._open_file(path, preview=False)
+                window._lsp_generation += 1
+                generation = window._lsp_generation
+                window._on_lsp_diagnostics(
+                    str(path),
+                    generation,
+                    [{
+                        "line": 2,
+                        "column": 5,
+                        "severity": "warning",
+                        "message": "unused value",
+                        "code": "F841",
+                    }],
+                    "",
+                )
+                self.assertEqual(window.problems_tree.topLevelItemCount(), 1)
+                text = window.problems_tree.topLevelItem(0).text(0)
+                self.assertIn("sample.py:2:5", text)
+                self.assertIn("F841", text)
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_restoring_a_session_sets_the_next_prompt_context(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-session-resume-") as temp:
             root = Path(temp)
