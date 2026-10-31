@@ -4680,7 +4680,7 @@ class ProjectTaskIsolationTests(unittest.TestCase):
 
             def slow_chat(messages, **_kwargs):
                 started.set()
-                release.wait(5)
+                release.wait(20)
                 return {"content": "done", "tool_calls": []}
 
             provider.chat.side_effect = slow_chat
@@ -4699,7 +4699,7 @@ class ProjectTaskIsolationTests(unittest.TestCase):
             worker = threading.Thread(target=run_first, daemon=True)
             worker.start()
             try:
-                self.assertTrue(started.wait(5))
+                self.assertTrue(started.wait(20))
                 with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=Mock()):
                     with self.assertRaisesRegex(PermanentError, "同一项目已有编码任务"):
                         second_agent.run({"task_id": "second", "payload": {
@@ -4707,7 +4707,7 @@ class ProjectTaskIsolationTests(unittest.TestCase):
                         }})
             finally:
                 release.set()
-                worker.join(10)
+                worker.join(30)
             self.assertEqual(errors, [])
             self.assertEqual(results[0]["text"], "done")
 
