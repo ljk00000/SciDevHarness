@@ -45,6 +45,34 @@ class ExecutionMode(str, Enum):
         return aliases.get(normalized, fallback)
 
 
+class NetworkPolicy(str, Enum):
+    """Whether commands classified as network access may run automatically."""
+
+    DENY = "deny"
+    ASK = "ask"
+    ALLOW = "allow"
+
+    @classmethod
+    def parse(cls, value: object, default: "NetworkPolicy | None" = None) -> "NetworkPolicy":
+        fallback = default or cls.ASK
+        if isinstance(value, cls):
+            return value
+        normalized = str(value or "").strip().lower().replace("_", "-")
+        aliases = {
+            "deny": cls.DENY,
+            "denied": cls.DENY,
+            "off": cls.DENY,
+            "block": cls.DENY,
+            "ask": cls.ASK,
+            "manual": cls.ASK,
+            "on-request": cls.ASK,
+            "allow": cls.ALLOW,
+            "allowed": cls.ALLOW,
+            "on": cls.ALLOW,
+        }
+        return aliases.get(normalized, fallback)
+
+
 @dataclass(frozen=True)
 class CommandAssessment:
     """Classification used to decide whether a command may run unattended."""
@@ -59,6 +87,7 @@ class ExecutionPolicy:
     """Policy selected by the user for one coding session."""
 
     mode: ExecutionMode = ExecutionMode.WORKSPACE_WRITE
+    network_policy: NetworkPolicy = NetworkPolicy.ASK
 
     @property
     def can_write_files(self) -> bool:
@@ -71,6 +100,8 @@ class ExecutionPolicy:
     def auto_approves(self, assessment: CommandAssessment) -> bool:
         if self.mode in {ExecutionMode.READ_ONLY, ExecutionMode.MANUAL}:
             return False
+        if assessment.category == "network":
+            return self.network_policy is NetworkPolicy.ALLOW
         if self.mode is ExecutionMode.FULL_ACCESS:
             return True
         return bool(assessment.auto_approvable)
@@ -149,6 +180,8 @@ def assess_command(command: object) -> CommandAssessment:
     text = command.strip()
     if not text:
         return CommandAssessment("empty", False, "命令为空")
+    if _NETWORK_BINARY.search(text):
+        return CommandAssessment("network", False, "包含网络下载或远程连接命令")
     unsafe = _unsafe_reason(text)
     if unsafe:
         return CommandAssessment("shell", False, unsafe)

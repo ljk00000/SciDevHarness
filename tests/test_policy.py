@@ -6,10 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_core import CodingToolbox, EventLedger, SummarySettings
+from scidev_core import CodingToolbox, EventLedger, PermanentError, SummarySettings
 from scidev_policy import (
     ExecutionMode,
     ExecutionPolicy,
+    NetworkPolicy,
     assess_command,
     format_verification_diagnostics,
     parse_verification_diagnostics,
@@ -17,6 +18,42 @@ from scidev_policy import (
 
 
 class ExecutionPolicyTests(unittest.TestCase):
+    def test_network_policy_parsing_and_auto_approval(self) -> None:
+        self.assertIs(NetworkPolicy.parse("deny"), NetworkPolicy.DENY)
+        self.assertIs(NetworkPolicy.parse("ASK"), NetworkPolicy.ASK)
+        self.assertIs(NetworkPolicy.parse("allow"), NetworkPolicy.ALLOW)
+        self.assertIs(NetworkPolicy.parse("nonsense"), NetworkPolicy.ASK)
+        assessment = assess_command("curl https://example.com")
+        self.assertEqual(assessment.category, "network")
+        self.assertFalse(
+            ExecutionPolicy(ExecutionMode.WORKSPACE_WRITE, NetworkPolicy.DENY).auto_approves(assessment)
+        )
+        self.assertFalse(
+            ExecutionPolicy(ExecutionMode.FULL_ACCESS, NetworkPolicy.ASK).auto_approves(assessment)
+        )
+        self.assertTrue(
+            ExecutionPolicy(ExecutionMode.WORKSPACE_WRITE, NetworkPolicy.ALLOW).auto_approves(assessment)
+        )
+
+    def test_network_deny_hard_blocks_a_command_before_approval(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-network-deny-") as temp:
+            root = Path(temp)
+            ledger = EventLedger(root)
+            approvals: list[str] = []
+            with patch.dict("os.environ", {"SCIDEV_NETWORK_POLICY": "deny"}):
+                toolbox = CodingToolbox(
+                    root,
+                    ledger,
+                    command_approval=lambda command, _timeout: approvals.append(command) or True,
+                    execution_mode=ExecutionMode.FULL_ACCESS,
+                )
+            try:
+                with self.assertRaisesRegex(PermanentError, "网络策略"):
+                    toolbox.run_command("curl https://example.com")
+                self.assertEqual(approvals, [])
+            finally:
+                toolbox.close()
+
     def test_mode_aliases_and_invalid_values_fall_back_safely(self) -> None:
         self.assertIs(ExecutionMode.parse("read-only"), ExecutionMode.READ_ONLY)
         self.assertIs(ExecutionMode.parse("READONLY"), ExecutionMode.READ_ONLY)
@@ -224,13 +261,20 @@ class ToolboxExecutionPolicyTests(unittest.TestCase):
     def test_execution_mode_persists_in_project_settings(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)
-            settings = SummarySettings(enabled=False, execution_mode=ExecutionMode.READ_ONLY.value)
+            settings = SummarySettings(
+                enabled=False,
+                execution_mode=ExecutionMode.READ_ONLY.value,
+                network_policy=NetworkPolicy.DENY.value,
+            )
             settings.save(root)
             loaded = SummarySettings.load(root)
             self.assertEqual(loaded.execution_mode, ExecutionMode.READ_ONLY.value)
+            self.assertEqual(loaded.network_policy, NetworkPolicy.DENY.value)
 
             with patch.dict("os.environ", {"SCIDEV_EXECUTION_MODE": "full-access"}):
                 self.assertEqual(SummarySettings.load(root).execution_mode, ExecutionMode.FULL_ACCESS.value)
+            with patch.dict("os.environ", {"SCIDEV_NETWORK_POLICY": "allow"}):
+                self.assertEqual(SummarySettings.load(root).network_policy, NetworkPolicy.ALLOW.value)
 
 
 if __name__ == "__main__":

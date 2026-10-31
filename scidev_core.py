@@ -54,6 +54,7 @@ from scidev_provider import ProviderConfigError, exists as provider_config_exist
 from scidev_policy import (
     ExecutionMode,
     ExecutionPolicy,
+    NetworkPolicy,
     assess_command,
     format_verification_diagnostics,
 )
@@ -1497,6 +1498,7 @@ class SummarySettings:
     execution_mode: str = "workspace-write"
     max_agent_turns: int = 32
     max_task_tokens: int = 0
+    network_policy: str = "ask"
 
     @classmethod
     def config_path(cls, project_root: Path) -> Path:
@@ -1573,6 +1575,9 @@ class SummarySettings:
         execution_mode = ExecutionMode.parse(
             os.getenv("SCIDEV_EXECUTION_MODE") or data.get("execution_mode", cls.execution_mode)
         ).value
+        network_policy = NetworkPolicy.parse(
+            os.getenv("SCIDEV_NETWORK_POLICY") or data.get("network_policy", cls.network_policy)
+        ).value
         max_agent_turns = data.get("max_agent_turns", cls.max_agent_turns)
         if os.getenv("SCIDEV_MAX_AGENT_TURNS") is not None:
             max_agent_turns = os.getenv("SCIDEV_MAX_AGENT_TURNS", "").strip()
@@ -1590,7 +1595,8 @@ class SummarySettings:
         return cls(bool(enabled), model, max_tokens, context_chars, retries, interval_turns, instruction,
                    bool(memory_enabled), memory_results, memory_context_chars,
                    acceptance_mode, acceptance_model, bool(multi_agent_enabled), multi_agent_model,
-                   context_window_tokens, execution_mode, max_agent_turns, max_task_tokens)
+                   context_window_tokens, execution_mode, max_agent_turns, max_task_tokens,
+                   network_policy)
 
     def save(self, project_root: Path) -> None:
         path = self.config_path(project_root)
@@ -1614,6 +1620,7 @@ class SummarySettings:
                     "multi_agent_model": self.multi_agent_model.strip()[:160],
                     "model_context_window_tokens": max(1024, min(1_048_576, int(self.context_window_tokens))),
                     "execution_mode": ExecutionMode.parse(self.execution_mode).value,
+                    "network_policy": NetworkPolicy.parse(self.network_policy).value,
                     "max_agent_turns": max(1, min(64, int(self.max_agent_turns))),
                     "max_task_tokens": max(0, min(10_000_000, int(self.max_task_tokens))),
                 },
@@ -2607,6 +2614,7 @@ class CodingToolbox:
         enforce_patch_review_for_existing: bool = False,
         browser_approval: Callable[[str, str], bool] | None = None,
         execution_mode: str | ExecutionMode = ExecutionMode.WORKSPACE_WRITE,
+        network_policy: str | NetworkPolicy | None = None,
     ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
@@ -2616,7 +2624,13 @@ class CodingToolbox:
         self.browser_agent = BrowserAgent(project_root, ledger, approval=browser_approval)
         self.mcp = MCPManager(self.project_root, ledger=ledger)
         self.enforce_patch_review_for_existing = bool(enforce_patch_review_for_existing)
-        self.execution_policy = ExecutionPolicy(ExecutionMode.parse(execution_mode))
+        self.execution_policy = ExecutionPolicy(
+            ExecutionMode.parse(execution_mode),
+            NetworkPolicy.parse(
+                network_policy if network_policy is not None else os.getenv("SCIDEV_NETWORK_POLICY"),
+                NetworkPolicy.ASK,
+            ),
+        )
         self.checkpoint: WorkspaceCheckpoint | None = None
         self._task_created_file_hashes: dict[str, str] = {}
         self.last_command_execution: dict[str, Any] | None = None
@@ -2643,7 +2657,17 @@ class CodingToolbox:
 
     def set_execution_mode(self, mode: str | ExecutionMode) -> None:
         """Apply a new mode to the next tool call without restarting the session."""
-        self.execution_policy = ExecutionPolicy(ExecutionMode.parse(mode))
+        self.execution_policy = ExecutionPolicy(
+            ExecutionMode.parse(mode),
+            self.execution_policy.network_policy,
+        )
+
+    def set_network_policy(self, policy: str | NetworkPolicy) -> None:
+        """Apply a network policy without discarding the execution mode."""
+        self.execution_policy = ExecutionPolicy(
+            self.execution_policy.mode,
+            NetworkPolicy.parse(policy, self.execution_policy.network_policy),
+        )
 
     def set_checkpoint(self, checkpoint: WorkspaceCheckpoint | None) -> None:
         self.checkpoint = checkpoint
@@ -3666,6 +3690,20 @@ class CodingToolbox:
             raise PermanentError(
                 "当前执行策略为只读，禁止执行终端命令。请在 Agent 设置中切换为“工作区可写”后再试。"
             )
+        if (
+            assessment.category == "network"
+            and self.execution_policy.network_policy is NetworkPolicy.DENY
+        ):
+            execution["approval_status"] = "rejected"
+            self._finish_command_execution(execution, "rejected")
+            self.ledger.append(
+                "command_blocked_network_policy",
+                {"command": command[:1000], "policy": self.execution_policy.network_policy.value},
+            )
+            raise PermanentError(
+                "网络策略为 deny，已拒绝网络下载或远程连接命令；"
+                "如需临时放行，请把 SCIDEV_NETWORK_POLICY 设为 ask 或 allow。"
+            )
         if destructive_command_reason(command):
             execution["approval_status"] = "rejected"
             self._finish_command_execution(execution, "rejected")
@@ -4375,6 +4413,7 @@ class CodingAgent:
             enforce_patch_review_for_existing=True,
             browser_approval=browser_approval,
             execution_mode=self.summary_settings.execution_mode,
+            network_policy=self.summary_settings.network_policy,
         )
         self.toolbox.cancel_event = self._cancel
         self.last_checkpoint: WorkspaceCheckpoint | None = None

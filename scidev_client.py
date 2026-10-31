@@ -97,7 +97,7 @@ from scidev_provider import (
     save as save_provider_config,
     test_connection as test_provider_connection,
 )
-from scidev_policy import ExecutionMode
+from scidev_policy import ExecutionMode, NetworkPolicy
 from scidev_preferences import AppearancePreferences
 from scidev_process import StreamingCommand
 from scidev_settings import SettingsPage
@@ -5214,6 +5214,26 @@ class ClientWindow(QMainWindow):
         self.execution_mode_note.setObjectName("Hint")
         self.execution_mode_note.setWordWrap(True)
         settings_layout.addWidget(self.execution_mode_note, 17, 0, 1, 4)
+        self.network_policy_label = QLabel("网络策略")
+        self.network_policy_combo = QComboBox()
+        self.network_policy_combo.addItem("拒绝网络命令", NetworkPolicy.DENY.value)
+        self.network_policy_combo.addItem("询问后执行", NetworkPolicy.ASK.value)
+        self.network_policy_combo.addItem("允许网络命令", NetworkPolicy.ALLOW.value)
+        self.network_policy_combo.setMinimumContentsLength(10)
+        self.network_policy_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        network_index = self.network_policy_combo.findData(self.summary_settings.network_policy)
+        self.network_policy_combo.setCurrentIndex(max(0, network_index))
+        self.network_policy_combo.setToolTip(
+            "只对识别出的 curl/wget/ssh/scp 等网络命令生效。\n"
+            "拒绝：即使完全访问也直接阻断。\n"
+            "询问：手动批准后执行，工作区可写不会自动执行。\n"
+            "允许：工作区可写/完全访问会自动执行网络命令。"
+        )
+        self.network_policy_combo.currentIndexChanged.connect(lambda _index: self._persist_summary_settings())
+        settings_layout.addWidget(self.network_policy_label, 18, 0)
+        settings_layout.addWidget(self.network_policy_combo, 18, 1, 1, 3)
         self.context_window_label = QLabel("模型上下文窗口")
         self.context_window_spin = QSpinBox()
         self.context_window_spin.setRange(1024, 1_048_576)
@@ -5227,9 +5247,9 @@ class ClientWindow(QMainWindow):
         )
         self.context_window_note.setObjectName("Hint")
         self.context_window_note.setWordWrap(True)
-        settings_layout.addWidget(self.context_window_label, 18, 0)
-        settings_layout.addWidget(self.context_window_spin, 18, 1)
-        settings_layout.addWidget(self.context_window_note, 19, 0, 1, 4)
+        settings_layout.addWidget(self.context_window_label, 20, 0)
+        settings_layout.addWidget(self.context_window_spin, 20, 1)
+        settings_layout.addWidget(self.context_window_note, 21, 0, 1, 4)
         self.summary_settings_scroll = QScrollArea()
         self.summary_settings_scroll.setObjectName("SettingsScroll")
         self.summary_settings_scroll.setWidgetResizable(True)
@@ -5795,6 +5815,9 @@ class ClientWindow(QMainWindow):
         self.summary_settings.execution_mode = ExecutionMode.parse(
             self.execution_mode_combo.currentData()
         ).value
+        self.summary_settings.network_policy = NetworkPolicy.parse(
+            self.network_policy_combo.currentData()
+        ).value
         self.summary_settings.max_agent_turns = self.max_agent_turns_spin.value()
         self.summary_settings.max_task_tokens = self.max_task_tokens_spin.value()
         self.summary_settings.acceptance_mode = SemanticAcceptance.mode(self.acceptance_mode_combo.currentData())
@@ -5806,6 +5829,7 @@ class ClientWindow(QMainWindow):
             self.settings_page.refresh_filter()
             self.agent.summary_settings = self.summary_settings
             self.agent.toolbox.set_execution_mode(self.summary_settings.execution_mode)
+            self.agent.toolbox.set_network_policy(self.summary_settings.network_policy)
             self._render_context_meter()
             state = self._summary_status_text()
             compact_state = (

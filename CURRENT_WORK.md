@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-11-01 04:55（Asia/Shanghai）· 网络策略
+- `scidev_policy.py` 新增 `NetworkPolicy`（deny/ask/allow），`curl/wget/ssh/scp` 等命令归类为 `network`，默认不会自动批准。
+- `deny` 在审批前硬阻断，即使完全访问也不执行；`ask` 仅允许手动批准；`allow` 允许工作区可写/完全访问自动执行。
+- Agent 设置新增“网络策略”，随项目设置持久化；`SCIDEV_NETWORK_POLICY` 可覆盖；CLI/Agent 复用同一策略。
+- 新增网络策略解析、自动批准、硬阻断、设置持久化测试；全量套件 651 项 0 失败、14 跳过、覆盖率 79%。
+
 ## 2026-11-01 03:40（Asia/Shanghai）· Python 补全与跳转
 - 新增 `scidev_intel.py`：基于本机 Jedi 的 Python 补全/定义查找，限制候选数量，定义只返回工作区内路径；缓存目录放 `.research/jedi-cache`，不可写时回退临时目录。
 - 编辑器新增 `Ctrl+Space` 补全弹窗和 `F12` 跳转；补全只对 `.py` 文件生效，插入当前候选；无候选/不可用时写入日志。
