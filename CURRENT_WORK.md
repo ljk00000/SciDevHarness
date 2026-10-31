@@ -5,7 +5,7 @@
 - `CodingToolbox` 在只读模式拒绝 write_file / replace_in_file / replace_many_in_file / apply_patch 和所有命令；工作区可写自动批准 pytest/unittest、npm/pnpm/yarn test、ruff/eslint、mypy/pyright、tsc --noEmit 等；完全访问自动批准其他命令，但仍拦截破坏性命令和 Harness 自有 Git 操作。
 - `run_command` 记录 `approval_source=policy/user`、命令类别和诊断数量；pytest/ruff/mypy/tsc 输出解析为文件、行号、列、错误码，附加到工具结果。
 - Agent 设置新增执行策略下拉框，项目 `.research/settings.json` 持久化 `execution_mode`，切换后立即更新当前 toolbox；验证门在只读且无审批通道时快速失败，工作区可写无审批通道仍可跑验证。
-- 验证：全量隔离套件 583 项 0 失败、13 跳过、覆盖率 83%；ruff/mypy 通过。新增 `tests/test_policy.py` 覆盖策略、自动批准、只读写保护和诊断解析。
+- 验证：全量隔离套件 583 项 0 失败、13 跳过、覆盖率 83%；ruff/mypy 通过。新增 `tests/test_policy.py` 覆盖策略、自动批准、只读写保护和诊断解析；7B 探针 `flagged=[]`；CI #118 三套 Python 全绿。
 - 下一步：让 Agent 自动选择已发现验证命令并形成“失败→修复→重跑”闭环；任务级 checkpoint/回滚；应用内模型配置与密钥管理。
 
 ## 2026-10-31 11:50（Asia/Shanghai）· 本地 Qwen 第七轮（工具参数与文件名边界）

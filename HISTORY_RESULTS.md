@@ -9,6 +9,7 @@
   4. `run_command` 记录审批来源、命令类别和诊断数量；pytest FAILED/文件行号、ruff/mypy 的 `file:line:col: code`、tsc 的 `file(line,col): error TSxxxx` 解析为结构化诊断，附加在工具结果中。
   5. UI 增加执行策略下拉框并持久化到 `.research/settings.json`；切换后同步当前 toolbox。验证门按策略判断是否真的没有命令通道。
 - 验证：新增 `tests/test_policy.py` 12 项；全量套件 583 项 0 失败、13 跳过、覆盖率 83%；ruff/mypy 通过；真实 7B 探针 36 场景 + 并发 `flagged=[]`（manual-commit 与 patch-review 各因模型未触发留下覆盖缺口，不是断言失败）。
+- CI：#115/#117 因 release staging 的显式文件清单漏掉 `scidev_policy.py` 失败；补入脚本和测试期望后 #118 三套 Python 全绿（9 分 35 秒）。
 - 已知边界：策略层不是 OS 沙箱，无法阻止已批准命令访问网络或项目外文件；完全访问模式必须由用户显式选择。
 
 ## 2026-10-31 11:50（Asia/Shanghai）· 本地 Qwen 第七轮（工具参数与文件名边界）
