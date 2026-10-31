@@ -494,6 +494,7 @@ class VerificationAgentTests(unittest.TestCase):
         *,
         approved: bool = True,
         exit_code: int = 0,
+        execution_mode: str = "manual",
     ):
         (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
         ledger = EventLedger(root)
@@ -505,7 +506,7 @@ class VerificationAgentTests(unittest.TestCase):
             root, ledger, git,
             event_callback=lambda name, payload: events.append((name, payload)),
             command_approval=lambda _command, _timeout: approved,
-            summary_settings=SummarySettings(enabled=False, execution_mode="manual"),
+            summary_settings=SummarySettings(enabled=False, execution_mode=execution_mode),
             require_verification=True,
         )
         provider = _ScriptedProvider(responses)
@@ -646,6 +647,35 @@ class VerificationAgentTests(unittest.TestCase):
                 json.loads(line)["event_type"]
                 for line in ledger.events_path.read_text(encoding="utf-8").splitlines()
             ])
+
+    def test_workspace_write_auto_runs_discovered_check_without_approval_callback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "tests").mkdir()
+            (root / "tests" / "test_ok.py").write_text(
+                "def test_ok():\n    assert True\n", encoding="utf-8",
+            )
+            responses = [
+                _tool_call("write_file", {"path": "module.py", "content": "value = 1\n"}, "write"),
+                {"role": "assistant", "content": "Done.", "tool_calls": []},
+                {"role": "assistant", "content": "Done.", "tool_calls": []},
+            ]
+            result, session, events, _ledger, executed = self._run(
+                root,
+                "verification_auto",
+                responses,
+                approved=False,
+                execution_mode="workspace-write",
+            )
+
+            self.assertIsInstance(result, dict)
+            self.assertTrue(executed)
+            self.assertTrue(any("pytest" in command for command in executed), executed)
+            self.assertEqual(session["verification_report"]["status"], "passed")
+            self.assertEqual(session["verification_runs"][-1]["approval_status"], "approved")
+            self.assertEqual(session["verification_runs"][-1]["approval_source"], "policy")
+            self.assertIn("python -m pytest", executed[-1])
+            self.assertTrue(any(name == "verification_auto_completed" for name, _ in events))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,15 @@
 # 历史与结果
 
+## 2026-10-31 18:55（Asia/Shanghai）· Harness 自动验证
+- 目标：模型说“完成”时，若代码有改动但没有当前代码的通过检查，由 Harness 主动跑一次发现的测试/lint，而不是只提示模型自己找命令。
+- 实现：
+  1. `_auto_verification_candidate` 从 `ProjectContext.test_discovery` 中按 test > lint > typecheck 选择第一个 `assess_command` 可自动批准的命令。
+  2. `_run_auto_verification` 在 `workspace-write`/`full-access` 下直接调用 `run_command`，记录 before/after 指纹和正式 verification run；通过则返回完成，失败则把退出码与结构化诊断加入后续修复提示。
+  3. 同一编辑版本同一命令只跑一次，每任务最多 3 次；用户拒绝过命令、只读/手动审批、单轮提示模式跳过。
+  4. 新增 `verification_auto_started/completed/failed/passed` 事件；`VerificationTracker.record` 增加 `approval_source`。
+- 验证：新增 workspace-write 无审批回调自动跑 pytest 的回归测试；全量套件 590 项 0 失败、13 跳过、覆盖率 80%；ruff/mypy 通过。
+- 边界：自动选择的是静态发现的第一个安全候选，不保证是最相关/最完整检查；不是 OS 沙箱，也不自动安装依赖。
+
 ## 2026-10-31 17:55（Asia/Shanghai）· 无界面 CLI
 - 新增 `scidev_cli.py`，提供 `exec` 子命令；不导入 Qt/PySide6，复用核心 Agent、执行策略、Git 自动提交和事件账本。
 - 支持 JSON 单对象输出、退出码 0/1/2/130、`--execution-mode`、`--no-verify`、`--session-id` 和临时 `--api-base/--api-key/--model/--request-timeout` 覆盖；不把密钥写入项目设置。

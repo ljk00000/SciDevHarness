@@ -4625,6 +4625,107 @@ class CodingAgent:
         self._emit("verification_recorded", {"session_id": session_id, **record, "report": report})
         return record
 
+    def _auto_verification_candidate(self, prompt: str) -> tuple[str, str]:
+        """Return the first safe discovered check, preferring tests over lint."""
+        try:
+            context = self.toolbox.project_context.build(prompt[:4000])
+        except (OSError, RuntimeError, ValueError):
+            return "", ""
+        discovery = context.get("test_discovery")
+        if not isinstance(discovery, dict):
+            return "", ""
+        priority = {"test": 0, "lint": 1, "typecheck": 2}
+        best: tuple[int, str, str] | None = None
+        for candidate in discovery.get("candidates") or []:
+            if not isinstance(candidate, dict):
+                continue
+            command = str(candidate.get("command") or "").strip()
+            if not command:
+                continue
+            assessment = assess_command(command)
+            rank = priority.get(assessment.category)
+            if rank is None or not assessment.auto_approvable:
+                continue
+            if best is None or rank < best[0]:
+                best = (rank, command, str(candidate.get("name") or ""))
+        if best is None:
+            return "", ""
+        return best[1], best[2]
+
+    def _run_auto_verification(
+        self,
+        session: dict[str, Any],
+        session_id: str,
+        turn: int,
+        prompt: str,
+    ) -> tuple[bool, str, dict[str, Any]]:
+        """Run one Harness-selected verification command under the current policy."""
+        command, label = self._auto_verification_candidate(prompt)
+        if not command:
+            return False, "", {}
+        assessment = assess_command(command)
+        if not self.toolbox.execution_policy.auto_approves(assessment):
+            return False, "", {}
+        revision = int(session.get("verification_edit_revision", 0) or 0)
+        auto_runs = session.get("verification_auto_runs")
+        if not isinstance(auto_runs, list):
+            auto_runs = []
+        if len(auto_runs) >= 3 or any(
+            isinstance(item, dict)
+            and item.get("command") == command
+            and int(item.get("edit_revision", -1) or -1) == revision
+            for item in auto_runs
+        ):
+            return False, "", {}
+        before = self._verification_snapshot(session)
+        self._emit("verification_auto_started", {
+            "session_id": session_id,
+            "turn": turn,
+            "command": command,
+            "label": label,
+            "edit_revision": revision,
+        })
+        try:
+            output = self.toolbox.run_command(command, timeout_seconds=240)
+        except PermanentError as exc:
+            note = f"Harness 自动验证未能启动 `{command}`：{exc}"
+            self._emit("verification_auto_failed", {
+                "session_id": session_id, "turn": turn, "command": command, "error": str(exc),
+            })
+            return False, note, {}
+        after = self._verification_snapshot(session)
+        execution = dict(self.toolbox.last_command_execution or {})
+        if not execution:
+            return False, "", {}
+        self._record_command_verification(
+            session, session_id, turn, execution, before, after, revision,
+        )
+        auto_runs.append({
+            "command": command,
+            "label": label,
+            "edit_revision": revision,
+            "turn": turn,
+            "status": execution.get("status"),
+            "exit_code": execution.get("exit_code"),
+        })
+        session["verification_auto_runs"] = auto_runs[-20:]
+        session["updated_at"] = now_iso()
+        self._save_session(session)
+        note = (
+            f"Harness 已自动运行验证命令 `{command}`（{label or 'discovered check'}）："
+            f"状态 {execution.get('status')}，退出码 {execution.get('exit_code')}。\n"
+            f"{output[-4000:]}"
+        )
+        self._emit("verification_auto_completed", {
+            "session_id": session_id,
+            "turn": turn,
+            "command": command,
+            "status": execution.get("status"),
+            "exit_code": execution.get("exit_code"),
+            "report": session.get("verification_report") or {},
+        })
+        return True, note, session.get("verification_report") or {}
+
     def _semantic_acceptance_review(
         self,
         provider: Any,
@@ -6304,6 +6405,28 @@ class CodingAgent:
             and session.get("verification_code_changed")
             and verification_report.get("status") != "passed"
         ):
+            auto_note = ""
+            if not self.single_user_prompt_only:
+                latest = (session.get("verification_runs") or [])
+                latest = latest[-1] if latest and isinstance(latest[-1], dict) else {}
+                prior_denied = (
+                    latest.get("execution_status") == "not_run"
+                    and latest.get("approval_status") in {"denied", "rejected", "error"}
+                )
+                if not prior_denied:
+                    auto_ran, auto_note, auto_report = self._run_auto_verification(
+                        session, session_id, turn, prompt,
+                    )
+                    if auto_ran:
+                        verification_report = auto_report or session.get("verification_report") or verification_report
+                        session["verification_report"] = verification_report
+                        if verification_report.get("status") == "passed":
+                            self._emit("verification_auto_passed", {
+                                "session_id": session_id,
+                                "turn": turn,
+                                "report": verification_report,
+                            })
+                            return False, verification_report
             if (
                 self.toolbox.command_approval is None
                 and not self.toolbox.execution_policy.auto_approves(assess_command("pytest -q"))
@@ -6351,18 +6474,21 @@ class CodingAgent:
                 session["updated_at"] = now_iso()
                 self._sync_task_plan_prompt(session, prompt)
                 status_label = VerificationTracker.label(str(verification_report.get("status") or "not_run"))
+                followup_text = (
+                    "Harness 验证门槛：本任务改动了代码，但尚无针对当前最终代码且完整通过的检查。"
+                    f"当前证据：{status_label}。请检查项目已有测试/构建说明，选择最小相关检查；"
+                    "若检查失败，先分析错误、修复并重新运行。命令按当前执行策略处理："
+                    "工作区可写会自动批准可识别的验证命令，手动审批模式仍需逐条批准；"
+                    "不要重复用户已拒绝的命令。只有检查成功且期间代码未变后才能结束。"
+                )
+                if auto_note:
+                    followup_text = f"{auto_note}\n\n{followup_text}"
                 self._append_followup_prompt(
                     messages,
                     session,
                     session_id,
                     turn,
-                    (
-                        "Harness 验证门槛：本任务改动了代码，但尚无针对当前最终代码且完整通过的检查。"
-                        f"当前证据：{status_label}。请检查项目已有测试/构建说明，选择最小相关检查；"
-                        "若检查失败，先分析错误、修复并重新运行。命令按当前执行策略处理："
-                        "工作区可写会自动批准可识别的验证命令，手动审批模式仍需逐条批准；"
-                        "不要重复用户已拒绝的命令。只有检查成功且期间代码未变后才能结束。"
-                    ),
+                    followup_text,
                     reason="changed code lacks a passing current-code check",
                 )
                 retry_event = {
@@ -6388,6 +6514,8 @@ class CodingAgent:
                 f"代码改动尚未验证：{status_label}。{reason}"
                 "改动保留在工作区，本次不会自动提交；可修复/批准检查后重试。"
             )
+            if auto_note:
+                blocked_message = f"{auto_note}\n\n{blocked_message}"
             session["status"] = "verification_required"
             session["verification_required"] = True
             session["error"] = blocked_message

@@ -1,5 +1,12 @@
 # 当前工作
 
+## 2026-10-31 18:55（Asia/Shanghai）· Harness 自动验证
+- 当模型结束任务但代码改动尚未验证时，Harness 会在工作区可写/完全访问模式下从静态发现的候选里选择第一个安全 test/lint/typecheck 命令自动运行。
+- 自动运行结果记录为正式 verification run，绑定当前编辑版本和代码指纹；通过则允许完成/提交，失败则把退出码和结构化诊断加入后续修复提示。
+- 同一编辑版本同一命令只自动运行一次，每次任务最多 3 次；用户拒绝过命令、只读/手动审批、单轮提示模式不会自动运行。
+- 新增 `verification_auto_started/completed/failed/passed` 事件；`VerificationTracker` 记录增加 `approval_source`。
+- 验证：全量套件 590 项 0 失败、13 跳过、覆盖率 80%；新增 workspace-write 无审批回调自动跑 pytest 的回归测试。
+
 ## 2026-10-31 17:55（Asia/Shanghai）· 无界面 CLI
 - 新增 `scidev_cli.py exec`：不导入 PySide6，复用 `CodingAgent`、执行策略、Git 自动提交和 `.research` 审计。
 - 支持 `--workspace`、`--task`、`--json`、`--execution-mode`、`--no-verify`、`--session-id`、`--api-base`、`--api-key`、`--model`、`--request-timeout`。

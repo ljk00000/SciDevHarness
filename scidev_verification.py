@@ -185,6 +185,7 @@ class VerificationTracker:
             "kind": category,
             "execution_status": execution_status,
             "approval_status": str(execution.get("approval_status") or ""),
+            "approval_source": str(execution.get("approval_source") or ""),
             "check_status": check_status,
             "exit_code": execution.get("exit_code"),
             "timeout_seconds": execution.get("timeout_seconds"),
