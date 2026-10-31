@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 
 from scidev_core import CodingToolbox, EventLedger, PermanentError
@@ -67,6 +69,98 @@ while True:
     elif request_id is not None:
         send({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "unknown"}})
 '''
+
+
+class _HTTPHandler(BaseHTTPRequestHandler):
+    tools = [{
+        "name": "echo",
+        "description": "echo text",
+        "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}},
+    }]
+
+    def log_message(self, *_args):
+        return
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        payload = json.loads(self.rfile.read(length) or b"{}")
+        method = payload.get("method")
+        if method == "notifications/initialized":
+            self.send_response(202)
+            self.end_headers()
+            return
+        result = {}
+        if method == "initialize":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Mcp-Session-Id", "test-session")
+        elif method == "tools/list":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            result = {"tools": self.tools}
+        elif method == "tools/call":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            args = payload.get("params", {}).get("arguments", {})
+            result = {"content": [{"type": "text", "text": str(args.get("text") or "")}]}
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            "jsonrpc": "2.0",
+            "id": payload.get("id"),
+            "result": result,
+        }).encode("utf-8"))
+
+
+class MCPHTTPTests(unittest.TestCase):
+    def test_http_transport_discovers_and_calls_tools(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _HTTPHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="scidev-mcp-http-", ignore_cleanup_errors=True) as temp:
+                root = Path(temp)
+                (root / ".research").mkdir()
+                (root / ".research" / "mcp.json").write_text(json.dumps({
+                    "enabled": True,
+                    "servers": {
+                        "remote": {
+                            "url": f"http://127.0.0.1:{server.server_port}/mcp",
+                            "transport": "http",
+                        }
+                    },
+                }), encoding="utf-8")
+                manager = MCPManager(root)
+                try:
+                    tools = manager.start()
+                    self.assertEqual([tool.public_name for tool in tools], ["mcp__remote__echo"])
+                    self.assertEqual(
+                        manager.clients["remote"].call_tool("echo", {"text": "hello"}),
+                        "hello",
+                    )
+                finally:
+                    manager.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_http_transport_is_blocked_by_network_deny(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-mcp-http-deny-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            (root / ".research").mkdir()
+            (root / ".research" / "settings.json").write_text(
+                '{"network_policy": "deny"}', encoding="utf-8",
+            )
+            (root / ".research" / "mcp.json").write_text(json.dumps({
+                "enabled": True,
+                "servers": {"remote": {"url": "http://127.0.0.1:9/mcp"}},
+            }), encoding="utf-8")
+            manager = MCPManager(root)
+            self.assertEqual(manager.start(), [])
+            self.assertTrue(any("网络策略" in error for error in manager.errors))
 
 
 class MCPTests(unittest.TestCase):

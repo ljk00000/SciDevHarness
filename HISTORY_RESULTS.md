@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-01 08:30（Asia/Shanghai）· MCP HTTP 传输
+- `scidev_mcp.py` 新增 Streamable HTTP 客户端：POST JSON-RPC，支持 JSON/SSE 响应、`Mcp-Session-Id`、超时和 4 MB 响应上限。
+- `.research/mcp.json` 可用 `url`/`transport=http` 配置 HTTP 服务；网络策略 deny 时拒绝 HTTP 服务；stdio 行为不变。
+- 新增本地 HTTP server 测试：工具发现、tools/call、会话头和网络 deny；全量套件 666 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：HTTP 只实现 POST 请求/响应，不是完整流式会话；无 WebSocket；无 MCP 资源/提示/采样。
+
 ## 2026-11-01 08:00（Asia/Shanghai）· 设置/会话 schema 迁移
 - 新增 `scidev_migrations.py`：把 `.research/settings.json`、`sessions/*.json`、`events.db` 迁移到 schema v2。
 - 规范化 execution/network/allowed_commands/turn/token 字段；补全会话 `messages`/`attachments`/`status`；设置 SQLite `user_version`。
