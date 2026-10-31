@@ -1,5 +1,12 @@
 # 当前工作
 
+## 2026-10-31 17:55（Asia/Shanghai）· 无界面 CLI
+- 新增 `scidev_cli.py exec`：不导入 PySide6，复用 `CodingAgent`、执行策略、Git 自动提交和 `.research` 审计。
+- 支持 `--workspace`、`--task`、`--json`、`--execution-mode`、`--no-verify`、`--session-id`、`--api-base`、`--api-key`、`--model`、`--request-timeout`。
+- 退出码：成功 0，任务失败 1，参数/工作区错误 2，取消 130；JSON 失败也输出结构化 `success=false`。
+- 发布 staging 和测试期望已加入 CLI；新增 `tests/test_cli.py` 6 项，覆盖策略传递、JSON 结果、失败输出、工作区校验和 provider 环境覆盖。
+- 下一步：让 CLI 支持自动验证命令选择/重试闭环，并把 checkpoint、模型配置继续补齐。
+
 ## 2026-10-31 17:15（Asia/Shanghai）· 执行策略与结构化验证诊断
 - 已实现 `scidev_policy.py`：四档执行策略（只读 / 手动审批 / 工作区可写 / 完全访问）、窄范围验证命令识别、shell 链接/管道/重定向/绝对路径/上级目录/网络命令排除。
 - `CodingToolbox` 在只读模式拒绝 write_file / replace_in_file / replace_many_in_file / apply_patch 和所有命令；工作区可写自动批准 pytest/unittest、npm/pnpm/yarn test、ruff/eslint、mypy/pyright、tsc --noEmit 等；完全访问自动批准其他命令，但仍拦截破坏性命令和 Harness 自有 Git 操作。

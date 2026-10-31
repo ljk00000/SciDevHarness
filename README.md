@@ -34,6 +34,20 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 .\.venv\Scripts\python.exe scidev_client.py
 ```
 
+### 无界面执行（CLI）
+
+不启动 Qt，可用于脚本、CI 和评测：
+
+```powershell
+.\.venv\Scripts\python.exe scidev_cli.py exec `
+  --workspace "D:\Projects\my-project" `
+  --task "修复登录接口的空指针并运行相关测试" `
+  --execution-mode workspace-write `
+  --json
+```
+
+`--execution-mode` 支持 `read-only`、`manual`、`workspace-write`、`full-access`；`--no-verify` 关闭提交前验证门；`--api-base`/`--api-key`/`--model` 可临时覆盖环境变量。成功退出码为 0，任务失败为 1，参数错误为 2，取消为 130。CLI 与桌面端共用 Agent、执行策略、Git 自动提交和 `.research` 审计记录。
+
 客户端包含：
 
 - 编码会话：在右侧 Agent 对话栏输入任务，Agent 自主读取文件、写代码、修复错误

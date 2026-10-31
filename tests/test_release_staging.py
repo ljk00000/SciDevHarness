@@ -85,6 +85,7 @@ class ReleaseStagingTests(unittest.TestCase):
             "requirements-build.txt",
             "scripts/smoke_local_ollama.py",
             "scidev_client.py",
+            "scidev_cli.py",
             "scidev_core.py",
             "scidev_process.py",
             "scidev_acceptance.py",
