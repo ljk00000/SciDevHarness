@@ -95,6 +95,7 @@ class ReleaseStagingTests(unittest.TestCase):
             "scidev_memory.py",
             "scidev_multi_agent.py",
             "scidev_planning.py",
+            "scidev_policy.py",
             "scidev_verification.py",
             "scidev_browser.py",
             "scidev_icons.py",
