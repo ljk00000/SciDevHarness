@@ -112,6 +112,17 @@ class WorkspaceCheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "没有可回滚"):
                 agent.restore_last_checkpoint()
 
+    def test_restore_is_rejected_while_task_is_active(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            agent = CodingAgent(
+                root, EventLedger(root), GitManager(root),
+                require_verification=False,
+            )
+            agent._task_active = True
+            with self.assertRaisesRegex(Exception, "仍在运行"):
+                agent.restore_last_checkpoint()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,8 +3,8 @@
 ## 2026-10-31 19:15（Asia/Shanghai）· 任务检查点与回滚
 - 新增 `WorkspaceCheckpoint`：在 Agent 写文件前把原始字节保存到 `.research/checkpoints/<id>/files/`，manifest 记录路径、是否存在、备份文件；新文件记录为任务前不存在。
 - 集成到 `CodingToolbox` 的 write_file/replace_in_file/replace_many_in_file/apply_patch；`CodingAgent` 每次任务创建检查点，失败或取消后保留，最近 10 个自动清理。
-- 新增 `CodingAgent.restore_last_checkpoint()`：恢复原文件、删除新文件、记录失败路径和 `checkpoint_restored` 事件；Agent 设置增加回滚按钮；CLI 增加 `--restore-on-failure`。
-- 验证：新增 `tests/test_checkpoint.py` 6 项（已有/新文件、幂等 capture、manifest/prune、toolbox 写捕获、agent 恢复、无检查点报错）；CLI 新增 2 项恢复测试；UI 测试确认按钮可见。
+- 新增 `CodingAgent.restore_last_checkpoint()`：恢复原文件、删除新文件、记录失败路径和 `checkpoint_restored` 事件；任务运行中拒绝回滚；Agent 设置增加回滚按钮；CLI 增加 `--restore-on-failure`。
+- 验证：新增 `tests/test_checkpoint.py` 7 项（已有/新文件、幂等 capture、manifest/prune、toolbox 写捕获、agent 恢复、无检查点报错、运行中拒绝回滚）；CLI 新增 2 项恢复测试；UI 测试确认按钮可见；全量套件 599 项 0 失败、13 跳过、覆盖率 80%。
 - 边界：检查点只覆盖 Agent 写过的文件，不替代 Git；回滚会覆盖任务开始后的人工修改；只保留最近 10 个检查点。
 
 ## 2026-10-31 18:55（Asia/Shanghai）· Harness 自动验证

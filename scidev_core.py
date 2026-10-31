@@ -4316,6 +4316,7 @@ class CodingAgent:
         )
         self.toolbox.cancel_event = self._cancel
         self.last_checkpoint: WorkspaceCheckpoint | None = None
+        self._task_active = False
 
     def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self.event_callback:
@@ -4348,6 +4349,8 @@ class CodingAgent:
 
     def restore_last_checkpoint(self) -> dict[str, Any]:
         """Restore files captured before this Agent's most recent task."""
+        if self._task_active:
+            raise PermanentError("任务仍在运行，不能回滚；请先停止任务")
         checkpoint = self.last_checkpoint
         if checkpoint is None:
             raise PermanentError("没有可回滚的任务检查点")
@@ -6135,6 +6138,7 @@ class CodingAgent:
         self._cancel.clear()
         self._tool_loop_signature = None
         self._tool_loop_repeats = 0
+        self._task_active = True
         self.toolbox.reset_task_write_scope()
         self.toolbox.clear_editor_context()
         checkpoint_id = f"{str(payload.get('session_id') or 'task')}-{new_id('ckpt')}"
@@ -6162,6 +6166,7 @@ class CodingAgent:
             self.toolbox.clear_editor_context()
             self.toolbox.reset_task_write_scope()
             self.toolbox.set_checkpoint(None)
+            self._task_active = False
 
     def _prepare_coding_run(
         self,

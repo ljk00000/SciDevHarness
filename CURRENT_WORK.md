@@ -3,9 +3,9 @@
 ## 2026-10-31 19:15（Asia/Shanghai）· 任务检查点与回滚
 - 新增 `scidev_checkpoint.py`：Agent 写文件前保存原始字节到 `.research/checkpoints/<id>/`；新文件记录为“任务前不存在”。
 - `CodingToolbox` 在 write_file/replace/apply_patch 写入口自动 capture；`CodingAgent` 每次任务创建检查点，失败/取消后保留，最近 10 个自动清理。
-- `CodingAgent.restore_last_checkpoint()` 恢复原文件、删除新文件并记录 `checkpoint_restored`；Agent 设置增加“回滚上次任务改动的文件”按钮。
+- `CodingAgent.restore_last_checkpoint()` 恢复原文件、删除新文件并记录 `checkpoint_restored`；任务运行中拒绝回滚；Agent 设置增加“回滚上次任务改动的文件”按钮。
 - CLI 增加 `--restore-on-failure`，失败时自动回滚并在 JSON 中返回 `checkpoint_restore`。
-- 验证：新增 `tests/test_checkpoint.py` 6 项；CLI/UI 测试补充；全量套件待跑。
+- 验证：新增 `tests/test_checkpoint.py` 7 项；CLI/UI 测试补充；全量套件 599 项 0 失败、13 跳过、覆盖率 80%。
 
 ## 2026-10-31 18:55（Asia/Shanghai）· Harness 自动验证
 - 当模型结束任务但代码改动尚未验证时，Harness 会在工作区可写/完全访问模式下从静态发现的候选里选择第一个安全 test/lint/typecheck 命令自动运行。
