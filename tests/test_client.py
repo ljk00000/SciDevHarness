@@ -42,6 +42,7 @@ from scidev_client import (  # noqa: E402
     DevelopmentTreeView,
     MAX_TREE_LAYOUT_BYTES,
     NotificationToast,
+    PatchDiffPanel,
     PatchReviewCard,
     ProjectFilterProxy,
     TerminalOutputDecoder,
@@ -1216,6 +1217,46 @@ class PatchReviewUiTests(unittest.TestCase):
             card.close()
             card.deleteLater()
             self.app.processEvents()
+
+    def test_patch_diff_panel_supports_hunk_selection(self) -> None:
+        panel = PatchDiffPanel(self.preview())
+        decisions = []
+        panel.decision.connect(decisions.append)
+        try:
+            self.assertEqual(panel.selected_hunks(), set())
+            self.assertFalse(panel.apply_button.isEnabled())
+            panel.hunk_checks[1].setChecked(True)
+            self.assertTrue(panel.apply_button.isEnabled())
+            panel.apply_button.click()
+            self.assertEqual(decisions, [{1}])
+            self.assertFalse(panel.hunk_checks[2].isEnabled())
+        finally:
+            panel.close()
+            panel.deleteLater()
+            self.app.processEvents()
+
+    def test_client_editor_diff_tab_resolves_pending_review(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-patch-diff-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            request = {
+                "preview": self.preview(),
+                "decision_ready": threading.Event(),
+                "selected_hunks": None,
+                "resolved": False,
+                "card": None,
+            }
+            try:
+                window._open_patch_diff_tab(request)
+                panel = request.get("diff_panel")
+                self.assertIsInstance(panel, PatchDiffPanel)
+                panel.hunk_checks[2].setChecked(True)
+                panel.apply_button.click()
+                self.assertTrue(request["resolved"])
+                self.assertEqual(request["selected_hunks"], {2})
+                self.assertIsNone(request.get("diff_panel"))
+            finally:
+                window.close()
+                self.app.processEvents()
 
     def test_client_review_callback_waits_for_selection_and_returns_selected_hunks(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-patch-review-ui-") as temp:

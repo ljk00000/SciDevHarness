@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-11-01 00:00（Asia/Shanghai）· 编辑器补丁 diff
+- 新增 `PatchDiffPanel`：编辑器标签内显示彩色 unified diff，左侧逐 hunk 勾选，可应用已选或拒绝全部；决定后关闭标签并解析原补丁审核请求。
+- `PatchReviewCard` 新增“在编辑器中审核”；`UnifiedDiffHighlighter` 区分新增/删除/hunk 头；拒绝或部分批准仍停止任务。
+- 清理逻辑：聊天清理、任务结束或窗口关闭时移除待审核 diff 标签，避免留下无主审核面板。
+- 验证：PatchReviewUiTests 5 项通过（卡片逐块选择、编辑器标签解析、清理）；全量套件 624 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：diff 标签只读，不是主编辑器内联逐行编辑；没有逐行接受/拒绝；终端仍是管道。
+
 ## 2026-10-31 23:10（Asia/Shanghai）· Ruff LSP 诊断
 - 新增 `scidev_lsp.py`：最小 JSON-RPC stdio 客户端，启动本机 `ruff server`，完成 initialize/initialized/didOpen，等待 `textDocument/publishDiagnostics`，再 shutdown/exit；读取线程与队列实现超时，关闭时清理管道和进程。
 - 编辑器对 Python 文件做防抖后台诊断；结果写入“问题”面板，双击跳转；语法错误仍由 AST 即时显示。

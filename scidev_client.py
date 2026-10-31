@@ -44,7 +44,7 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QKeyEvent, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QShortcut, QTextCursor, QTextDocument, QTextFormat
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QKeyEvent, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QShortcut, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -2091,14 +2091,155 @@ class ExecutionGroup(QFrame):
         )
 
 
+class UnifiedDiffHighlighter(QSyntaxHighlighter):
+    """Color added, removed and hunk-header lines in a read-only diff tab."""
+
+    def __init__(self, document: QTextDocument):
+        super().__init__(document)
+        self.added_format = QTextCharFormat()
+        self.added_format.setForeground(QColor("#8ce99a"))
+        self.added_format.setBackground(QColor("#173a24"))
+        self.removed_format = QTextCharFormat()
+        self.removed_format.setForeground(QColor("#ffa8a8"))
+        self.removed_format.setBackground(QColor("#3a1d20"))
+        self.header_format = QTextCharFormat()
+        self.header_format.setForeground(QColor("#8ecae6"))
+        self.header_format.setFontWeight(QFont.Weight.Bold)
+
+    def highlightBlock(self, text: str) -> None:
+        if text.startswith(("+++", "---", "diff --git", "index ")):
+            self.setFormat(0, len(text), self.header_format)
+        elif text.startswith("@@"):
+            self.setFormat(0, len(text), self.header_format)
+        elif text.startswith("+"):
+            self.setFormat(0, len(text), self.added_format)
+        elif text.startswith("-"):
+            self.setFormat(0, len(text), self.removed_format)
+
+
+class PatchDiffPanel(QWidget):
+    """Editor-side review surface for a pending patch.
+
+    The chat card remains the compact entry point; this tab gives the same
+    hunk decisions a larger, syntax-highlighted diff surface.
+    """
+
+    decision = Signal(object)
+
+    def __init__(self, preview: dict[str, Any], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.preview = preview
+        self._decided = False
+        self.hunk_checks: dict[int, QCheckBox] = {}
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 9, 10, 9)
+        layout.setSpacing(7)
+
+        hunks = [item for item in preview.get("hunks", []) if isinstance(item, dict)]
+        header = QLabel(
+            f"补丁审核 · {int(preview.get('file_count', 0) or 0)} 个文件 · {len(hunks)} 个修改块"
+        )
+        header.setObjectName("SectionTitle")
+        layout.addWidget(header)
+        note = QLabel("勾选要应用的块；应用后本次审核结束。也可以回到聊天卡片操作。")
+        note.setObjectName("Hint")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)
+        for item in hunks:
+            try:
+                hunk_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if isinstance(item.get("id"), bool) or hunk_id in self.hunk_checks:
+                continue
+            path = str(item.get("path") or "（未知路径）")
+            check = QCheckBox(f"#{hunk_id} · {path}")
+            check.setObjectName("PatchReviewHunk")
+            check.toggled.connect(self._sync_selection)
+            self.hunk_checks[hunk_id] = check
+            left_layout.addWidget(check)
+        left_layout.addStretch(1)
+        splitter.addWidget(left)
+
+        diff_text = "\n\n".join(
+            f"### 修改块 {item.get('id')} · {item.get('path')} · {item.get('operation')}\n"
+            f"{str(item.get('diff') or '[无文本差异]')}"
+            for item in hunks
+        )
+        self.diff_editor = CodeEditor()
+        self.diff_editor.setReadOnly(True)
+        self.diff_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.diff_editor.setPlainText(diff_text or "补丁没有可显示的差异")
+        self._highlighter = UnifiedDiffHighlighter(self.diff_editor.document())
+        splitter.addWidget(self.diff_editor)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter, 1)
+
+        actions = QHBoxLayout()
+        self.select_all_button = QPushButton("全选")
+        self.select_all_button.setObjectName("Quiet")
+        self.select_all_button.clicked.connect(lambda: self._set_all(True))
+        actions.addWidget(self.select_all_button)
+        actions.addStretch(1)
+        self.apply_button = QPushButton("应用已选修改")
+        self.apply_button.setObjectName("Primary")
+        self.apply_button.setEnabled(False)
+        self.apply_button.clicked.connect(self._accept_selected)
+        actions.addWidget(self.apply_button)
+        self.reject_button = QPushButton("拒绝全部")
+        self.reject_button.setObjectName("Quiet")
+        self.reject_button.clicked.connect(self._reject_all)
+        actions.addWidget(self.reject_button)
+        layout.addLayout(actions)
+
+    def selected_hunks(self) -> set[int]:
+        return {hunk_id for hunk_id, check in self.hunk_checks.items() if check.isChecked()}
+
+    def _set_all(self, checked: bool) -> None:
+        for check in self.hunk_checks.values():
+            check.setChecked(checked)
+
+    def _sync_selection(self, _checked: bool = False) -> None:
+        if not self._decided:
+            self.apply_button.setEnabled(bool(self.selected_hunks()))
+
+    def _accept_selected(self) -> None:
+        selected = self.selected_hunks()
+        if selected:
+            self._finish(selected)
+
+    def _reject_all(self) -> None:
+        self._finish(None)
+
+    def _finish(self, selected: set[int] | None) -> None:
+        if self._decided:
+            return
+        self._decided = True
+        for check in self.hunk_checks.values():
+            check.setEnabled(False)
+        self.select_all_button.setEnabled(False)
+        self.apply_button.setEnabled(False)
+        self.reject_button.setEnabled(False)
+        self.decision.emit(selected)
+
+
 class PatchReviewCard(QFrame):
     """Inline, non-modal review surface for per-hunk code changes."""
 
     decision = Signal(object)
+    open_requested = Signal(object)
 
     def __init__(self, preview: dict[str, Any]):
         super().__init__()
         self.setObjectName("PatchReviewCard")
+        self.preview = preview
         self._decided = False
         self.hunk_checks: dict[int, QCheckBox] = {}
 
@@ -2177,6 +2318,10 @@ class PatchReviewCard(QFrame):
 
         action_row = QHBoxLayout()
         action_row.addStretch(1)
+        self.open_diff_button = QPushButton("在编辑器中审核")
+        self.open_diff_button.setObjectName("Quiet")
+        self.open_diff_button.clicked.connect(lambda: self.open_requested.emit(self.preview))
+        action_row.addWidget(self.open_diff_button)
         self.select_all_button = QPushButton("全选")
         self.select_all_button.setObjectName("Quiet")
         self.select_all_button.setEnabled(bool(self.hunk_checks))
@@ -5797,16 +5942,56 @@ class ClientWindow(QMainWindow):
         card = PatchReviewCard(request.get("preview", {}))
         request["card"] = card
         card.decision.connect(lambda selected, pending=request: self._resolve_patch_review(pending, selected))
+        card.open_requested.connect(lambda _preview, pending=request: self._open_patch_diff_tab(pending))
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, card)
         QTimer.singleShot(
             0,
             lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()),
         )
 
-    @staticmethod
-    def _resolve_patch_review(request: dict[str, Any], selected: object) -> None:
+    def _open_patch_diff_tab(self, request: dict[str, Any]) -> None:
+        if self._closing or request.get("resolved"):
+            return
+        group = self._active_editor_group or self.editor_tabs
+        panel = request.get("diff_panel")
+        if not isinstance(panel, PatchDiffPanel):
+            panel = PatchDiffPanel(request.get("preview", {}))
+            request["diff_panel"] = panel
+            index = group.addTab(panel, "补丁 diff")
+            self._install_tab_close_button(group, index, panel)
+            group.setTabToolTip(index, "待审核补丁的编辑器 diff；勾选修改块后应用")
+            panel.decision.connect(
+                lambda selected, pending=request: self._finish_patch_diff_tab(pending, selected)
+            )
+        group.setCurrentWidget(panel)
+        panel.setFocus()
+
+    def _finish_patch_diff_tab(self, request: dict[str, Any], selected: object) -> None:
+        panel = request.get("diff_panel")
+        if isinstance(panel, PatchDiffPanel):
+            group = self._editor_group_for(panel) or self._active_editor_group or self.editor_tabs
+            index = group.indexOf(panel)
+            if index >= 0:
+                group.removeTab(index)
+            panel.deleteLater()
+            request["diff_panel"] = None
+        card = request.get("card")
+        if isinstance(card, PatchReviewCard):
+            card._finish(selected if isinstance(selected, set) else None)
+        else:
+            self._resolve_patch_review(request, selected)
+
+    def _resolve_patch_review(self, request: dict[str, Any], selected: object) -> None:
         if request.get("resolved"):
             return
+        panel = request.get("diff_panel")
+        if isinstance(panel, PatchDiffPanel):
+            group = self._editor_group_for(panel) or self._active_editor_group or self.editor_tabs
+            index = group.indexOf(panel)
+            if index >= 0:
+                group.removeTab(index)
+            panel.deleteLater()
+            request["diff_panel"] = None
         request["selected_hunks"] = set(selected) if isinstance(selected, set) else None
         request["resolved"] = True
         request["decision_ready"].set()
