@@ -39,6 +39,7 @@ from scidev_checkpoint import WorkspaceCheckpoint
 from scidev_visual import VisualArtifactReviewer
 from scidev_context import ProjectContext
 from scidev_memory import ProjectMemory
+from scidev_mcp import MCPError, MCPManager
 from scidev_multi_agent import (
     DELEGATE_PARALLEL_RESEARCH_TOOL,
     DELEGATE_RESEARCH_TOOL,
@@ -2611,6 +2612,7 @@ class CodingToolbox:
         self.visual_reviewer = visual_reviewer
         self.patch_review = patch_review
         self.browser_agent = BrowserAgent(project_root, ledger, approval=browser_approval)
+        self.mcp = MCPManager(self.project_root, ledger=ledger)
         self.enforce_patch_review_for_existing = bool(enforce_patch_review_for_existing)
         self.execution_policy = ExecutionPolicy(ExecutionMode.parse(execution_mode))
         self.checkpoint: WorkspaceCheckpoint | None = None
@@ -2967,6 +2969,22 @@ class CodingToolbox:
                     ["path"],
                 )
             )
+        return definitions
+
+    def all_definitions(
+        self,
+        *,
+        include_visual_review: bool = False,
+        include_browser: bool = False,
+    ) -> list[dict[str, Any]]:
+        definitions = self.definitions(
+            include_visual_review=include_visual_review,
+            include_browser=include_browser,
+        )
+        try:
+            definitions.extend(self.mcp.tool_definitions())
+        except MCPError as exc:
+            self.mcp.errors.append(str(exc))
         return definitions
 
     def _resolve(self, raw_path: str, allow_root: bool = True) -> Path:
@@ -3865,6 +3883,23 @@ class CodingToolbox:
         return str(snapshot["text"])
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
+        if name.startswith("mcp__"):
+            if not isinstance(arguments, dict):
+                raise PermanentError(f"工具 {name} 的参数必须是 JSON 对象")
+            if not self.execution_policy.can_run_commands:
+                raise PermanentError("只读执行策略不允许调用 MCP 工具")
+            if self.command_approval is None:
+                raise PermanentError("MCP 工具需要审批回调；当前会话没有可用的审批入口")
+            try:
+                approved = self.command_approval(f"MCP {name}", 30)
+            except Exception as exc:  # noqa: BLE001 - approval errors fail closed
+                raise PermanentError(f"MCP 工具审批失败：{exc}") from exc
+            if not approved:
+                raise PermanentError(f"MCP 工具调用未获批准：{name}")
+            try:
+                return self.mcp.call(name, arguments)
+            except MCPError as exc:
+                raise PermanentError(str(exc)) from exc
         handlers = {
             "search_code": self.search_code,
             "get_project_context": self.get_project_context,
@@ -3918,6 +3953,7 @@ class CodingToolbox:
 
     def close(self) -> None:
         self.browser_agent.close()
+        self.mcp.close()
 
 
 class SvgArtifactAdapter:
@@ -5473,7 +5509,7 @@ class CodingAgent:
 
     def _tool_definitions_for_prompt(self, prompt: str) -> list[dict[str, Any]]:
         browser_enabled = bool(self.EXPLICIT_BROWSER_INTENT.search(prompt))
-        definitions = self.toolbox.definitions(
+        definitions = self.toolbox.all_definitions(
             include_visual_review=self.toolbox.visual_reviewer is not None,
             include_browser=browser_enabled,
         )
@@ -5511,7 +5547,7 @@ class CodingAgent:
         """Return local-only tools for post-write SVG repair; never offer a broad rewrite."""
         selected = [
             definition
-            for definition in self.toolbox.definitions()
+            for definition in self.toolbox.all_definitions()
             if definition.get("function", {}).get("name") in self.SVG_LOCAL_REPAIR_TOOLS
         ]
         for definition in selected:

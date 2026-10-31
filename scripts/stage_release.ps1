@@ -24,6 +24,7 @@ $releaseFiles = @(
     "scidev_credentials.py",
     "scidev_provider.py",
     "scidev_lsp.py",
+    "scidev_mcp.py",
     "scidev_process.py",
     "scidev_acceptance.py",
     "scidev_usage.py",

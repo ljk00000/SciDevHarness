@@ -66,6 +66,12 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 - 文件打开：资源树或编辑器标签右键 HTML →“在浏览器中打开”，无需服务器即可查看本地网页；其他文件可“使用默认程序打开”。双击仍进入编辑器；外部程序读取磁盘版本，未保存修改请先 `Ctrl+S`。
 - 版本树：专注画布、可折叠节点详情和 Agent 面板，2.5D 卡片与动态连线；尝试分支可自由拖动并记住位置
 - 工具调用：`search_code`、`get_project_context`、`list_files`、`read_file`、`write_file`、`replace_in_file`、`update_plan`、`run_command`、`git_diff`；执行策略可选只读、手动审批、工作区可写或完全访问
+- MCP 工具：在 `.research/mcp.json` 中显式设置 `"enabled": true` 并配置 stdio server；启动后把 server 的 tools 以 `mcp__<server>__<tool>` 暴露给模型。每次调用仍走命令审批；只读模式禁用；单个 server 启动失败只记录错误，不影响内置工具。示例：
+
+```json
+{"enabled": true, "servers": {"demo": {"command": "python", "args": ["tools/mcp_server.py"], "cwd": "."}}}
+```
+
 - 补丁审核：聊天卡片逐块勾选；可打开“补丁 diff”编辑器标签，彩色显示增删行并在同一处勾选、应用或拒绝；拒绝或部分批准会停止当前任务
 - 项目上下文：按任务关键词（含有限中英软件术语映射）与当前文件自动定位相关代码，附带项目结构、依赖声明、Git 状态和适用目录指令；点击聊天输入区 `@` →“查看项目上下文”可预览、刷新
 - 任务规划：右侧计划面板提供自动规划、必须先规划、关闭三种模式；计划步骤随会话保存，重试可恢复，未完成计划不会被当作成功提交

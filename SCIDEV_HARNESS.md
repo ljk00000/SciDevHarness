@@ -14,6 +14,7 @@
 | 代码智能 | 🟡 Python 诊断已实现 | Python 文件异步启动本机 Ruff LSP，解析 `publishDiagnostics` 并显示在“问题”面板；双击跳到行列；语法错误仍由 AST 即时显示 | 一次性按文件诊断，不是常驻 LSP；无补全/定义跳转/重命名/引用；无 tsserver/调试器；Ruff 未安装或启动失败时静默跳过 |
 | 模型接入 | ✅ 基础已实现 | Agent 设置内可填写 API Base URL、模型、推理强度、回退模型和 API Key；Key 存入 Windows 凭据管理器，非敏感配置存 `.research/provider.json`；环境变量作为后备；CLI 显式 provider 参数强制覆盖；可异步测试 `/models` 连通性，并用一次极小 ping 工具调用探测工具调用/上下文/视觉元数据；HTTP 404/模型不存在 400 时自动用回退模型重试一次 | 不是 OpenAI/ChatGPT 账号登录或 OAuth；Key 仍可被同一 Windows 用户下的进程读取；只支持 OpenAI-compatible Chat Completions；能力探测依赖 endpoint 报告且会消耗少量 token；回退只覆盖模型解析错误，不覆盖认证/限流/网络错误 |
 | 编码工具 | ✅ 核心已实现 | `search_code`、`get_project_context`、`list_files`、`read_file`、`write_file`、`apply_patch`、精确/批量 `replace_in_file`、`run_command`、`git_diff`；按用户意图启用网页搜索/打开/点击/截图；可选视觉制品检查 | 网页操作逐次审批且不复用登录态；截图只本机保存；符号提取不是完整语言服务器 |
+| MCP 扩展 | 🟡 stdio 工具已接入 | `.research/mcp.json` 显式启用后启动 stdio server，`initialize`/`tools/list`，把工具以 `mcp__<server>__<tool>` 加入模型工具列表；`tools/call` 结果回传；每次调用仍走命令审批；只读模式禁用；失败只记录错误 | 只支持 stdio，不支持 SSE/HTTP/WebSocket MCP；无 MCP 资源/提示/采样；无 UI 配置向导；无 hooks；服务进程由用户配置文件信任 |
 | 项目上下文 | ✅ 核心已实现 | 本地增量缓存、代码/标识符检索、任务相关片段与符号、中英术语及复合短语加权（含旋转/碰撞等游戏机制）、环境/依赖/目录指令；未保存编辑器缓冲参与预览、搜索和读取，Agent 对这些文件只读；任务/重试/编辑后刷新 | 有界关键词检索，不含向量索引或完整依赖图；快照最多 8 个文件/1 MB，超预算的草稿排除且禁止读取旧磁盘内容；扫描/输出有界；缓存仅在当前进程内 |
 | 任务规划 | ✅ 核心已实现 | Agent `update_plan` 工具、自动/必须/关闭三种模式、步骤状态、右侧计划面板、会话持久化与重试恢复；新任务会归档上一计划 | 没有逐步人工批准、可拖动 DAG 或独立验证模型报告的完成状态；科研实验仍不在范围 |
 | 记忆与过程记录 | ✅ 核心已实现 | SQLite 任务/会话索引、JSONL 事件、会话 transcript 与最终总结；新任务可从本项目旧总结中词法检索，限制数量/长度，重试复用快照 | 非向量语义检索；失败且未生成最终总结的尝试不会成为记忆；密钥脱敏仅覆盖常见格式 |

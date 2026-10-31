@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-11-01 00:50（Asia/Shanghai）· MCP stdio 工具
+- 新增 `scidev_mcp.py`：读取 `.research/mcp.json`（必须 `"enabled": true`），启动 stdio MCP server，完成 initialize/tools/list，把工具以 `mcp__<server>__<tool>` 暴露给模型；tools/call 文本结果回传。
+- `CodingToolbox.all_definitions()` 在静态工具后追加 MCP 工具；`execute` 对 MCP 调用要求命令审批，只读模式禁用；服务启动失败只记录错误。
+- 新增 4 项测试：禁用不启动、工具列表/调用、Toolbox 审批执行、无审批回调拒绝；全量套件 628 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：只支持 stdio，无 resources/prompts/sampling、无 UI 配置向导、无 hooks；MCP 服务命令由项目配置文件信任。
+
 ## 2026-11-01 00:00（Asia/Shanghai）· 编辑器补丁 diff
 - 新增 `PatchDiffPanel`：编辑器标签内显示彩色 unified diff，左侧逐 hunk 勾选，可应用已选或拒绝全部。
 - `PatchReviewCard` 新增“在编辑器中审核”，打开同一待审核请求的 diff 标签；决定后关闭标签并解析原请求。
