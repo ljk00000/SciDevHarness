@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-11-01 07:45（Asia/Shanghai）· GitHub PR
+- 新增 `scidev_pr.py`：解析 GitHub `origin`（SSH/HTTPS），确认仓库根和功能分支，默认 base 为 `origin/HEAD` 或 `main`，拒绝从 `main`/`master` 直接建 PR。
+- CLI 新增 `pr`：`--base/--title/--body/--draft/--dry-run/--json/--allow-network`；先 push 当前分支，再调用已登录的 `gh pr create`。
+- 项目网络策略为 deny 时，PR 创建默认拒绝，需显式 `--allow-network`。
+- 新增 `tests/test_pr.py` 4 项和 CLI dry-run 测试；全量套件 662 项 0 失败、14 跳过、覆盖率 79%。
+- 边界：需要本机 `gh` 已认证和推送权限；不创建 GitHub App/OAuth；不自动 review/合并；失败后不自动清理远端分支。
+
 ## 2026-11-01 06:35（Asia/Shanghai）· Worktree 隔离
 - 新增 `scidev_worktree.py`：校验 Git 仓库根，按任务 id 创建 `.research/worktrees/<id>` 与 `scidev/agent-<id>` 分支，返回路径/分支/base SHA；支持列表、dirty 检查、force 删除和 prune。
 - CLI `exec` 新增 `--worktree`、`--worktree-id`；Agent 在隔离 worktree 内运行，JSON/人类输出包含 worktree 路径和分支。

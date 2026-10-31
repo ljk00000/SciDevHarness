@@ -69,6 +69,32 @@ class CliTests(unittest.TestCase):
         self.assertFalse(agent.kwargs["prefer_environment_provider"])
         self.assertEqual(agent.payload["payload"]["prompt"], "fix it")
 
+    def test_pr_dry_run_prints_a_plan_without_network_calls(self) -> None:
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory(prefix="scidev-cli-pr-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "CLI Test"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "cli@example.invalid"], cwd=root, check=True)
+            (root / "base.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", "git@github.com:example/project.git"],
+                cwd=root, check=True,
+            )
+            subprocess.run(["git", "checkout", "-q", "-b", "feature/task"], cwd=root, check=True)
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                code = scidev_cli.main([
+                    "pr", "--workspace", str(root), "--title", "Task", "--draft", "--dry-run", "--json",
+                ])
+            self.assertEqual(code, 0, output.getvalue())
+            payload = json.loads(output.getvalue())
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(payload["repo"], "example/project")
+            self.assertEqual(payload["branch"], "feature/task")
+            self.assertTrue(payload["draft"])
+
     def test_exec_can_run_in_an_isolated_worktree(self) -> None:
         output = io.StringIO()
         with tempfile.TemporaryDirectory(prefix="scidev-cli-worktree-", ignore_cleanup_errors=True) as temp:

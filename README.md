@@ -50,6 +50,21 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 
 `--worktree` 会把任务放进 `.research/worktrees/<id>` 的独立 Git worktree，分支为 `scidev/agent-<id>`；返回 JSON 包含 `worktree`/`worktree_branch`/`worktree_base_sha`。任务结束后 worktree 默认保留，便于检查、合并或丢弃；需要清理时用 `git worktree remove` 和 `git branch -D`。`--worktree-id` 可指定稳定 id，避免重复创建。
 
+### 创建 PR
+
+在任务分支或 worktree 内运行：
+
+```powershell
+python scidev_cli.py pr --workspace .research/worktrees/login --title "登录页" --draft --json
+```
+
+- 自动从 `origin` 识别 GitHub `owner/repo`
+- 默认 base 取 `origin/HEAD`，否则 `main`
+- push 当前分支并调用已登录的 `gh pr create`
+- `--dry-run` 只打印计划，不联网
+- 项目网络策略为 `deny` 时需要显式 `--allow-network`
+- 不在 `main`/`master` 上创建 PR，避免直接把主分支当 head
+
 列出最近会话，再用同一个 `--session-id` 继续该会话的上下文：
 
 ```powershell

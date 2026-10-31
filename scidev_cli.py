@@ -18,6 +18,7 @@ from scidev_policy import ExecutionMode
 from scidev_attachments import AttachmentError, load_image_file
 from scidev_eval import EvalError, EvalRunner
 from scidev_worktree import WorktreeError, WorktreeManager
+from scidev_pr import PullRequestError, build_plan, create_pull_request
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -95,6 +96,19 @@ def _parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--suite", required=True, help="eval suite JSON path")
     eval_parser.add_argument("--output", default="", help="report JSON path (default: timestamped under .research/evals)")
     eval_parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    pr_parser = subparsers.add_parser(
+        "pr",
+        help="create a GitHub pull request from a task branch",
+        description="Push the current branch and create a GitHub PR with the authenticated gh CLI.",
+    )
+    pr_parser.add_argument("--workspace", required=True, help="repository or task worktree")
+    pr_parser.add_argument("--base", default="", help="base branch (default: origin/HEAD, then main)")
+    pr_parser.add_argument("--title", default="", help="PR title (default: branch name)")
+    pr_parser.add_argument("--body", default="", help="PR body; omitted means --fill")
+    pr_parser.add_argument("--draft", action="store_true", help="create a draft PR")
+    pr_parser.add_argument("--allow-network", action="store_true", help="override a deny network policy")
+    pr_parser.add_argument("--dry-run", action="store_true", help="print the plan without pushing")
+    pr_parser.add_argument("--json", action="store_true", help="emit one JSON object")
     return parser
 
 
@@ -221,6 +235,52 @@ def _eval_command(args: argparse.Namespace) -> int:
     return 0 if report["failed"] == 0 else 1
 
 
+def _pr_command(args: argparse.Namespace) -> int:
+    workspace = Path(args.workspace).expanduser().resolve()
+    if not workspace.is_dir():
+        print(f"workspace is not a directory: {workspace}", file=sys.stderr)
+        return 2
+    try:
+        plan = build_plan(
+            workspace,
+            base=args.base,
+            title=args.title,
+            body=args.body,
+            draft=args.draft,
+        )
+    except PullRequestError as exc:
+        print(f"pr rejected: {exc}", file=sys.stderr)
+        return 2
+    if args.dry_run:
+        payload = {
+            "dry_run": True,
+            "repo": plan.repo,
+            "branch": plan.branch,
+            "base": plan.base,
+            "title": plan.title,
+            "draft": plan.draft,
+            "commands": [
+                ["git", "push", "-u", "origin", plan.branch],
+                ["gh", "pr", "create", "--repo", plan.repo, "--head", plan.branch, "--base", plan.base],
+            ],
+        }
+    else:
+        try:
+            payload = create_pull_request(plan, allow_network=args.allow_network)
+        except PullRequestError as exc:
+            print(f"pr failed: {exc}", file=sys.stderr)
+            return 1
+        payload["dry_run"] = False
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    elif args.dry_run:
+        print(f"{plan.repo}: {plan.branch} -> {plan.base} (dry run)")
+        print(f"title: {plan.title}")
+    else:
+        print(payload.get("url") or "PR created")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -228,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
         return _sessions_command(args)
     if args.command == "eval":
         return _eval_command(args)
+    if args.command == "pr":
+        return _pr_command(args)
     if args.command != "exec":
         parser.print_help()
         return 2
