@@ -3096,20 +3096,14 @@ class SummarySettingsUiTests(unittest.TestCase):
             window = ClientWindow(root)
             try:
                 window._open_file(path, preview=False)
-                window._lsp_generation += 1
-                generation = window._lsp_generation
-                window._on_lsp_diagnostics(
-                    str(path),
-                    generation,
-                    [{
-                        "line": 2,
-                        "column": 5,
-                        "severity": "warning",
-                        "message": "unused value",
-                        "code": "F841",
-                    }],
-                    "",
-                )
+                window._lsp_diagnostics[str(path)] = [{
+                    "line": 2,
+                    "column": 5,
+                    "severity": "warning",
+                    "message": "unused value",
+                    "code": "F841",
+                }]
+                window._render_diagnostics(path, None)
                 self.assertEqual(window.problems_tree.topLevelItemCount(), 1)
                 text = window.problems_tree.topLevelItem(0).text(0)
                 self.assertIn("sample.py:2:5", text)

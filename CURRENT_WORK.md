@@ -4,7 +4,7 @@
 - 新增 `PatchDiffPanel`：编辑器标签内显示彩色 unified diff，左侧逐 hunk 勾选，可应用已选或拒绝全部。
 - `PatchReviewCard` 新增“在编辑器中审核”，打开同一待审核请求的 diff 标签；决定后关闭标签并解析原请求。
 - `UnifiedDiffHighlighter` 区分新增/删除/hunk 头；拒绝或部分批准仍停止任务。
-- 验证：PatchReviewUiTests 5 项通过；全量套件 624 项 0 失败、13 跳过、覆盖率 79%。
+- 验证：PatchReviewUiTests 5 项通过；全量套件 624 项 0 失败、13 跳过、覆盖率 79%。CI #134 暴露 LSP UI 测试的时序依赖，已改为直接渲染缓存诊断，重跑全量通过。
 
 ## 2026-10-31 23:10（Asia/Shanghai）· Ruff LSP 诊断
 - 新增 `scidev_lsp.py`：最小 JSON-RPC stdio 客户端，启动本机 `ruff server`，初始化、didOpen、等待 `publishDiagnostics`、关闭；支持超时和进程清理。
