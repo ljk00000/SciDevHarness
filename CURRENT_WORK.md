@@ -10,6 +10,7 @@
   6. 300 字符文件名等写盘错误直接抛 OSError；现在文件名长度、目录创建、原子写入失败都转成 PermanentError，并保留原始原因。
   7. 新增 `_write_file_bytes` 统一 write_file/replace_in_file/批量替换的写盘错误处理。
 - 验证：工具 fuzz 无未捕获异常；官方 Ollama smoke 通过（4 个编码任务 + 修 bug + 自动提交 + 总结）；真实 7B 探针（36 + 并发）flagged=[]、coverage_gaps={}；全量隔离套件 571 项 0 失败、13 跳过、覆盖率 79%；ruff 通过。
+- CI：首次 #111 仅 3.12 在 RetryQueue 测试的临时 `.research/runs.db` 清理上报 WinError 32；给 5 个队列测试加 `ignore_cleanup_errors=True` 后，#112 三套 Python 全绿（9 分 26 秒），断言未减弱。
 
 ## 2026-10-31 02:25（Asia/Shanghai）· Windows CI 3.12/3.13 时序修复（已完成）
 - CI #106 只有 Python 3.12 失败：流式取消测试用 8 秒总时长断言，CI 线程启动偏慢，8.265 秒误报；改为等流真正开始后再取消，只断言取消反应时间。

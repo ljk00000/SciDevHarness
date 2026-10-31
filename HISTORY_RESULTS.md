@@ -10,6 +10,7 @@
   5. NUL 路径双重异常：`a\x00b` 在 atomic_write_bytes 的 finally unlink 再抛 ValueError 掩盖原始错误；finally 现在捕获 ValueError，`_resolve` 对所有工具统一返回“路径不能包含 NUL 字节”。
   6. 文件名/写盘边界：300 字符文件名、NUL、磁盘错误会抛裸 OSError/ValueError；新增 `_write_file_bytes`（文件名上限、异常转 PermanentError），write_file 的直接创建分支和父目录创建也给出明确中文错误。
 - 验证：fuzz 工具无未捕获异常；官方 smoke `status=passed`（hello_qwen.py 提交、4 个编码任务、first_duplicate 修复、总结）；真实 7B 探针 36 场景 + 并发 `flagged=[]` 且无覆盖缺口；全量隔离套件 571 项 0 失败、0 错误、13 跳过、覆盖率 79%；ruff 通过。
+- CI：push 后 #111 只有 Python 3.12 失败，两个 RetryQueue 测试在断言通过后清理临时 `runs.db` 报 WinError 32；给 5 个队列测试加 `ignore_cleanup_errors=True`（仅忽略清理竞争），#112 三套 Python 全绿，9 分 26 秒。
 
 ## 2026-10-31 02:25（Asia/Shanghai）· Windows CI 3.12/3.13 时序失败修复
 - 现象：push `abeabe9` 后 Windows CI #106 中 3.13/3.14 成功，3.12 失败；注解为 `test_cancel_interrupts_an_in_flight_model_stream` 的 `8.265 not less than 8`。
