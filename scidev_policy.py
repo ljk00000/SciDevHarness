@@ -73,6 +73,39 @@ class NetworkPolicy(str, Enum):
         return aliases.get(normalized, fallback)
 
 
+MAX_ALLOWED_COMMANDS = 50
+MAX_ALLOWED_COMMAND_CHARS = 200
+
+
+def normalize_command_prefixes(raw: object) -> list[str]:
+    """Validate user-provided command prefixes for unattended execution."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        values = re.split(r"[\r\n;]+", raw)
+    elif isinstance(raw, (list, tuple)):
+        values = [str(item) for item in raw]
+    else:
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        prefix = " ".join(str(value).strip().split())
+        if len(prefix) < 3 or len(prefix) > MAX_ALLOWED_COMMAND_CHARS:
+            continue
+        if _UNSAFE_SHELL.search(prefix) or _UNSAFE_SUBSTITUTION.search(prefix):
+            continue
+        if _ENV_ASSIGNMENT.match(prefix) or _ABSOLUTE_PATH.search(prefix) or _PARENT_PATH.search(prefix):
+            continue
+        if prefix in seen:
+            continue
+        seen.add(prefix)
+        result.append(prefix)
+        if len(result) >= MAX_ALLOWED_COMMANDS:
+            break
+    return result
+
+
 @dataclass(frozen=True)
 class CommandAssessment:
     """Classification used to decide whether a command may run unattended."""
@@ -88,6 +121,7 @@ class ExecutionPolicy:
 
     mode: ExecutionMode = ExecutionMode.WORKSPACE_WRITE
     network_policy: NetworkPolicy = NetworkPolicy.ASK
+    allowed_commands: tuple[str, ...] = ()
 
     @property
     def can_write_files(self) -> bool:
@@ -97,14 +131,23 @@ class ExecutionPolicy:
     def can_run_commands(self) -> bool:
         return self.mode is not ExecutionMode.READ_ONLY
 
-    def auto_approves(self, assessment: CommandAssessment) -> bool:
+    def auto_approves(self, assessment: CommandAssessment, command: str = "") -> bool:
         if self.mode in {ExecutionMode.READ_ONLY, ExecutionMode.MANUAL}:
             return False
         if assessment.category == "network":
             return self.network_policy is NetworkPolicy.ALLOW
+        if command and self.allowlisted(command):
+            return True
         if self.mode is ExecutionMode.FULL_ACCESS:
             return True
         return bool(assessment.auto_approvable)
+
+    def allowlisted(self, command: str) -> bool:
+        text = " ".join(str(command or "").strip().split())
+        return any(
+            text == prefix or text.startswith(prefix + " ")
+            for prefix in self.allowed_commands
+        )
 
     def label(self) -> str:
         return {

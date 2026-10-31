@@ -57,6 +57,7 @@ from scidev_policy import (
     NetworkPolicy,
     assess_command,
     format_verification_diagnostics,
+    normalize_command_prefixes,
 )
 from scidev_process import background_process_options, shell_command_arguments, terminate_process_tree
 from scidev_patching import PatchEngine, PatchError, PatchReviewRejected
@@ -1499,6 +1500,7 @@ class SummarySettings:
     max_agent_turns: int = 32
     max_task_tokens: int = 0
     network_policy: str = "ask"
+    allowed_commands: tuple[str, ...] = ()
 
     @classmethod
     def config_path(cls, project_root: Path) -> Path:
@@ -1578,6 +1580,9 @@ class SummarySettings:
         network_policy = NetworkPolicy.parse(
             os.getenv("SCIDEV_NETWORK_POLICY") or data.get("network_policy", cls.network_policy)
         ).value
+        allowed_commands = tuple(normalize_command_prefixes(
+            os.getenv("SCIDEV_ALLOWED_COMMANDS") or data.get("allowed_commands", list(cls.allowed_commands))
+        ))
         max_agent_turns = data.get("max_agent_turns", cls.max_agent_turns)
         if os.getenv("SCIDEV_MAX_AGENT_TURNS") is not None:
             max_agent_turns = os.getenv("SCIDEV_MAX_AGENT_TURNS", "").strip()
@@ -1596,7 +1601,7 @@ class SummarySettings:
                    bool(memory_enabled), memory_results, memory_context_chars,
                    acceptance_mode, acceptance_model, bool(multi_agent_enabled), multi_agent_model,
                    context_window_tokens, execution_mode, max_agent_turns, max_task_tokens,
-                   network_policy)
+                   network_policy, allowed_commands)
 
     def save(self, project_root: Path) -> None:
         path = self.config_path(project_root)
@@ -1621,6 +1626,7 @@ class SummarySettings:
                     "model_context_window_tokens": max(1024, min(1_048_576, int(self.context_window_tokens))),
                     "execution_mode": ExecutionMode.parse(self.execution_mode).value,
                     "network_policy": NetworkPolicy.parse(self.network_policy).value,
+                    "allowed_commands": list(self.allowed_commands),
                     "max_agent_turns": max(1, min(64, int(self.max_agent_turns))),
                     "max_task_tokens": max(0, min(10_000_000, int(self.max_task_tokens))),
                 },
@@ -2615,6 +2621,7 @@ class CodingToolbox:
         browser_approval: Callable[[str, str], bool] | None = None,
         execution_mode: str | ExecutionMode = ExecutionMode.WORKSPACE_WRITE,
         network_policy: str | NetworkPolicy | None = None,
+        allowed_commands: object = None,
     ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
@@ -2630,6 +2637,7 @@ class CodingToolbox:
                 network_policy if network_policy is not None else os.getenv("SCIDEV_NETWORK_POLICY"),
                 NetworkPolicy.ASK,
             ),
+            tuple(normalize_command_prefixes(allowed_commands)),
         )
         self.checkpoint: WorkspaceCheckpoint | None = None
         self._task_created_file_hashes: dict[str, str] = {}
@@ -2660,6 +2668,7 @@ class CodingToolbox:
         self.execution_policy = ExecutionPolicy(
             ExecutionMode.parse(mode),
             self.execution_policy.network_policy,
+            self.execution_policy.allowed_commands,
         )
 
     def set_network_policy(self, policy: str | NetworkPolicy) -> None:
@@ -2667,6 +2676,15 @@ class CodingToolbox:
         self.execution_policy = ExecutionPolicy(
             self.execution_policy.mode,
             NetworkPolicy.parse(policy, self.execution_policy.network_policy),
+            self.execution_policy.allowed_commands,
+        )
+
+    def set_allowed_commands(self, commands: object) -> None:
+        """Replace the explicit command allowlist without changing other policy."""
+        self.execution_policy = ExecutionPolicy(
+            self.execution_policy.mode,
+            self.execution_policy.network_policy,
+            tuple(normalize_command_prefixes(commands)),
         )
 
     def set_checkpoint(self, checkpoint: WorkspaceCheckpoint | None) -> None:
@@ -3738,7 +3756,7 @@ class CodingToolbox:
                 raise PermanentError("命令超时参数无效") from exc
         timeout = max(1, min(requested_timeout, 300))
         execution["timeout_seconds"] = timeout
-        auto_approved = self.execution_policy.auto_approves(assessment)
+        auto_approved = self.execution_policy.auto_approves(assessment, command)
         approved = False
         reason = "未配置用户审批回调"
         if auto_approved:
@@ -4417,6 +4435,7 @@ class CodingAgent:
             browser_approval=browser_approval,
             execution_mode=self.summary_settings.execution_mode,
             network_policy=self.summary_settings.network_policy,
+            allowed_commands=self.summary_settings.allowed_commands,
         )
         self.toolbox.cancel_event = self._cancel
         self.last_checkpoint: WorkspaceCheckpoint | None = None
@@ -4805,7 +4824,7 @@ class CodingAgent:
         if not command:
             return False, "", {}
         assessment = assess_command(command)
-        if not self.toolbox.execution_policy.auto_approves(assessment):
+        if not self.toolbox.execution_policy.auto_approves(assessment, command):
             return False, "", {}
         revision = int(session.get("verification_edit_revision", 0) or 0)
         auto_runs = session.get("verification_auto_runs")
@@ -6678,7 +6697,7 @@ class CodingAgent:
                             return False, verification_report
             if (
                 self.toolbox.command_approval is None
-                and not self.toolbox.execution_policy.auto_approves(assess_command("pytest -q"))
+                and not self.toolbox.execution_policy.auto_approves(assess_command("pytest -q"), "pytest -q")
             ):
                 # Without an approval channel and without a policy that can
                 # auto-approve verification, run_command can never execute.

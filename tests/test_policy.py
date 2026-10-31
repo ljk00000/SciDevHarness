@@ -13,6 +13,7 @@ from scidev_policy import (
     NetworkPolicy,
     assess_command,
     format_verification_diagnostics,
+    normalize_command_prefixes,
     parse_verification_diagnostics,
 )
 
@@ -33,6 +34,25 @@ class ExecutionPolicyTests(unittest.TestCase):
         )
         self.assertTrue(
             ExecutionPolicy(ExecutionMode.WORKSPACE_WRITE, NetworkPolicy.ALLOW).auto_approves(assessment)
+        )
+
+    def test_command_allowlist_is_exact_and_still_respects_network_deny(self) -> None:
+        prefixes = normalize_command_prefixes(
+            "pytest -q; python -m pytest tests/; ../escape; curl https://x; FOO=bar pytest"
+        )
+        self.assertEqual(prefixes, ["pytest -q", "python -m pytest tests/", "curl https://x"])
+        policy = ExecutionPolicy(
+            ExecutionMode.WORKSPACE_WRITE,
+            NetworkPolicy.DENY,
+            tuple(prefixes),
+        )
+        self.assertTrue(policy.auto_approves(assess_command("pytest -q"), "pytest -q"))
+        self.assertTrue(
+            policy.auto_approves(assess_command("python -m pytest tests/ -x"), "python -m pytest tests/ -x")
+        )
+        self.assertFalse(policy.allowlisted("pytest -q2"))
+        self.assertFalse(
+            policy.auto_approves(assess_command("curl https://example.com"), "curl https://example.com")
         )
 
     def test_network_deny_hard_blocks_a_command_before_approval(self) -> None:
@@ -225,6 +245,33 @@ class ToolboxExecutionPolicyTests(unittest.TestCase):
             self.assertIn("command_auto_approved", events)
             self.assertNotIn("command_approval_requested", events)
 
+    def test_workspace_write_auto_approves_an_explicit_allowlisted_command(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            approvals = []
+            toolbox = CodingToolbox(
+                root,
+                EventLedger(root),
+                command_approval=lambda command, _timeout: approvals.append(command) or False,
+                execution_mode=ExecutionMode.WORKSPACE_WRITE,
+                allowed_commands=("echo hi",),
+            )
+
+            class FakeProcess:
+                returncode = 0
+
+                def communicate(self, timeout=None):
+                    return b"hi\n", None
+
+            try:
+                with patch("scidev_core.subprocess.Popen", return_value=FakeProcess()):
+                    result = toolbox.run_command("echo hi")
+                self.assertIn("hi", result)
+                self.assertEqual(approvals, [])
+                self.assertEqual(toolbox.last_command_execution["approval_source"], "policy")
+            finally:
+                toolbox.close()
+
     def test_workspace_write_still_requires_approval_for_other_commands(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)
@@ -265,11 +312,13 @@ class ToolboxExecutionPolicyTests(unittest.TestCase):
                 enabled=False,
                 execution_mode=ExecutionMode.READ_ONLY.value,
                 network_policy=NetworkPolicy.DENY.value,
+                allowed_commands=("pytest -q",),
             )
             settings.save(root)
             loaded = SummarySettings.load(root)
             self.assertEqual(loaded.execution_mode, ExecutionMode.READ_ONLY.value)
             self.assertEqual(loaded.network_policy, NetworkPolicy.DENY.value)
+            self.assertEqual(loaded.allowed_commands, ("pytest -q",))
 
             with patch.dict("os.environ", {"SCIDEV_EXECUTION_MODE": "full-access"}):
                 self.assertEqual(SummarySettings.load(root).execution_mode, ExecutionMode.FULL_ACCESS.value)

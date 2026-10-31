@@ -97,7 +97,7 @@ from scidev_provider import (
     save as save_provider_config,
     test_connection as test_provider_connection,
 )
-from scidev_policy import ExecutionMode, NetworkPolicy
+from scidev_policy import ExecutionMode, NetworkPolicy, normalize_command_prefixes
 from scidev_preferences import AppearancePreferences
 from scidev_process import StreamingCommand
 from scidev_settings import SettingsPage
@@ -5234,6 +5234,17 @@ class ClientWindow(QMainWindow):
         self.network_policy_combo.currentIndexChanged.connect(lambda _index: self._persist_summary_settings())
         settings_layout.addWidget(self.network_policy_label, 18, 0)
         settings_layout.addWidget(self.network_policy_combo, 18, 1, 1, 3)
+        self.allowed_commands_label = QLabel("命令白名单")
+        self.allowed_commands_edit = QLineEdit()
+        self.allowed_commands_edit.setPlaceholderText("用 ; 分隔，例如 pytest -q; ruff check .")
+        self.allowed_commands_edit.setText("; ".join(self.summary_settings.allowed_commands))
+        self.allowed_commands_edit.setToolTip(
+            "精确命令前缀；匹配的命令在工作区可写/完全访问下自动执行，不再逐条询问。\n"
+            "仍受破坏性命令、网络策略和绝对路径/上级目录检查约束。"
+        )
+        self.allowed_commands_edit.editingFinished.connect(lambda: self._persist_summary_settings())
+        settings_layout.addWidget(self.allowed_commands_label, 19, 0)
+        settings_layout.addWidget(self.allowed_commands_edit, 19, 1, 1, 3)
         self.context_window_label = QLabel("模型上下文窗口")
         self.context_window_spin = QSpinBox()
         self.context_window_spin.setRange(1024, 1_048_576)
@@ -5247,9 +5258,9 @@ class ClientWindow(QMainWindow):
         )
         self.context_window_note.setObjectName("Hint")
         self.context_window_note.setWordWrap(True)
-        settings_layout.addWidget(self.context_window_label, 20, 0)
-        settings_layout.addWidget(self.context_window_spin, 20, 1)
-        settings_layout.addWidget(self.context_window_note, 21, 0, 1, 4)
+        settings_layout.addWidget(self.context_window_label, 21, 0)
+        settings_layout.addWidget(self.context_window_spin, 21, 1)
+        settings_layout.addWidget(self.context_window_note, 22, 0, 1, 4)
         self.summary_settings_scroll = QScrollArea()
         self.summary_settings_scroll.setObjectName("SettingsScroll")
         self.summary_settings_scroll.setWidgetResizable(True)
@@ -5818,6 +5829,9 @@ class ClientWindow(QMainWindow):
         self.summary_settings.network_policy = NetworkPolicy.parse(
             self.network_policy_combo.currentData()
         ).value
+        self.summary_settings.allowed_commands = tuple(
+            normalize_command_prefixes(self.allowed_commands_edit.text())
+        )
         self.summary_settings.max_agent_turns = self.max_agent_turns_spin.value()
         self.summary_settings.max_task_tokens = self.max_task_tokens_spin.value()
         self.summary_settings.acceptance_mode = SemanticAcceptance.mode(self.acceptance_mode_combo.currentData())
@@ -5830,6 +5844,7 @@ class ClientWindow(QMainWindow):
             self.agent.summary_settings = self.summary_settings
             self.agent.toolbox.set_execution_mode(self.summary_settings.execution_mode)
             self.agent.toolbox.set_network_policy(self.summary_settings.network_policy)
+            self.agent.toolbox.set_allowed_commands(self.summary_settings.allowed_commands)
             self._render_context_meter()
             state = self._summary_status_text()
             compact_state = (
