@@ -68,6 +68,14 @@ class CliTests(unittest.TestCase):
         self.assertFalse(agent.kwargs["prefer_environment_provider"])
         self.assertEqual(agent.payload["payload"]["prompt"], "fix it")
 
+    def test_invalid_image_is_rejected_before_starting_the_agent(self) -> None:
+        code, output, _root = self._run([
+            "exec", "--workspace", "{root}", "--task", "look",
+            "--image", "{root}/missing.png",
+        ])
+        self.assertEqual(code, 2)
+        self.assertIn("image rejected", output)
+
     def test_no_verify_disables_verification_requirement(self) -> None:
         code, _output, _root = self._run([
             "exec", "--workspace", "{root}", "--task", "explain", "--json", "--no-verify",

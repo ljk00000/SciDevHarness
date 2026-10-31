@@ -3088,6 +3088,24 @@ class SummarySettingsUiTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_image_attachment_chip_tracks_pending_images(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-image-ui-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                window._pending_images = [{"name": "pixel.png"}]
+                window._update_image_attachment_ui()
+                self.assertTrue(window.image_attachment_label.isVisible())
+                self.assertIn("pixel.png", window.image_attachment_label.text())
+                self.assertTrue(window.clear_image_button.isVisible())
+                window._clear_image_attachments()
+                self.assertEqual(window._pending_images, [])
+                self.assertFalse(window.image_attachment_label.isVisible())
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_lsp_diagnostics_are_rendered_in_problems_panel(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-lsp-ui-") as temp:
             root = Path(temp)

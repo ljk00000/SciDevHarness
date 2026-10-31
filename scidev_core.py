@@ -41,6 +41,7 @@ from scidev_context import ProjectContext
 from scidev_memory import ProjectMemory
 from scidev_mcp import MCPError, MCPManager
 from scidev_hooks import HookError, HookRunner
+from scidev_attachments import AttachmentError, image_content_parts, normalize_images
 from scidev_multi_agent import (
     DELEGATE_PARALLEL_RESEARCH_TOOL,
     DELEGATE_RESEARCH_TOOL,
@@ -5821,13 +5822,17 @@ class CodingAgent:
             raise PermanentError(error)
         messages.append({"role": "user", "content": content})
 
-    def _load_session(self, session_id: str, prompt: str) -> dict[str, Any]:
+    def _load_session(self, session_id: str, prompt: str, images: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         path = self._session_path(session_id)
         if path.exists():
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise PermanentError(f"无法恢复编码会话：{exc}") from exc
+        content: str | list[dict[str, Any]] = f"用户任务：\n{prompt}"
+        image_parts = image_content_parts(images or [])
+        if image_parts:
+            content = [{"type": "text", "text": content}, *image_parts]
         session = {
             "session_id": session_id,
             "prompt": prompt,
@@ -5841,9 +5846,11 @@ class CodingAgent:
             "git_result_sha": "",
             "messages": [
                 {"role": "system", "content": self._system_prompt_for_task(prompt)},
-                {"role": "user", "content": f"用户任务：\n{prompt}"},
+                {"role": "user", "content": content},
             ],
         }
+        if images:
+            session["attachments"] = images
         self.ledger.create_session(
             session_id,
             prompt,
@@ -5852,6 +5859,32 @@ class CodingAgent:
         self.ledger.append("coding_session_started", {"session_id": session_id, "prompt": prompt})
         self._save_session(session)
         return session
+
+    @staticmethod
+    def _attach_images_to_last_user_message(
+        messages: list[dict[str, Any]],
+        images: list[dict[str, Any]],
+    ) -> None:
+        parts = image_content_parts(images)
+        if not parts:
+            return
+        for message in reversed(messages):
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                message["content"] = [{"type": "text", "text": content}, *parts]
+            elif isinstance(content, list):
+                if not any(
+                    isinstance(part, dict) and part.get("type") == "image_url"
+                    for part in content
+                ):
+                    content.extend(parts)
+            return
+        messages.append({
+            "role": "user",
+            "content": [{"type": "text", "text": "用户附加了图片。"}, *parts],
+        })
 
     _CHANGE_REQUEST_VERBS = (
         "创建", "新建", "写入", "修改", "修复", "删除", "重命名", "实现",
@@ -6284,12 +6317,16 @@ class CodingAgent:
         session_id = payload["session_id"]
         prompt = payload["prompt"]
         try:
+            images = normalize_images(payload.get("images"))
+        except AttachmentError as exc:
+            raise PermanentError(str(exc)) from exc
+        try:
             requested_planning_mode = planning_mode(
                 payload.get("planning_mode", "auto")
             )
         except ValueError as exc:
             raise PermanentError(str(exc)) from exc
-        session = self._load_session(session_id, prompt)
+        session = self._load_session(session_id, prompt, images)
         self._recover_interrupted_tool_calls(session)
         retrying_acceptance = (
             session.get("status") == "acceptance_required"
@@ -6442,6 +6479,9 @@ class CodingAgent:
         except ValueError as exc:
             raise PermanentError(f"无法恢复任务计划：{exc}") from exc
         session["status"] = "active"
+        if images:
+            session["attachments"] = images
+            self._attach_images_to_last_user_message(session["messages"], images)
         session["updated_at"] = now_iso()
         self._save_session(session)
         focus_paths = payload.get("context_files", [])

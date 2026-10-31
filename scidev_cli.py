@@ -15,6 +15,7 @@ from typing import Any
 
 from scidev_core import CodingAgent, EventLedger, GitManager, PermanentError, SummarySettings, new_id
 from scidev_policy import ExecutionMode
+from scidev_attachments import AttachmentError, load_image_file
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -53,6 +54,12 @@ def _parser() -> argparse.ArgumentParser:
     exec_parser.add_argument("--api-base", default="", help="OpenAI-compatible base URL")
     exec_parser.add_argument("--api-key", default="", help="API key (prefer the environment variable)")
     exec_parser.add_argument("--model", default="", help="model id")
+    exec_parser.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        help="attach a PNG/JPEG/GIF/WebP image (repeatable, max 4)",
+    )
     exec_parser.add_argument(
         "--request-timeout",
         type=float,
@@ -174,12 +181,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"workspace is not a directory: {workspace}", file=sys.stderr)
         return 2
     _configure_provider_environment(args)
+    if len(args.image) > 4:
+        print("at most 4 images may be attached", file=sys.stderr)
+        return 2
+    images: list[dict[str, Any]] = []
+    for raw_path in args.image:
+        try:
+            images.append(load_image_file(Path(raw_path)))
+        except AttachmentError as exc:
+            print(f"image rejected: {exc}", file=sys.stderr)
+            return 2
     session_id = args.session_id.strip() or new_id("cli")
     payload = {
         "payload": {
             "session_id": session_id,
             "prompt": args.task,
             "planning_mode": "off",
+            "images": images,
         }
     }
     agent: CodingAgent | None = None

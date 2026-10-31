@@ -113,6 +113,7 @@ from scidev_icons import activity_icon
 from scidev_highlighting import LanguageHighlighter, PythonHighlighter
 from scidev_lsp import collect_diagnostics as collect_lsp_diagnostics
 from scidev_pty import PTYSession, PTYUnavailable
+from scidev_attachments import AttachmentError, load_image_file
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
 from scidev_verification import VerificationTracker
@@ -2745,6 +2746,7 @@ class ClientWindow(QMainWindow):
         self._context_usage_session_id = ""
         self.signals = AppSignals()
         self.current_session_id: str | None = None
+        self._pending_images: list[dict[str, Any]] = []
         self.active_task_id: str | None = None
         self._cancel_requested = False
         self._streaming_bubbles: dict[tuple[str, int], MessageBubble] = {}
@@ -5464,6 +5466,20 @@ class ClientWindow(QMainWindow):
         hint = QLabel("Ctrl + Enter 发送")
         hint.setObjectName("Hint")
         bottom.addWidget(hint)
+        self.attach_image_button = QPushButton("图片")
+        self.attach_image_button.setObjectName("Quiet")
+        self.attach_image_button.setToolTip("附加 PNG/JPEG/GIF/WebP，最多 4 张，每张 5 MB")
+        self.attach_image_button.clicked.connect(self._choose_image_attachment)
+        bottom.addWidget(self.attach_image_button)
+        self.image_attachment_label = QLabel()
+        self.image_attachment_label.setObjectName("Hint")
+        self.image_attachment_label.setVisible(False)
+        bottom.addWidget(self.image_attachment_label)
+        self.clear_image_button = QPushButton("清除")
+        self.clear_image_button.setObjectName("Quiet")
+        self.clear_image_button.setVisible(False)
+        self.clear_image_button.clicked.connect(self._clear_image_attachments)
+        bottom.addWidget(self.clear_image_button)
         bottom.addStretch(1)
         send = QPushButton("发送")
         send.setObjectName("Primary")
@@ -8731,6 +8747,40 @@ class ClientWindow(QMainWindow):
         if hasattr(self, "stop_task_button"):
             self.stop_task_button.setEnabled(False)
 
+    def _choose_image_attachment(self) -> None:
+        paths, _selected = QFileDialog.getOpenFileNames(
+            self,
+            "选择图片附件",
+            str(self.project_root),
+            "图片 (*.png *.jpg *.jpeg *.gif *.webp)",
+        )
+        added = 0
+        for raw_path in paths:
+            if len(self._pending_images) >= 4:
+                self._append_log("最多附加 4 张图片")
+                break
+            try:
+                self._pending_images.append(load_image_file(Path(raw_path)))
+                added += 1
+            except AttachmentError as exc:
+                self._append_log(f"图片未附加：{exc}")
+        if added:
+            self._update_image_attachment_ui()
+            self._append_log(f"已附加 {added} 张图片")
+
+    def _clear_image_attachments(self) -> None:
+        self._pending_images.clear()
+        self._update_image_attachment_ui()
+
+    def _update_image_attachment_ui(self) -> None:
+        count = len(self._pending_images)
+        self.image_attachment_label.setVisible(count > 0)
+        self.clear_image_button.setVisible(count > 0)
+        if count:
+            names = "、".join(str(item.get("name") or "image") for item in self._pending_images)
+            self.image_attachment_label.setText(f"图片 {count} 张：{names}")
+            self.image_attachment_label.setToolTip(names)
+
     def submit_chat(self) -> None:
         prompt = self.chat_input.toPlainText().strip()
         if not prompt:
@@ -8766,9 +8816,11 @@ class ClientWindow(QMainWindow):
                 "context_overrides": editor_overrides,
                 "context_readonly_paths": readonly_paths,
                 "planning_mode": self.planning_mode,
+                "images": list(self._pending_images),
             },
             max_attempts=6,
         )
+        self._clear_image_attachments()
         self._sync_stop_button()
         self.task_plan_panel.set_plan(None, run_state="running")
         self._set_state(self.chat_status, "排队中 · 等待 Agent", "StateWorking")
@@ -8789,6 +8841,7 @@ class ClientWindow(QMainWindow):
             return
         self.show_workspace()
         self.current_session_id = None
+        self._clear_image_attachments()
         self._execution_group_active = False
         self._execution_group_session_id = ""
         self._active_execution_group = None

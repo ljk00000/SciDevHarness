@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-11-01 02:40（Asia/Shanghai）· 图片任务附件
+- 新增 `scidev_attachments.py`：校验 PNG/JPEG/GIF/WebP 魔数、MIME、大小和数量；单张 5 MB、最多 4 张、总计 12 MB；文件名去路径。
+- Agent 会话创建时把图片作为 `image_url` 内容块加入用户消息；已有会话的新任务附加到最后一条用户消息；会话保存附件元数据。
+- 聊天输入区新增“图片/清除”；CLI `exec` 支持重复 `--image`；无效图片在启动 Agent 前拒绝。
+- 新增 5 项附件测试和 UI/CLI 测试；全量套件 643 项 0 失败、14 跳过、覆盖率 79%。
+
 ## 2026-11-01 02:00（Asia/Shanghai）· ConPTY 终端
 - 新增 `scidev_pty.py`：Windows 优先用 `pywinpty` 的 ConPTY 启动命令，后台线程读取输出，非阻塞 `drain`，支持 `write` 交互输入、`setwinsize` 和退出码。
 - 终端命令写入临时 `.cmd` 文件后再由 `cmd.exe /d /c` 执行，保留用户命令中的引号；输出清理 ANSI/OSC 和异常长空白；命令结束删除临时文件。
