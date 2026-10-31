@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-10-31 22:25（Asia/Shanghai）· 推理强度与能力探测
+- 模型接入新增“推理强度”：默认/none/low/medium/high/max，保存到 `.research/provider.json`，随主模型请求发送。
+- 新增“探测能力”：异步请求 `/models`，再发送一次极小的 `ping` 工具调用，显示工具调用支持、上下文长度、视觉元数据和模型数。
+- `ProviderConfig` 增加 `reasoning_effort`；Agent 保存配置时记录该值，并在编码请求中使用。
+- 验证：provider 测试新增能力探测；UI 测试覆盖推理强度保存和探测按钮；全量套件 616 项 0 失败、13 跳过、覆盖率 79%。
+
 ## 2026-10-31 21:30（Asia/Shanghai）· 会话恢复
 - Agent 设置新增“会话恢复”：列出最近会话，显示任务摘要/状态，可恢复选中会话。
 - 恢复后设置 `current_session_id`；下一条消息复用原 session id 和 messages 继续对话，不自动重放已完成的工具调用。

@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-31 22:25（Asia/Shanghai）· 推理强度与能力探测
+- `ProviderConfig` 新增 `reasoning_effort`（空/none/low/medium/high/max），保存到 `.research/provider.json`；Agent 编码请求把该值传给 provider。
+- Agent 设置模型接入新增“推理强度”下拉框；保存时校验并持久化。
+- 新增“探测能力”：`probe_capabilities` 请求 `/models`，再发送一次极小的 `ping` 工具调用；解析工具调用支持、上下文长度、视觉元数据和模型数，UI 异步显示。
+- 验证：provider 测试新增能力探测（工具/上下文/视觉）；UI 测试覆盖推理强度保存、探测按钮可见；全量套件 616 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：能力探测依赖 endpoint 报告并消耗少量 token；视觉元数据缺失时显示“未报告”，不代表不支持；未实现失败自动回退。
+
 ## 2026-10-31 21:30（Asia/Shanghai）· 会话恢复
 - Agent 设置新增“会话恢复”：从 `EventLedger.list_sessions` 读取最近会话，显示任务摘要和状态；恢复后设置 `current_session_id`，下一条消息复用原 session id/messages，不自动重放已完成的工具调用。
 - `EventLedger.list_sessions` 改为按 `updated_at` 倒序，最近会话优先。

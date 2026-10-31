@@ -87,8 +87,10 @@ from PySide6.QtQuickWidgets import QQuickWidget
 from scidev_planning import TaskPlan, planning_mode
 from scidev_provider import (
     ProviderConfigError,
+    format_capabilities,
     key_status as provider_key_status,
     load as load_provider_config,
+    probe_capabilities,
     save as save_provider_config,
     test_connection as test_provider_connection,
 )
@@ -765,13 +767,19 @@ class AppSignals(QObject):
 class ProviderCheckThread(QThread):
     checked = Signal(bool, str)
 
-    def __init__(self, config, parent: QObject | None = None):  # noqa: ANN001
+    def __init__(self, config, parent: QObject | None = None, *, probe: bool = False):  # noqa: ANN001
         super().__init__(parent)
         self.config = config
+        self.probe = bool(probe)
 
     def run(self) -> None:
         try:
-            ok, message = test_provider_connection(self.config, timeout=12.0)
+            if self.probe:
+                result = probe_capabilities(self.config, timeout=20.0)
+                ok = bool(result.get("models_count") or result.get("tools_supported"))
+                message = format_capabilities(result)
+            else:
+                ok, message = test_provider_connection(self.config, timeout=12.0)
         except Exception as exc:  # noqa: BLE001 - a connectivity probe must not crash the UI
             ok, message = False, f"{type(exc).__name__}: {exc}"
         self.checked.emit(ok, message)
@@ -5084,8 +5092,24 @@ class ClientWindow(QMainWindow):
         self.provider_model_edit = QLineEdit(provider.model if provider else "gpt-5")
         self.provider_model_edit.setPlaceholderText("gpt-5")
         settings_layout.addWidget(self.provider_model_edit, 24, 1, 1, 3)
+        self.provider_reasoning_label = QLabel("推理强度")
+        settings_layout.addWidget(self.provider_reasoning_label, 25, 0)
+        self.provider_reasoning_combo = QComboBox()
+        for label, value in (
+            ("默认", ""),
+            ("none", "none"),
+            ("low", "low"),
+            ("medium", "medium"),
+            ("high", "high"),
+            ("max", "max"),
+        ):
+            self.provider_reasoning_combo.addItem(label, value)
+        current_reasoning = provider.reasoning_effort if provider else ""
+        reasoning_index = self.provider_reasoning_combo.findData(current_reasoning)
+        self.provider_reasoning_combo.setCurrentIndex(max(0, reasoning_index))
+        settings_layout.addWidget(self.provider_reasoning_combo, 25, 1, 1, 3)
         self.provider_key_label = QLabel("API Key")
-        settings_layout.addWidget(self.provider_key_label, 25, 0)
+        settings_layout.addWidget(self.provider_key_label, 26, 0)
         self.provider_key_edit = QLineEdit()
         self.provider_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         key_state = provider_key_status(self.project_root)
@@ -5094,7 +5118,7 @@ class ClientWindow(QMainWindow):
             if key_state == "credential"
             else "输入 API Key（保存到 Windows 凭据管理器）"
         )
-        settings_layout.addWidget(self.provider_key_edit, 25, 1, 1, 3)
+        settings_layout.addWidget(self.provider_key_edit, 26, 1, 1, 3)
         self.provider_actions = QWidget()
         provider_actions_layout = QHBoxLayout(self.provider_actions)
         provider_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -5106,63 +5130,67 @@ class ClientWindow(QMainWindow):
         self.provider_test_button.setObjectName("Quiet")
         self.provider_test_button.clicked.connect(self._test_provider_connection)
         provider_actions_layout.addWidget(self.provider_test_button)
+        self.provider_probe_button = QPushButton("探测能力")
+        self.provider_probe_button.setObjectName("Quiet")
+        self.provider_probe_button.clicked.connect(self._probe_provider_capabilities)
+        provider_actions_layout.addWidget(self.provider_probe_button)
         provider_actions_layout.addStretch(1)
-        settings_layout.addWidget(self.provider_actions, 26, 0, 1, 4)
+        settings_layout.addWidget(self.provider_actions, 27, 0, 1, 4)
         self.provider_status_label = QLabel(
             "API Key 只写入 Windows 凭据管理器，不写入项目设置或审计日志。"
         )
         self.provider_status_label.setObjectName("Hint")
         self.provider_status_label.setWordWrap(True)
-        settings_layout.addWidget(self.provider_status_label, 27, 0, 1, 4)
+        settings_layout.addWidget(self.provider_status_label, 28, 0, 1, 4)
         self._provider_check_thread: ProviderCheckThread | None = None
 
         self.budget_title = QLabel("任务预算")
         self.budget_title.setObjectName("SectionTitle")
-        settings_layout.addWidget(self.budget_title, 28, 0, 1, 4)
+        settings_layout.addWidget(self.budget_title, 29, 0, 1, 4)
         self.max_agent_turns_label = QLabel("最多模型轮次")
-        settings_layout.addWidget(self.max_agent_turns_label, 29, 0)
+        settings_layout.addWidget(self.max_agent_turns_label, 30, 0)
         self.max_agent_turns_spin = QSpinBox()
         self.max_agent_turns_spin.setRange(1, 64)
         self.max_agent_turns_spin.setValue(self.summary_settings.max_agent_turns)
         self.max_agent_turns_spin.setSuffix(" 轮")
         self.max_agent_turns_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
-        settings_layout.addWidget(self.max_agent_turns_spin, 29, 1, 1, 3)
+        settings_layout.addWidget(self.max_agent_turns_spin, 30, 1, 1, 3)
         self.max_task_tokens_label = QLabel("最多 token")
-        settings_layout.addWidget(self.max_task_tokens_label, 30, 0)
+        settings_layout.addWidget(self.max_task_tokens_label, 31, 0)
         self.max_task_tokens_spin = QSpinBox()
         self.max_task_tokens_spin.setRange(0, 10_000_000)
         self.max_task_tokens_spin.setSingleStep(1000)
         self.max_task_tokens_spin.setValue(self.summary_settings.max_task_tokens)
         self.max_task_tokens_spin.setSpecialValueText("不限")
         self.max_task_tokens_spin.valueChanged.connect(lambda _value: self._persist_summary_settings())
-        settings_layout.addWidget(self.max_task_tokens_spin, 30, 1, 1, 3)
+        settings_layout.addWidget(self.max_task_tokens_spin, 31, 1, 1, 3)
         self.budget_note = QLabel(
             "轮次硬上限最多 64；token 预算只统计服务端实际返回的 usage，0 = 不限。"
         )
         self.budget_note.setObjectName("Hint")
         self.budget_note.setWordWrap(True)
-        settings_layout.addWidget(self.budget_note, 31, 0, 1, 4)
+        settings_layout.addWidget(self.budget_note, 32, 0, 1, 4)
 
         self.session_resume_title = QLabel("会话恢复")
         self.session_resume_title.setObjectName("SectionTitle")
-        settings_layout.addWidget(self.session_resume_title, 32, 0, 1, 4)
+        settings_layout.addWidget(self.session_resume_title, 33, 0, 1, 4)
         self.session_resume_label = QLabel("最近会话")
-        settings_layout.addWidget(self.session_resume_label, 33, 0)
+        settings_layout.addWidget(self.session_resume_label, 34, 0)
         self.session_resume_combo = QComboBox()
         self.session_resume_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.session_resume_combo.setMinimumContentsLength(8)
         self.session_resume_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        settings_layout.addWidget(self.session_resume_combo, 33, 1, 1, 3)
+        settings_layout.addWidget(self.session_resume_combo, 34, 1, 1, 3)
         self.session_resume_button = QPushButton("恢复选中会话")
         self.session_resume_button.setObjectName("Quiet")
         self.session_resume_button.clicked.connect(self._restore_selected_session)
-        settings_layout.addWidget(self.session_resume_button, 34, 0, 1, 4)
+        settings_layout.addWidget(self.session_resume_button, 35, 0, 1, 4)
         self.session_resume_note = QLabel(
             "恢复后下一条消息会继续该会话的历史上下文；不会自动重放已完成的工具调用。"
         )
         self.session_resume_note.setObjectName("Hint")
         self.session_resume_note.setWordWrap(True)
-        settings_layout.addWidget(self.session_resume_note, 35, 0, 1, 4)
+        settings_layout.addWidget(self.session_resume_note, 36, 0, 1, 4)
         self._refresh_session_list()
 
         self.task_plan_panel = TaskPlanPanel(
@@ -5408,6 +5436,7 @@ class ClientWindow(QMainWindow):
                 base_url=self.provider_base_edit.text(),
                 model=self.provider_model_edit.text(),
                 api_key=api_key,
+                reasoning_effort=str(self.provider_reasoning_combo.currentData() or ""),
             )
         except Exception as exc:  # noqa: BLE001 - show validation/credential failures in the page
             self.provider_status_label.setText(f"保存失败：{exc}")
@@ -5434,8 +5463,24 @@ class ClientWindow(QMainWindow):
         self._provider_check_thread = thread
         thread.start()
 
+    def _probe_provider_capabilities(self) -> None:
+        try:
+            config = load_provider_config(self.project_root, require_key=True)
+        except Exception as exc:  # noqa: BLE001 - report missing/invalid provider settings
+            self.provider_status_label.setText(f"无法探测：{exc}")
+            return
+        self.provider_test_button.setEnabled(False)
+        self.provider_probe_button.setEnabled(False)
+        self.provider_status_label.setText("正在探测模型能力（会发送一次极小的工具调用请求）…")
+        thread = ProviderCheckThread(config, self, probe=True)
+        thread.checked.connect(self._on_provider_check_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._provider_check_thread = thread
+        thread.start()
+
     def _on_provider_check_finished(self, ok: bool, message: str) -> None:
         self.provider_test_button.setEnabled(True)
+        self.provider_probe_button.setEnabled(True)
         prefix = "连接成功：" if ok else "连接失败："
         self.provider_status_label.setText(prefix + message)
 

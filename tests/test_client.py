@@ -3177,7 +3177,9 @@ class SummarySettingsUiTests(unittest.TestCase):
                 self.assertTrue(window.restore_checkpoint_button.isVisible())
                 self.assertTrue(window.provider_base_edit.isVisible())
                 self.assertTrue(window.provider_model_edit.isVisible())
+                self.assertTrue(window.provider_reasoning_combo.isVisible())
                 self.assertTrue(window.provider_save_button.isVisible())
+                self.assertTrue(window.provider_probe_button.isVisible())
                 self.assertTrue(window.max_agent_turns_spin.isVisible())
                 self.assertTrue(window.max_task_tokens_spin.isVisible())
 
@@ -3241,8 +3243,12 @@ class SummarySettingsUiTests(unittest.TestCase):
                     window.provider_base_edit.setText("https://example.test/v1")
                     window.provider_model_edit.setText("model-x")
                     window.provider_key_edit.setText("secret")
+                    window.provider_reasoning_combo.setCurrentIndex(
+                        window.provider_reasoning_combo.findData("high")
+                    )
                     window._save_provider_settings()
                 save_provider.assert_called_once()
+                self.assertEqual(save_provider.call_args.kwargs["reasoning_effort"], "high")
                 self.assertEqual(window.provider_key_edit.text(), "")
                 self.assertIn("已保存", window.provider_status_label.text())
 

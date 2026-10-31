@@ -4320,6 +4320,7 @@ class CodingAgent:
         self.single_user_prompt_only = single_user_prompt_only
         self.require_verification = bool(require_verification)
         self.prefer_environment_provider = bool(prefer_environment_provider)
+        self.provider_reasoning_effort = ""
         # Set by the desktop client when the window closes; checked between
         # model turns and tool calls so a closed workspace stops changing files.
         self._cancel = threading.Event()
@@ -6204,6 +6205,7 @@ class CodingAgent:
                 config = load_provider_config(self.project_root, require_key=True)
             except ProviderConfigError as exc:
                 raise PermanentError(str(exc)) from exc
+            self.provider_reasoning_effort = config.reasoning_effort
             return OpenAICompatibleProvider(
                 config.base_url,
                 config.api_key,
@@ -6214,6 +6216,7 @@ class CodingAgent:
                 presence_penalty=config.presence_penalty,
                 temperature=config.temperature,
             )
+        self.provider_reasoning_effort = (os.getenv("SCIDEV_REASONING_EFFORT") or "").strip()
         return OpenAICompatibleProvider.from_env()
 
     def _prepare_coding_run(
@@ -7407,7 +7410,10 @@ class CodingAgent:
                         {"session_id": session_id, "turn": turn, "text": text},
                     )
                     stream_options["should_cancel"] = self._cancel.is_set
-                    reasoning_effort = (os.getenv("SCIDEV_REASONING_EFFORT") or "").strip()
+                    reasoning_effort = (
+                        self.provider_reasoning_effort
+                        or (os.getenv("SCIDEV_REASONING_EFFORT") or "").strip()
+                    )
                     if reasoning_effort:
                         stream_options["reasoning_effort"] = reasoning_effort
                     if required_initial_plan or (

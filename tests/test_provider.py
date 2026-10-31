@@ -26,12 +26,14 @@ class ProviderSettingsTests(unittest.TestCase):
                     model="model-a",
                     api_key="secret-value",
                     request_timeout=30,
+                    reasoning_effort="high",
                 )
                 loaded = provider.load(root, require_key=True)
 
             self.assertEqual(config.base_url, "https://example.test/v1")
             self.assertEqual(loaded.model, "model-a")
             self.assertEqual(loaded.api_key, "secret-value")
+            self.assertEqual(loaded.reasoning_effort, "high")
             self.assertEqual(loaded.source, "saved")
             set_key.assert_called_once_with("secret-value", "default")
             raw = (root / ".research" / "provider.json").read_text(encoding="utf-8")
@@ -79,6 +81,13 @@ class ProviderSettingsTests(unittest.TestCase):
             provider.validate_config("https://example.test/v1", "m", request_timeout=1)
         with self.assertRaises(provider.ProviderConfigError):
             provider.validate_config("https://example.test/v1", "m", temperature=3)
+        with self.assertRaises(provider.ProviderConfigError):
+            provider.save(
+                Path(tempfile.gettempdir()),
+                base_url="https://example.test/v1",
+                model="m",
+                reasoning_effort="extreme",
+            )
 
     def test_key_status_distinguishes_credential_environment_and_missing(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
@@ -129,11 +138,48 @@ class ProviderSettingsTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("401", message)
 
+    def test_capability_probe_reports_tools_context_and_vision(self) -> None:
+        config = provider.ProviderConfig(
+            base_url="https://example.test/v1",
+            model="m",
+            api_key="secret",
+        )
+
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return self.payload
+
+        responses = [
+            Response(b'{"data":[{"id":"m","context_length":128000,"capabilities":["vision"]}]}'),
+            Response(b'{"choices":[{"message":{"tool_calls":[{"id":"call_1"}]}}]}'),
+        ]
+        with patch.object(provider.urllib_request, "urlopen", side_effect=responses):
+            result = provider.probe_capabilities(config)
+        self.assertTrue(result["tools_supported"])
+        self.assertEqual(result["context_length"], 128000)
+        self.assertTrue(result["vision"])
+        self.assertIn("工具调用：支持", provider.format_capabilities(result))
+        self.assertIn("128,000", provider.format_capabilities(result))
+
     def test_agent_builds_provider_from_saved_config(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)
             with patch.object(credentials, "secure_storage_available", return_value=False):
-                provider.save(root, base_url="https://example.test/v1", model="saved-model")
+                provider.save(
+                    root,
+                    base_url="https://example.test/v1",
+                    model="saved-model",
+                    reasoning_effort="high",
+                )
             agent = CodingAgent(
                 root, EventLedger(root), GitManager(root),
                 require_verification=False,
@@ -144,6 +190,7 @@ class ProviderSettingsTests(unittest.TestCase):
             self.assertEqual(built.base_url, "https://example.test/v1")
             self.assertEqual(built.model, "saved-model")
             self.assertEqual(built.api_key, "env-key")
+            self.assertEqual(agent.provider_reasoning_effort, "high")
 
 
 class CredentialManagerTests(unittest.TestCase):

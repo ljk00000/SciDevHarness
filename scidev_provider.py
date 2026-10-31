@@ -32,6 +32,7 @@ class ProviderConfig:
     text_tool_call_fallback: bool = False
     temperature: float = 0.2
     presence_penalty: float | None = None
+    reasoning_effort: str = ""
     source: str = "environment"
     credential_profile: str = "default"
 
@@ -99,6 +100,13 @@ def validate_config(
     return cleaned_url, cleaned_model, timeout, temp, penalty
 
 
+def _reasoning_effort(value: Any) -> str:
+    effort = str(value or "").strip().lower()
+    if effort not in {"", "none", "low", "medium", "high", "max"}:
+        raise ProviderConfigError("推理强度必须是空、none、low、medium、high 或 max")
+    return effort
+
+
 def config_path(project_root: Path) -> Path:
     return Path(project_root).resolve() / ".research" / CONFIG_NAME
 
@@ -129,6 +137,7 @@ def _env_values() -> dict[str, Any]:
         "text_tool_call_fallback": os.getenv("SCIDEV_TEXT_TOOL_CALL_FALLBACK", ""),
         "temperature": os.getenv("SCIDEV_TEMPERATURE", "0.2"),
         "presence_penalty": os.getenv("SCIDEV_PRESENCE_PENALTY", ""),
+        "reasoning_effort": os.getenv("SCIDEV_REASONING_EFFORT", ""),
         "api_key": os.getenv("SCIDEV_API_KEY") or os.getenv("OPENAI_API_KEY") or "",
     }
 
@@ -144,6 +153,7 @@ def load(project_root: Path, *, require_key: bool = False) -> ProviderConfig:
         "text_tool_call_fallback": saved.get("text_tool_call_fallback", False),
         "temperature": saved.get("temperature", 0.2),
         "presence_penalty": saved.get("presence_penalty"),
+        "reasoning_effort": saved.get("reasoning_effort", ""),
         "api_key": "",
     }
     base_url, model, timeout, temperature, penalty = validate_config(
@@ -176,6 +186,7 @@ def load(project_root: Path, *, require_key: bool = False) -> ProviderConfig:
         text_tool_call_fallback=_bool_value(values.get("text_tool_call_fallback"), False),
         temperature=temperature,
         presence_penalty=penalty,
+        reasoning_effort=_reasoning_effort(values.get("reasoning_effort")),
         source=source,
         credential_profile=str(saved.get("credential_profile") or "default"),
     )
@@ -190,6 +201,7 @@ def save(
     request_timeout: Any = 90,
     temperature: Any = 0.2,
     presence_penalty: Any = None,
+    reasoning_effort: str = "",
     streaming: bool = True,
     text_tool_call_fallback: bool = False,
     credential_profile: str = "default",
@@ -213,6 +225,7 @@ def save(
         "request_timeout": timeout,
         "temperature": temp,
         "presence_penalty": penalty,
+        "reasoning_effort": _reasoning_effort(reasoning_effort),
         "streaming": bool(streaming),
         "text_tool_call_fallback": bool(text_tool_call_fallback),
         "credential_profile": credential_profile,
@@ -236,22 +249,60 @@ def key_status(project_root: Path) -> str:
     return "missing"
 
 
+def _provider_request(
+    config: ProviderConfig,
+    path: str,
+    *,
+    body: dict[str, Any] | None = None,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    url = f"{config.base_url.rstrip('/')}/{path.lstrip('/')}"
+    headers = {
+        "Authorization": f"Bearer {config.api_key}",
+        "Accept": "application/json",
+        "User-Agent": "SciDevHarness/provider-check",
+    }
+    data = None
+    if body is not None:
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib_request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+    with urllib_request.urlopen(request, timeout=min(timeout, config.request_timeout)) as response:
+        raw = response.read(1_000_000)
+    return json.loads(raw.decode("utf-8")) if raw else {}
+
+
+def _context_length(models: Any, model: str) -> int | None:
+    if not isinstance(models, list):
+        return None
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("id") or "") != model:
+            continue
+        for key in ("context_length", "max_context_length", "context_window", "max_input_tokens"):
+            try:
+                value = int(item.get(key))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        meta = item.get("meta")
+        if isinstance(meta, dict):
+            try:
+                value = int(meta.get("n_ctx_train"))
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+    return None
+
+
 def test_connection(config: ProviderConfig, timeout: float = 15.0) -> tuple[bool, str]:
     if not config.api_key:
         return False, "未配置 API Key"
-    url = f"{config.base_url.rstrip('/')}/models"
-    request = urllib_request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {config.api_key}",
-            "Accept": "application/json",
-            "User-Agent": "SciDevHarness/provider-check",
-        },
-    )
     try:
-        with urllib_request.urlopen(request, timeout=min(timeout, config.request_timeout)) as response:
-            raw = response.read(1_000_000)
-            data = json.loads(raw.decode("utf-8")) if raw else {}
+        data = _provider_request(config, "models", timeout=timeout)
     except urllib_error.HTTPError as exc:
         return False, f"HTTP {exc.code}: {exc.reason}"
     except (urllib_error.URLError, TimeoutError, OSError) as exc:
@@ -261,3 +312,79 @@ def test_connection(config: ProviderConfig, timeout: float = 15.0) -> tuple[bool
     models = data.get("data") if isinstance(data, dict) else None
     count = len(models) if isinstance(models, list) else 0
     return True, f"连接成功，返回 {count} 个模型"
+
+
+def probe_capabilities(config: ProviderConfig, timeout: float = 20.0) -> dict[str, Any]:
+    """Probe model metadata and one tiny tool-call request.
+
+    The tool probe intentionally sends a minimal request with a harmless
+    ``ping`` schema. It costs a few tokens and only runs when the user asks.
+    """
+    if not config.api_key:
+        raise ProviderConfigError("未配置 API Key")
+    models_payload = _provider_request(config, "models", timeout=timeout)
+    models = models_payload.get("data") if isinstance(models_payload, dict) else None
+    result: dict[str, Any] = {
+        "tools_supported": False,
+        "context_length": _context_length(models, config.model),
+        "models_count": len(models) if isinstance(models, list) else 0,
+        "vision": None,
+        "detail": "",
+    }
+    if isinstance(models, list):
+        for item in models:
+            if isinstance(item, dict) and str(item.get("id") or "") == config.model:
+                capabilities = item.get("capabilities")
+                if isinstance(capabilities, list):
+                    lowered = {str(value).casefold() for value in capabilities}
+                    if lowered & {"vision", "image", "image_input"}:
+                        result["vision"] = True
+                break
+    body = {
+        "model": config.model,
+        "messages": [{
+            "role": "user",
+            "content": "Call the ping tool once with an empty object. Do not answer with text.",
+        }],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "ping",
+                "description": "Return a short acknowledgement.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }],
+        "tool_choice": "auto",
+        "max_tokens": 64,
+        "temperature": 0,
+        "stream": False,
+    }
+    try:
+        chat_payload = _provider_request(config, "chat/completions", body=body, timeout=timeout)
+        choices = chat_payload.get("choices") if isinstance(chat_payload, dict) else None
+        message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+        calls = message.get("tool_calls") if isinstance(message, dict) else None
+        result["tools_supported"] = bool(calls)
+    except urllib_error.HTTPError as exc:
+        result["detail"] = f"工具探测返回 HTTP {exc.code}: {exc.reason}"
+    except (urllib_error.URLError, TimeoutError, OSError) as exc:
+        result["detail"] = f"工具探测连接失败：{exc}"
+    except (ValueError, UnicodeError) as exc:
+        result["detail"] = f"工具探测响应不是有效 JSON：{exc}"
+    return result
+
+
+def format_capabilities(result: dict[str, Any]) -> str:
+    tools = "支持" if result.get("tools_supported") else "未检测到"
+    context = result.get("context_length")
+    context_text = f"{int(context):,}" if isinstance(context, int) and context > 0 else "未报告"
+    vision = result.get("vision")
+    vision_text = "支持" if vision is True else ("未报告" if vision is None else "不支持")
+    detail = str(result.get("detail") or "").strip()
+    message = (
+        f"工具调用：{tools}；上下文：{context_text}；视觉：{vision_text}；"
+        f"模型数：{int(result.get('models_count') or 0)}"
+    )
+    if detail:
+        message += f"；{detail}"
+    return message
