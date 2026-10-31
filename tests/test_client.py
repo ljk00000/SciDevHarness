@@ -2134,7 +2134,9 @@ class SymbolNavigationTests(unittest.TestCase):
                 self.app.processEvents()
 
     def test_f2_accepts_unicode_identifiers_and_rejects_python_keywords(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="scidev-unicode-symbol-rename-") as temp:
+        with tempfile.TemporaryDirectory(
+            prefix="scidev-unicode-symbol-rename-", ignore_cleanup_errors=True,
+        ) as temp:
             root = Path(temp)
             source = root / "module.py"
             original = "变量 = 1\nprint(变量)\n文本 = '变量'\n"
