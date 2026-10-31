@@ -47,6 +47,7 @@ from scidev_multi_agent import (
     validate_parallel_delegations,
 )
 from scidev_planning import PLAN_TOOL, TaskPlan, planning_mode
+from scidev_provider import ProviderConfigError, exists as provider_config_exists, load as load_provider_config
 from scidev_policy import (
     ExecutionMode,
     ExecutionPolicy,
@@ -4290,6 +4291,7 @@ class CodingAgent:
         require_verification: bool = True,
         patch_review: Callable[[dict[str, Any]], set[int] | None] | None = None,
         browser_approval: Callable[[str, str], bool] | None = None,
+        prefer_environment_provider: bool = False,
     ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
@@ -4299,6 +4301,7 @@ class CodingAgent:
         self.project_memory = ProjectMemory(self.project_root)
         self.single_user_prompt_only = single_user_prompt_only
         self.require_verification = bool(require_verification)
+        self.prefer_environment_provider = bool(prefer_environment_provider)
         # Set by the desktop client when the window closes; checked between
         # model turns and tool calls so a closed workspace stops changing files.
         self._cancel = threading.Event()
@@ -6168,6 +6171,24 @@ class CodingAgent:
             self.toolbox.set_checkpoint(None)
             self._task_active = False
 
+    def _build_provider(self) -> OpenAICompatibleProvider:
+        if not self.prefer_environment_provider and provider_config_exists(self.project_root):
+            try:
+                config = load_provider_config(self.project_root, require_key=True)
+            except ProviderConfigError as exc:
+                raise PermanentError(str(exc)) from exc
+            return OpenAICompatibleProvider(
+                config.base_url,
+                config.api_key,
+                config.model,
+                timeout=config.request_timeout,
+                text_tool_call_fallback=config.text_tool_call_fallback,
+                streaming=config.streaming,
+                presence_penalty=config.presence_penalty,
+                temperature=config.temperature,
+            )
+        return OpenAICompatibleProvider.from_env()
+
     def _prepare_coding_run(
         self,
         payload: dict[str, Any],
@@ -6349,7 +6370,7 @@ class CodingAgent:
                 "plan": saved_plan.to_record() if saved_plan else None,
             },
         )
-        provider = OpenAICompatibleProvider.from_env()
+        provider = self._build_provider()
         vision_model = (os.getenv("SCIDEV_VISION_MODEL") or "").strip()
         vision_reasoning_effort = (os.getenv("SCIDEV_VISION_REASONING_EFFORT") or "").strip()
         self.toolbox.visual_reviewer = (

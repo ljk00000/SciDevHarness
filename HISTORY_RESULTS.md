@@ -1,5 +1,13 @@
 # 历史与结果
 
+## 2026-10-31 20:10（Asia/Shanghai）· 应用内模型接入与密钥链
+- 新增 `scidev_credentials.py`：Windows Credential Manager 的 set/get/delete，目标 `SciDevHarness/provider/<profile>`；非 Windows 明确报告不可用，不落明文。
+- 新增 `scidev_provider.py`：`.research/provider.json` 只存 base URL、模型、超时、temperature、presence_penalty、流式/兼容开关和凭据 profile；API Key 从凭据管理器读取，环境变量作为后备；保存前校验 URL/模型/超时/temperature/penalty；异步测试 `/models`。
+- `CodingAgent._build_provider` 在保存配置存在时使用保存配置，否则保持 `from_env`；CLI 显式 provider 参数强制环境变量覆盖。
+- Agent 设置新增“模型接入”区（Base URL、模型、API Key、保存、测试连接），Key 输入框保存后清空。
+- 验证：新增 `tests/test_provider.py` 10 项（配置往返、不落明文 Key、环境变量、后备 Key、校验、状态、连接探测、Agent 构建、凭据管理器真实往返）；UI/CLI 测试补充；全量套件 609 项 0 失败、13 跳过、覆盖率 80%。
+- 边界：不是账号登录/OAuth；Key 对同一 Windows 用户下进程仍可读；只支持 OpenAI-compatible 接口；未做模型能力探测和多 provider 路由。
+
 ## 2026-10-31 19:15（Asia/Shanghai）· 任务检查点与回滚
 - 新增 `WorkspaceCheckpoint`：在 Agent 写文件前把原始字节保存到 `.research/checkpoints/<id>/files/`，manifest 记录路径、是否存在、备份文件；新文件记录为任务前不存在。
 - 集成到 `CodingToolbox` 的 write_file/replace_in_file/replace_many_in_file/apply_patch；`CodingAgent` 每次任务创建检查点，失败或取消后保留，最近 10 个自动清理。

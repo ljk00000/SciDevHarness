@@ -65,6 +65,7 @@ class CliTests(unittest.TestCase):
         agent = _FakeAgent.instances[-1]
         self.assertEqual(agent.kwargs["summary_settings"].execution_mode, "read-only")
         self.assertIsNone(agent.kwargs["command_approval"])
+        self.assertFalse(agent.kwargs["prefer_environment_provider"])
         self.assertEqual(agent.payload["payload"]["prompt"], "fix it")
 
     def test_no_verify_disables_verification_requirement(self) -> None:
@@ -126,6 +127,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(os.environ["SCIDEV_API_BASE"], "http://127.0.0.1:11434/v1")
         self.assertEqual(os.environ["SCIDEV_API_KEY"], "test-key")
         self.assertEqual(os.environ["SCIDEV_MODEL"], "test-model")
+        self.assertTrue(_FakeAgent.instances[-1].kwargs["prefer_environment_provider"])
 
     def test_parser_help_without_command(self) -> None:
         output = io.StringIO()

@@ -88,6 +88,8 @@ class ReleaseStagingTests(unittest.TestCase):
             "scidev_cli.py",
             "scidev_checkpoint.py",
             "scidev_core.py",
+            "scidev_credentials.py",
+            "scidev_provider.py",
             "scidev_process.py",
             "scidev_acceptance.py",
             "scidev_usage.py",

@@ -111,6 +111,8 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 
 使用 OpenAI-compatible Chat Completions 接口，并要求模型支持 function/tool calling：
 
+Agent 设置 →“模型接入”可直接填写 API Base URL、模型和 API Key。API Key 只写入 Windows 凭据管理器（目标 `SciDevHarness/provider/default`），不写入 `.research/provider.json` 或审计日志；保存后下一次任务生效。项目内只保存地址、模型、超时、temperature 等非敏感字段。没有保存配置时继续使用下面的环境变量；保存了配置时环境变量作为 API Key 的后备。CLI 显式传入 `--api-base`/`--api-key`/`--model` 时会强制走环境变量路径，便于临时覆盖。
+
 ```powershell
 $env:SCIDEV_API_BASE="https://your-endpoint/v1"
 $env:SCIDEV_API_KEY="your-key"

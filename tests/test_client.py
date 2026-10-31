@@ -3154,6 +3154,9 @@ class SummarySettingsUiTests(unittest.TestCase):
                 self.app.processEvents()
                 self.assertTrue(window.summary_settings_panel.isVisible())
                 self.assertTrue(window.restore_checkpoint_button.isVisible())
+                self.assertTrue(window.provider_base_edit.isVisible())
+                self.assertTrue(window.provider_model_edit.isVisible())
+                self.assertTrue(window.provider_save_button.isVisible())
 
                 interval = 7 if window.summary_interval_spin.value() != 7 else 8
                 window.summary_interval_spin.setValue(interval)
@@ -3204,6 +3207,16 @@ class SummarySettingsUiTests(unittest.TestCase):
                 self.assertEqual(
                     window.agent.toolbox.execution_policy.mode.value, "workspace-write",
                 )
+
+                saved_provider = Mock(base_url="https://example.test/v1", model="model-x")
+                with patch("scidev_client.save_provider_config", return_value=saved_provider) as save_provider:
+                    window.provider_base_edit.setText("https://example.test/v1")
+                    window.provider_model_edit.setText("model-x")
+                    window.provider_key_edit.setText("secret")
+                    window._save_provider_settings()
+                save_provider.assert_called_once()
+                self.assertEqual(window.provider_key_edit.text(), "")
+                self.assertIn("已保存", window.provider_status_label.text())
 
                 window.resize(820, 600)
                 self.app.processEvents()

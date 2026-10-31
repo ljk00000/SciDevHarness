@@ -38,6 +38,7 @@ from PySide6.QtCore import (
     QStringListModel,
     Qt,
     QSortFilterProxyModel,
+    QThread,
     QTimer,
     QUrl,
     Signal,
@@ -84,6 +85,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtQuickWidgets import QQuickWidget
 
 from scidev_planning import TaskPlan, planning_mode
+from scidev_provider import (
+    ProviderConfigError,
+    key_status as provider_key_status,
+    load as load_provider_config,
+    save as save_provider_config,
+    test_connection as test_provider_connection,
+)
 from scidev_policy import ExecutionMode
 from scidev_preferences import AppearancePreferences
 from scidev_process import StreamingCommand
@@ -751,6 +759,22 @@ class AppSignals(QObject):
     browser_approval_requested = Signal(object)
     patch_review_requested = Signal(object)
     git_status_ready = Signal(object)
+    provider_check_finished = Signal(bool, str)
+
+
+class ProviderCheckThread(QThread):
+    checked = Signal(bool, str)
+
+    def __init__(self, config, parent: QObject | None = None):  # noqa: ANN001
+        super().__init__(parent)
+        self.config = config
+
+    def run(self) -> None:
+        try:
+            ok, message = test_provider_connection(self.config, timeout=12.0)
+        except Exception as exc:  # noqa: BLE001 - a connectivity probe must not crash the UI
+            ok, message = False, f"{type(exc).__name__}: {exc}"
+        self.checked.emit(ok, message)
 
 
 class ElidedLabel(QLabel):
@@ -2536,6 +2560,10 @@ class ClientWindow(QMainWindow):
         self.git = GitManager(self.project_root)
         self.toolbox = CodingToolbox(self.project_root, self.ledger)
         self.summary_settings = SummarySettings.load(self.project_root)
+        try:
+            self.provider_config = load_provider_config(self.project_root)
+        except (ProviderConfigError, OSError, ValueError):
+            self.provider_config = None
         self.model_usage = ModelRequestUsage.empty()
         self._context_usage_estimated_tokens = 0
         self._context_usage_actual_tokens: int | None = None
@@ -5042,6 +5070,52 @@ class ClientWindow(QMainWindow):
         self.restore_checkpoint_button.clicked.connect(self._restore_last_checkpoint)
         settings_layout.addWidget(self.restore_checkpoint_button, 21, 0, 1, 4)
 
+        provider = self.provider_config
+        self.provider_title = QLabel("模型接入")
+        self.provider_title.setObjectName("SectionTitle")
+        settings_layout.addWidget(self.provider_title, 22, 0, 1, 4)
+        self.provider_base_label = QLabel("API Base URL")
+        settings_layout.addWidget(self.provider_base_label, 23, 0)
+        self.provider_base_edit = QLineEdit(provider.base_url if provider else "https://api.openai.com/v1")
+        self.provider_base_edit.setPlaceholderText("https://api.openai.com/v1")
+        settings_layout.addWidget(self.provider_base_edit, 23, 1, 1, 3)
+        self.provider_model_label = QLabel("模型")
+        settings_layout.addWidget(self.provider_model_label, 24, 0)
+        self.provider_model_edit = QLineEdit(provider.model if provider else "gpt-5")
+        self.provider_model_edit.setPlaceholderText("gpt-5")
+        settings_layout.addWidget(self.provider_model_edit, 24, 1, 1, 3)
+        self.provider_key_label = QLabel("API Key")
+        settings_layout.addWidget(self.provider_key_label, 25, 0)
+        self.provider_key_edit = QLineEdit()
+        self.provider_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        key_state = provider_key_status(self.project_root)
+        self.provider_key_edit.setPlaceholderText(
+            "已保存在 Windows 凭据管理器；留空表示不修改"
+            if key_state == "credential"
+            else "输入 API Key（保存到 Windows 凭据管理器）"
+        )
+        settings_layout.addWidget(self.provider_key_edit, 25, 1, 1, 3)
+        self.provider_actions = QWidget()
+        provider_actions_layout = QHBoxLayout(self.provider_actions)
+        provider_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.provider_save_button = QPushButton("保存模型配置")
+        self.provider_save_button.setObjectName("Primary")
+        self.provider_save_button.clicked.connect(self._save_provider_settings)
+        provider_actions_layout.addWidget(self.provider_save_button)
+        self.provider_test_button = QPushButton("测试连接")
+        self.provider_test_button.setObjectName("Quiet")
+        self.provider_test_button.clicked.connect(self._test_provider_connection)
+        provider_actions_layout.addWidget(self.provider_test_button)
+        provider_actions_layout.addStretch(1)
+        settings_layout.addWidget(self.provider_actions, 26, 0, 1, 4)
+        self.provider_status_label = QLabel(
+            "API Key 只写入 Windows 凭据管理器，不写入项目设置或审计日志。"
+        )
+        self.provider_status_label.setObjectName("Hint")
+        self.provider_status_label.setWordWrap(True)
+        settings_layout.addWidget(self.provider_status_label, 27, 0, 1, 4)
+        self._provider_check_thread: ProviderCheckThread | None = None
+
         self.task_plan_panel = TaskPlanPanel(
             self.planning_mode,
             self.ui_settings,
@@ -5276,6 +5350,45 @@ class ClientWindow(QMainWindow):
             self._close_settings()
             return
         self._open_agent_settings_from_preferences()
+
+    def _save_provider_settings(self) -> None:
+        api_key = self.provider_key_edit.text().strip() or None
+        try:
+            config = save_provider_config(
+                self.project_root,
+                base_url=self.provider_base_edit.text(),
+                model=self.provider_model_edit.text(),
+                api_key=api_key,
+            )
+        except Exception as exc:  # noqa: BLE001 - show validation/credential failures in the page
+            self.provider_status_label.setText(f"保存失败：{exc}")
+            return
+        self.provider_config = config
+        self.provider_key_edit.clear()
+        self.provider_key_edit.setPlaceholderText("已保存；留空表示不修改")
+        self.provider_status_label.setText(
+            f"已保存：{config.base_url} · {config.model}。"
+            "API Key 已写入 Windows 凭据管理器；下一次任务生效。"
+        )
+
+    def _test_provider_connection(self) -> None:
+        try:
+            config = load_provider_config(self.project_root, require_key=True)
+        except Exception as exc:  # noqa: BLE001 - report missing/invalid provider settings
+            self.provider_status_label.setText(f"无法测试：{exc}")
+            return
+        self.provider_test_button.setEnabled(False)
+        self.provider_status_label.setText("正在测试连接…")
+        thread = ProviderCheckThread(config, self)
+        thread.checked.connect(self._on_provider_check_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._provider_check_thread = thread
+        thread.start()
+
+    def _on_provider_check_finished(self, ok: bool, message: str) -> None:
+        self.provider_test_button.setEnabled(True)
+        prefix = "连接成功：" if ok else "连接失败："
+        self.provider_status_label.setText(prefix + message)
 
     def _restore_last_checkpoint(self) -> None:
         agent = getattr(self, "agent", None)

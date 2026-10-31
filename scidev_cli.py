@@ -155,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
             summary_settings=settings,
             require_verification=not args.no_verify,
             command_approval=None,
+            prefer_environment_provider=bool(args.api_base or args.api_key or args.model),
         )
         result = _execute(agent, payload)
         if not result.get("session_id"):

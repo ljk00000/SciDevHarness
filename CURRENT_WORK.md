@@ -1,5 +1,12 @@
 # 当前工作
 
+## 2026-10-31 20:10（Asia/Shanghai）· 应用内模型接入与密钥链
+- Agent 设置新增“模型接入”：API Base URL、模型、API Key、保存与异步测试连接。
+- 新增 `scidev_credentials.py`：Windows Credential Manager（CredWriteW/CredReadW/CredDeleteW），Key 不进入项目 JSON 或审计日志。
+- 新增 `scidev_provider.py`：非敏感配置 `.research/provider.json`、环境变量后备、配置校验、`/models` 连通性测试。
+- `CodingAgent._build_provider` 优先读取保存配置；CLI 显式 `--api-base`/`--api-key`/`--model` 强制走环境变量路径。
+- 验证：新增 `tests/test_provider.py` 10 项（含真实凭据管理器往返）；UI/CLI 测试补充；全量套件 609 项 0 失败、13 跳过、覆盖率 80%。
+
 ## 2026-10-31 19:15（Asia/Shanghai）· 任务检查点与回滚
 - 新增 `scidev_checkpoint.py`：Agent 写文件前保存原始字节到 `.research/checkpoints/<id>/`；新文件记录为“任务前不存在”。
 - `CodingToolbox` 在 write_file/replace/apply_patch 写入口自动 capture；`CodingAgent` 每次任务创建检查点，失败/取消后保留，最近 10 个自动清理。
