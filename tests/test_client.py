@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import ctypes
+import gc
 import json
 import os
 import subprocess
@@ -2013,6 +2014,15 @@ class SymbolNavigationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        # Closed windows can leave Qt watchers/editors for the next test in
+        # this process; release them before the interpreter tears down Qt.
+        for _ in range(2):
+            cls.app.processEvents()
+            QApplication.sendPostedEvents()
+            gc.collect()
 
     def test_shift_f12_shows_case_sensitive_python_references(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-symbol-references-") as temp:

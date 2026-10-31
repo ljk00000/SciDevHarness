@@ -19,6 +19,7 @@ from scidev_attachments import AttachmentError, load_image_file
 from scidev_eval import EvalError, EvalRunner
 from scidev_worktree import WorktreeError, WorktreeManager
 from scidev_pr import PullRequestError, build_plan, create_pull_request
+from scidev_migrations import migrate_project
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -109,6 +110,14 @@ def _parser() -> argparse.ArgumentParser:
     pr_parser.add_argument("--allow-network", action="store_true", help="override a deny network policy")
     pr_parser.add_argument("--dry-run", action="store_true", help="print the plan without pushing")
     pr_parser.add_argument("--json", action="store_true", help="emit one JSON object")
+    migrate_parser = subparsers.add_parser(
+        "migrate",
+        help="migrate project settings, sessions and event DB to the current schema",
+        description="Idempotent, backup-first migration of .research state.",
+    )
+    migrate_parser.add_argument("--workspace", required=True, help="project directory")
+    migrate_parser.add_argument("--dry-run", action="store_true", help="report changes without writing")
+    migrate_parser.add_argument("--json", action="store_true", help="emit one JSON object")
     return parser
 
 
@@ -235,6 +244,26 @@ def _eval_command(args: argparse.Namespace) -> int:
     return 0 if report["failed"] == 0 else 1
 
 
+def _migrate_command(args: argparse.Namespace) -> int:
+    workspace = Path(args.workspace).expanduser().resolve()
+    if not workspace.is_dir():
+        print(f"workspace is not a directory: {workspace}", file=sys.stderr)
+        return 2
+    report = migrate_project(workspace, dry_run=args.dry_run)
+    payload = report.as_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(f"schema: {report.schema_version} (dry-run={report.dry_run})")
+        print(f"changed: {len(report.changed)}")
+        for path in report.changed:
+            print(f"  {path}")
+        print(f"backups: {len(report.backups)}")
+        for error in report.errors:
+            print(f"error: {error}", file=sys.stderr)
+    return 0 if not report.errors else 1
+
+
 def _pr_command(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     if not workspace.is_dir():
@@ -290,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
         return _eval_command(args)
     if args.command == "pr":
         return _pr_command(args)
+    if args.command == "migrate":
+        return _migrate_command(args)
     if args.command != "exec":
         parser.print_help()
         return 2

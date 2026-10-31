@@ -65,6 +65,23 @@ python scidev_cli.py pr --workspace .research/worktrees/login --title "登录页
 - 项目网络策略为 `deny` 时需要显式 `--allow-network`
 - 不在 `main`/`master` 上创建 PR，避免直接把主分支当 head
 
+### 版本迁移
+
+```powershell
+python scidev_cli.py migrate --workspace . --dry-run --json
+python scidev_cli.py migrate --workspace .
+```
+
+迁移 `.research/settings.json`、会话 JSON 和事件 SQLite 的 schema：
+
+- 写入 `schema_version`
+- 规范 execution/network/allowlist 设置
+- 补全会话的 `messages`/`attachments`/`status`
+- 设置事件库 `PRAGMA user_version`
+- 修改前备份到 `.research/backups`，每个文件最多保留 5 份
+- 幂等；第二次运行不产生改动
+- 坏 JSON 只报告错误，不覆盖原文件
+
 列出最近会话，再用同一个 `--session-id` 继续该会话的上下文：
 
 ```powershell

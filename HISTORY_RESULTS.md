@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-11-01 08:00（Asia/Shanghai）· 设置/会话 schema 迁移
+- 新增 `scidev_migrations.py`：把 `.research/settings.json`、`sessions/*.json`、`events.db` 迁移到 schema v2。
+- 规范化 execution/network/allowed_commands/turn/token 字段；补全会话 `messages`/`attachments`/`status`；设置 SQLite `user_version`。
+- 修改前备份到 `.research/backups`，每个文件最多 5 份；dry-run 不写盘；坏 JSON 只报错不覆盖；幂等。
+- CLI 新增 `migrate --workspace ... [--dry-run] [--json]`；新增 `tests/test_migrations.py` 2 项；全量套件 664 项 0 失败、14 跳过、覆盖率 79%。
+- 边界：只迁移已知字段，不迁移旧二进制/数据库结构；备份保留 5 份；尚未在 GUI 启动时自动执行。
+
 ## 2026-11-01 07:45（Asia/Shanghai）· GitHub PR
 - 新增 `scidev_pr.py`：解析 GitHub `origin`（SSH/HTTPS），确认仓库根和功能分支，默认 base 为 `origin/HEAD` 或 `main`，拒绝从 `main`/`master` 直接建 PR。
 - CLI 新增 `pr`：`--base/--title/--body/--draft/--dry-run/--json/--allow-network`；先 push 当前分支，再调用已登录的 `gh pr create`。
