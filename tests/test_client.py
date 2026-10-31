@@ -3047,6 +3047,27 @@ class SummarySettingsUiTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_restoring_a_session_sets_the_next_prompt_context(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-session-resume-") as temp:
+            root = Path(temp)
+            window = ClientWindow(root)
+            try:
+                window.ledger.create_session(
+                    "session_resume_test",
+                    "修复登录接口",
+                    str(root / ".research" / "sessions" / "session_resume_test.json"),
+                )
+                window._refresh_session_list()
+                index = window.session_resume_combo.findData("session_resume_test")
+                self.assertGreaterEqual(index, 0)
+                window.session_resume_combo.setCurrentIndex(index)
+                window._restore_selected_session()
+                self.assertEqual(window.current_session_id, "session_resume_test")
+                self.assertIn("已恢复会话", window.chat_status.text())
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_no_changes_event_is_visible_in_chat(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-no-changes-ui-") as temp:
             window = ClientWindow(Path(temp))

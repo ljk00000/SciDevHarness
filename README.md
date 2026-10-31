@@ -48,9 +48,17 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 
 `--execution-mode` 支持 `read-only`、`manual`、`workspace-write`、`full-access`；`--no-verify` 关闭提交前验证门；`--restore-on-failure` 在任务失败时自动回滚本次任务写过的文件；`--api-base`/`--api-key`/`--model` 可临时覆盖环境变量。成功退出码为 0，任务失败为 1，参数错误为 2，取消为 130。CLI 与桌面端共用 Agent、执行策略、Git 自动提交和 `.research` 审计记录。
 
+列出最近会话，再用同一个 `--session-id` 继续该会话的上下文：
+
+```powershell
+.\.venv\Scripts\python.exe scidev_cli.py sessions --workspace "D:\Projects\my-project" --json
+.\.venv\Scripts\python.exe scidev_cli.py exec --workspace "D:\Projects\my-project" --session-id <session_id> --task "继续修复剩余失败测试"
+```
+
 客户端包含：
 
 - 编码会话：在右侧 Agent 对话栏输入任务，Agent 自主读取文件、写代码、修复错误
+- 会话恢复：Agent 设置列出最近会话，选择并恢复后，下一条消息继续该会话的历史上下文；不会自动重放已完成的工具调用
 - 界面方案：Studio、Paper、Focus 三套可切换并记住选择的外观/布局配置
 - 工作台：响应式分栏、按主题记住拖动宽度；Agent 设置独立滚动，欢迎页不再伪装成代码，打开文件后自动隐藏欢迎标签
 - 设置页：左下角齿轮 / `Ctrl+,` / `> settings` 打开；分类与关键词搜索、只看已修改、单项及整体恢复默认。主题、强调色、字体/字重/字号、缩放、密度、侧栏尺寸和编辑器显示即时应用并保存到本机；Agent 配置仍复用项目设置。

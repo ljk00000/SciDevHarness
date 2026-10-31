@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-10-31 21:30（Asia/Shanghai）· 会话恢复
+- Agent 设置新增“会话恢复”：从 `EventLedger.list_sessions` 读取最近会话，显示任务摘要和状态；恢复后设置 `current_session_id`，下一条消息复用原 session id/messages，不自动重放已完成的工具调用。
+- `EventLedger.list_sessions` 改为按 `updated_at` 倒序，最近会话优先。
+- CLI 新增 `sessions` 子命令（`--workspace`、`--json`、`--limit`）；`exec --session-id` 可继续指定会话。
+- 验证：新增 UI 恢复测试和 CLI sessions 测试；全量套件 615 项 0 失败、13 跳过、覆盖率 80%。
+- 边界：恢复会话上下文，不做完整 UI 消息回放；不自动恢复中断的命令/进程；会话 JSON 损坏时拒绝恢复。
+
 ## 2026-10-31 20:55（Asia/Shanghai）· 任务轮次与 token 预算
 - `SummarySettings` 新增 `max_agent_turns`（1–64，默认 32）和 `max_task_tokens`（0 = 不限）；支持 JSON 持久化和 `SCIDEV_MAX_AGENT_TURNS` / `SCIDEV_MAX_TASK_TOKENS` 覆盖。
 - Agent 循环使用配置轮次上限，仍受内置 32 轮硬上限；新任务/重试按 `task_id`/prompt 维护 `task_usage_baseline`，token 预算只统计本任务新增的服务端 usage。

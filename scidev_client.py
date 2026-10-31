@@ -5143,6 +5143,28 @@ class ClientWindow(QMainWindow):
         self.budget_note.setWordWrap(True)
         settings_layout.addWidget(self.budget_note, 31, 0, 1, 4)
 
+        self.session_resume_title = QLabel("会话恢复")
+        self.session_resume_title.setObjectName("SectionTitle")
+        settings_layout.addWidget(self.session_resume_title, 32, 0, 1, 4)
+        self.session_resume_label = QLabel("最近会话")
+        settings_layout.addWidget(self.session_resume_label, 33, 0)
+        self.session_resume_combo = QComboBox()
+        self.session_resume_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.session_resume_combo.setMinimumContentsLength(8)
+        self.session_resume_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        settings_layout.addWidget(self.session_resume_combo, 33, 1, 1, 3)
+        self.session_resume_button = QPushButton("恢复选中会话")
+        self.session_resume_button.setObjectName("Quiet")
+        self.session_resume_button.clicked.connect(self._restore_selected_session)
+        settings_layout.addWidget(self.session_resume_button, 34, 0, 1, 4)
+        self.session_resume_note = QLabel(
+            "恢复后下一条消息会继续该会话的历史上下文；不会自动重放已完成的工具调用。"
+        )
+        self.session_resume_note.setObjectName("Hint")
+        self.session_resume_note.setWordWrap(True)
+        settings_layout.addWidget(self.session_resume_note, 35, 0, 1, 4)
+        self._refresh_session_list()
+
         self.task_plan_panel = TaskPlanPanel(
             self.planning_mode,
             self.ui_settings,
@@ -5416,6 +5438,68 @@ class ClientWindow(QMainWindow):
         self.provider_test_button.setEnabled(True)
         prefix = "连接成功：" if ok else "连接失败："
         self.provider_status_label.setText(prefix + message)
+
+    def _refresh_session_list(self) -> None:
+        combo = getattr(self, "session_resume_combo", None)
+        button = getattr(self, "session_resume_button", None)
+        if combo is None:
+            return
+        selected = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        try:
+            sessions = self.ledger.list_sessions(limit=30)
+        except Exception:  # noqa: BLE001 - a session list must not break settings
+            sessions = []
+        for item in sessions:
+            session_id = str(item.get("session_id") or "").strip()
+            if not session_id:
+                continue
+            prompt = " ".join(str(item.get("prompt") or "").split())[:60]
+            status = str(item.get("status") or "")
+            combo.addItem(f"{prompt or session_id} · {status}", session_id)
+        if selected:
+            index = combo.findData(selected)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+        combo.setEnabled(combo.count() > 0)
+        if button is not None:
+            button.setEnabled(combo.count() > 0)
+        combo.blockSignals(False)
+
+    def _restore_selected_session(self) -> None:
+        combo = getattr(self, "session_resume_combo", None)
+        if combo is None or not combo.currentData():
+            self._append_log("没有可恢复的历史会话")
+            return
+        session_id = str(combo.currentData())
+        try:
+            sessions = self.ledger.list_sessions(limit=200)
+        except Exception as exc:  # noqa: BLE001 - report a failed session lookup
+            self._append_log(f"读取历史会话失败：{exc}")
+            return
+        record = next(
+            (item for item in sessions if str(item.get("session_id") or "") == session_id),
+            None,
+        )
+        if record is None:
+            self._append_log("历史会话不存在或已被清理")
+            self._refresh_session_list()
+            return
+        self.current_session_id = session_id
+        self._execution_group_active = False
+        self._execution_group_session_id = ""
+        self._active_execution_group = None
+        prompt = " ".join(str(record.get("prompt") or "").split())[:160]
+        self._append_chat(
+            "系统",
+            f"已恢复会话 {session_id}（状态 {record.get('status') or 'unknown'}）。"
+            f"下一条消息会继续该会话上下文。\n上次任务：{prompt}",
+            "meta",
+        )
+        self._set_state(self.chat_status, "就绪 · 已恢复会话", "StateReady")
+        self._set_state(self.workspace_state, "就绪", "StateReady")
+        self.chat_input.setFocus()
 
     def _restore_last_checkpoint(self) -> None:
         agent = getattr(self, "agent", None)
@@ -5723,6 +5807,7 @@ class ClientWindow(QMainWindow):
         self.refresh_git_status()
         self.refresh_task_history()
         self._refresh_development_tree()
+        self._refresh_session_list()
 
     @staticmethod
     def _set_state(widget: QLabel, text: str, name: str) -> None:

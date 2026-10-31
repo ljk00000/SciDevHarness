@@ -136,6 +136,26 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("exec", output.getvalue())
 
+    def test_sessions_json_lists_recent_sessions(self) -> None:
+        from scidev_core import EventLedger
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            EventLedger(root).create_session(
+                "session_cli_resume",
+                "修复登录",
+                str(root / ".research" / "sessions" / "session_cli_resume.json"),
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = scidev_cli.main([
+                    "sessions", "--workspace", str(root), "--json", "--limit", "5",
+                ])
+            self.assertEqual(code, 0)
+            records = json.loads(output.getvalue())
+            self.assertEqual(records[0]["session_id"], "session_cli_resume")
+            self.assertEqual(records[0]["prompt"], "修复登录")
+
 
 if __name__ == "__main__":
     unittest.main()

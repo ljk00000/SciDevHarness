@@ -811,7 +811,7 @@ class EventLedger:
 
     def list_sessions(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._db() as conn:
-            rows = conn.execute("SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            rows = conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC, created_at DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
 

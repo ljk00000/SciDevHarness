@@ -59,6 +59,15 @@ def _parser() -> argparse.ArgumentParser:
         default=0.0,
         help="provider request timeout in seconds (default: environment value)",
     )
+
+    sessions_parser = subparsers.add_parser(
+        "sessions",
+        help="list recent coding sessions",
+        description="List recent coding sessions so one can be resumed with --session-id.",
+    )
+    sessions_parser.add_argument("--workspace", required=True, help="project directory")
+    sessions_parser.add_argument("--json", action="store_true", help="emit a JSON array")
+    sessions_parser.add_argument("--limit", type=int, default=20, help="maximum sessions (default: 20)")
     return parser
 
 
@@ -123,9 +132,40 @@ def _failure_payload(error: str, args: argparse.Namespace, session_id: str, agen
     return payload
 
 
+def _sessions_command(args: argparse.Namespace) -> int:
+    workspace = Path(args.workspace).expanduser().resolve()
+    if not workspace.is_dir():
+        print(f"workspace is not a directory: {workspace}", file=sys.stderr)
+        return 2
+    limit = max(1, min(100, int(args.limit)))
+    try:
+        records = EventLedger(workspace).list_sessions(limit=limit)
+    except Exception as exc:  # noqa: BLE001 - CLI boundary must report, not traceback
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    payload = [
+        {
+            "session_id": str(item.get("session_id") or ""),
+            "status": str(item.get("status") or ""),
+            "prompt": str(item.get("prompt") or ""),
+            "updated_at": str(item.get("updated_at") or ""),
+        }
+        for item in records
+    ]
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        for item in payload:
+            prompt = " ".join(item["prompt"].split())[:80]
+            print(f"{item['session_id']}\t{item['status']}\t{item['updated_at']}\t{prompt}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.command == "sessions":
+        return _sessions_command(args)
     if args.command != "exec":
         parser.print_help()
         return 2
