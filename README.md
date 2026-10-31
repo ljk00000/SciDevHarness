@@ -62,7 +62,7 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 - 界面方案：Studio、Paper、Focus 三套可切换并记住选择的外观/布局配置
 - 工作台：响应式分栏、按主题记住拖动宽度；Agent 设置独立滚动，欢迎页不再伪装成代码，打开文件后自动隐藏欢迎标签
 - 设置页：左下角齿轮 / `Ctrl+,` / `> settings` 打开；分类与关键词搜索、只看已修改、单项及整体恢复默认。主题、强调色、字体/字重/字号、缩放、密度、侧栏尺寸和编辑器显示即时应用并保存到本机；Agent 配置仍复用项目设置。
-- 代码高亮：按文件类型区分 Python、HTML（含 CSS/JavaScript）、JS/TS、CSS、JSON、Markdown 和 YAML；属于词法高亮。Python 文件会异步启动本机 Ruff LSP，把 diagnostics 放进“问题”面板，双击可跳到行列；这是按文件的一次性诊断，不是完整 IDE 语言服务（无补全/跨文件跳转/重命名/调试器）。
+- 代码高亮：按文件类型区分 Python、HTML（含 CSS/JavaScript）、JS/TS、CSS、JSON、Markdown 和 YAML；属于词法高亮。Python 文件会异步启动本机 Ruff LSP，把 diagnostics 放进“问题”面板，双击可跳到行列；`Ctrl+Space` 用本机 Jedi 显示补全，`Ctrl+F12` 跳转到工作区内定义。这是按文件的一次性诊断和本地 Python 智能，不是完整 IDE 语言服务（无重命名/跨文件引用/调试器）。
 - 文件打开：资源树或编辑器标签右键 HTML →“在浏览器中打开”，无需服务器即可查看本地网页；其他文件可“使用默认程序打开”。双击仍进入编辑器；外部程序读取磁盘版本，未保存修改请先 `Ctrl+S`。
 - 版本树：专注画布、可折叠节点详情和 Agent 面板，2.5D 卡片与动态连线；尝试分支可自由拖动并记住位置
 - 工具调用：`search_code`、`get_project_context`、`list_files`、`read_file`、`write_file`、`replace_in_file`、`update_plan`、`run_command`、`git_diff`；执行策略可选只读、手动审批、工作区可写或完全访问

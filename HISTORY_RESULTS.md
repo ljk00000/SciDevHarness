@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-01 03:40（Asia/Shanghai）· Python 补全与跳转
+- 新增 `scidev_intel.py`：基于本机 Jedi 的 Python 补全/定义查找，限制候选数量，定义只返回工作区内路径；缓存目录放 `.research/jedi-cache`，不可写时回退临时目录。
+- 编辑器新增 `Ctrl+Space` 补全弹窗和 `F12` 跳转；补全只对 `.py` 文件生效，插入当前候选；无候选/不可用时写入日志。
+- 依赖新增 `jedi>=0.19`；新增 `tests/test_intel.py` 2 项和 UI 补全测试；全量套件 649 项 0 失败、14 跳过、覆盖率 79%。退出时显式终止 Jedi 编译子进程，避免解释器退出崩溃。
+- 边界：Jedi 只支持 Python；补全同步执行，首次可能较慢；不是常驻 LSP；无重命名/引用/调用层级/调试器。
+
 ## 2026-11-01 03:10（Asia/Shanghai）· 真实仓库 eval
 - 新增 `scidev_eval.py`：读取 suite JSON，把 workspace 模板复制到临时目录，应用 setup 文件，运行 CLI/自定义 runner，再用确定性 check 命令判定成功。
 - 报告包含 total/passed/failed、pass rate、平均轮数、总/平均 token、耗时、相对上次 pass rate 的 regression；可指定稳定 `--output` 比较。

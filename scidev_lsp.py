@@ -249,6 +249,9 @@ class LSPClient:
                     process.wait(timeout=1.0)
                 except subprocess.TimeoutExpired:
                     process.kill()
+            reader = self._reader
+            if reader is not None and reader.is_alive():
+                reader.join(timeout=1.0)
             for stream in (process.stdin, process.stdout):
                 try:
                     if stream is not None:
@@ -256,6 +259,7 @@ class LSPClient:
                 except OSError:
                     pass
             self.process = None
+            self._reader = None
 
 
 def collect_diagnostics(

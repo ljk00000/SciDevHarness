@@ -59,6 +59,8 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QLayout,
     QMainWindow,
     QMenu,
@@ -114,6 +116,7 @@ from scidev_highlighting import LanguageHighlighter, PythonHighlighter
 from scidev_lsp import collect_diagnostics as collect_lsp_diagnostics
 from scidev_pty import PTYSession, PTYUnavailable
 from scidev_attachments import AttachmentError, load_image_file
+from scidev_intel import IntelUnavailable, PythonIntel
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
 from scidev_verification import VerificationTracker
@@ -6838,7 +6841,101 @@ class ClientWindow(QMainWindow):
             lambda target=editor: self._update_cursor_status(target)
         )
         editor.textChanged.connect(self._schedule_code_intel)
+        completion_shortcut = QShortcut(QKeySequence("Ctrl+Space"), editor)
+        completion_shortcut.activated.connect(lambda target=editor: self._show_completions(target))
+        definition_shortcut = QShortcut(QKeySequence("Ctrl+F12"), editor)
+        definition_shortcut.activated.connect(lambda target=editor: self._goto_definition(target))
         editor.installEventFilter(self)
+
+    def _completion_candidates(self, editor: CodeEditor) -> list:
+        path = self._editor_paths.get(editor)
+        if path is None or path.suffix.lower() != ".py":
+            return []
+        cursor = editor.textCursor()
+        try:
+            intel = PythonIntel(self.project_root)
+            return intel.complete(
+                editor.toPlainText(),
+                cursor.blockNumber() + 1,
+                cursor.positionInBlock(),
+                path,
+            )
+        except (IntelUnavailable, OSError, ValueError) as exc:
+            self._append_log(f"补全不可用：{exc}")
+            return []
+
+    def _show_completions(self, editor: CodeEditor) -> None:
+        completions = self._completion_candidates(editor)
+        if not completions:
+            return
+        popup = getattr(self, "_completion_popup", None)
+        if popup is not None:
+            popup.close()
+        popup = QListWidget(self)
+        popup.setWindowFlags(Qt.WindowType.Popup)
+        popup.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        popup.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        for completion in completions:
+            label = completion.name
+            if completion.kind:
+                label += f"  · {completion.kind}"
+            if completion.signature:
+                label += f"  {completion.signature}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, completion.complete)
+            item.setToolTip(completion.description or completion.signature)
+            popup.addItem(item)
+        popup.itemActivated.connect(lambda item: self._insert_completion(editor, item))
+        popup.itemClicked.connect(lambda item: self._insert_completion(editor, item))
+        rect = editor.cursorRect()
+        popup.move(editor.viewport().mapToGlobal(rect.bottomLeft()))
+        popup.resize(360, min(260, 28 * min(len(completions), 8) + 8))
+        self._completion_popup = popup
+        popup.show()
+        popup.setFocus()
+        popup.setCurrentRow(0)
+
+    def _insert_completion(self, editor: CodeEditor, item: QListWidgetItem) -> None:
+        popup = getattr(self, "_completion_popup", None)
+        if popup is not None:
+            popup.close()
+            self._completion_popup = None
+        completion = str(item.data(Qt.ItemDataRole.UserRole) or item.text().split()[0])
+        cursor = editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        cursor.insertText(completion)
+        editor.setTextCursor(cursor)
+
+    def _goto_definition(self, editor: CodeEditor) -> None:
+        path = self._editor_paths.get(editor)
+        if path is None or path.suffix.lower() != ".py":
+            return
+        cursor = editor.textCursor()
+        try:
+            intel = PythonIntel(self.project_root)
+            definitions = intel.goto(
+                editor.toPlainText(),
+                cursor.blockNumber() + 1,
+                cursor.positionInBlock(),
+                path,
+            )
+        except (IntelUnavailable, OSError, ValueError) as exc:
+            self._append_log(f"跳转不可用：{exc}")
+            return
+        if not definitions:
+            self._append_log("当前位置没有找到定义")
+            return
+        definition = definitions[0]
+        try:
+            definition.path.relative_to(self.project_root)
+        except ValueError:
+            self._append_log("定义位于工作区之外，未跳转")
+            return
+        self._open_file(definition.path, preview=False)
+        target = self._active_editor()
+        if target is not None:
+            self._move_editor_to_location(target, definition.line, definition.column)
+            target.setFocus()
 
     def _update_cursor_status(self, editor: CodeEditor | None = None) -> None:
         if not hasattr(self, "status_position"):
@@ -9035,7 +9132,7 @@ class ClientWindow(QMainWindow):
         # A running task must not keep editing or auto-committing after the
         # workspace window is gone.
         self.agent.request_cancel()
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             with self._git_status_lock:
                 if not self._git_status_busy and not self._git_status_dirty:
@@ -9051,6 +9148,11 @@ class ClientWindow(QMainWindow):
         self._terminal_timer.stop()
         self.worker.stop()
         self.agent.toolbox.close()
+        PythonIntel.shutdown()
+        completion_popup = getattr(self, "_completion_popup", None)
+        if completion_popup is not None:
+            completion_popup.close()
+            self._completion_popup = None
         lsp_thread = getattr(self, "_lsp_thread", None)
         if lsp_thread is not None and lsp_thread.isRunning():
             lsp_thread.wait(12000)

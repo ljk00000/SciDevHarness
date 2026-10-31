@@ -32,7 +32,7 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )  # noqa: E402
-from PySide6.QtGui import QFontInfo, QIcon, QWheelEvent  # noqa: E402
+from PySide6.QtGui import QFontInfo, QIcon, QTextCursor, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
 
@@ -3084,6 +3084,28 @@ class SummarySettingsUiTests(unittest.TestCase):
                     })
                 append.assert_called_once()
                 self.assertEqual(append.call_args.args[1], "无需参数")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_python_completion_candidates_include_jedi_members(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-intel-ui-") as temp:
+            root = Path(temp)
+            path = root / "intel.py"
+            path.write_text("import os\nos.pa", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.show()
+                self.app.processEvents()
+                window._open_file(path, preview=False)
+                editor = window._active_editor()
+                self.assertIsNotNone(editor)
+                cursor = editor.textCursor()
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+                editor.setTextCursor(cursor)
+                candidates = window._completion_candidates(editor)
+                self.assertGreater(len(candidates), 0)
+                self.assertIn("path", {item.name for item in candidates})
             finally:
                 window.close()
                 self.app.processEvents()

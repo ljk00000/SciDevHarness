@@ -112,7 +112,7 @@ class DesktopGitBackgroundTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_real_version_tree_and_save_route_every_git_check_through_hidden_launch(self):
-        with tempfile.TemporaryDirectory(prefix="scidev-hidden-git-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="scidev-hidden-git-", ignore_cleanup_errors=True) as temporary:
             base = Path(temporary)
             root = base / "workspace"
             root.mkdir()
