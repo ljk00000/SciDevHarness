@@ -2983,7 +2983,9 @@ class UnsavedCloseTests(unittest.TestCase):
             editor.document().setModified(True)
 
     def test_close_saves_all_dirty_files_once_across_editor_groups(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="scidev-close-save-all-") as temp:
+        with tempfile.TemporaryDirectory(
+            prefix="scidev-close-save-all-", ignore_cleanup_errors=True,
+        ) as temp:
             root = Path(temp)
             window, first_path, first_editor = self._open_window_with_file(root)
             second_path = root / "second.py"

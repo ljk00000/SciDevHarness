@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-01 06:35（Asia/Shanghai）· Worktree 隔离
+- 新增 `scidev_worktree.py`：校验 Git 仓库根，按任务 id 创建 `.research/worktrees/<id>` 与 `scidev/agent-<id>` 分支，返回路径/分支/base SHA；支持列表、dirty 检查、force 删除和 prune。
+- CLI `exec` 新增 `--worktree`、`--worktree-id`；Agent 在隔离 worktree 内运行，JSON/人类输出包含 worktree 路径和分支。
+- 新增 3 项 worktree 测试和 1 项 CLI 隔离运行测试；全量套件 657 项 0 失败、14 跳过、覆盖率 79%。
+
 ## 2026-11-01 05:55（Asia/Shanghai）· 命令白名单
 - `scidev_policy.py` 新增命令前缀规范化与白名单：`;`/换行分隔，最多 50 条，每条最长 200 字符，拒绝 shell 组合、命令替换、环境变量赋值、绝对路径和上级目录。
 - 白名单命中采用精确前缀/空格边界匹配，仅在工作区可写/完全访问下自动批准；手动审批仍逐条确认，网络 deny 优先于白名单。

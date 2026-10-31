@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -67,6 +68,32 @@ class CliTests(unittest.TestCase):
         self.assertIsNone(agent.kwargs["command_approval"])
         self.assertFalse(agent.kwargs["prefer_environment_provider"])
         self.assertEqual(agent.payload["payload"]["prompt"], "fix it")
+
+    def test_exec_can_run_in_an_isolated_worktree(self) -> None:
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory(prefix="scidev-cli-worktree-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "CLI Test"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "cli@example.invalid"], cwd=root, check=True)
+            (root / "base.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=root, check=True)
+            _FakeAgent.instances.clear()
+            with (
+                patch("scidev_cli.CodingAgent", _FakeAgent),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(output),
+            ):
+                code = scidev_cli.main([
+                    "exec", "--workspace", str(root), "--task", "fix it",
+                    "--worktree", "--worktree-id", "review", "--json",
+                ])
+            self.assertEqual(code, 0, output.getvalue())
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["worktree_branch"], "scidev/agent-review")
+            self.assertTrue(Path(payload["worktree"]).is_dir())
+            self.assertEqual(_FakeAgent.instances[-1].root, Path(payload["worktree"]).resolve())
 
     def test_eval_rejects_a_missing_suite(self) -> None:
         code, output, _root = self._run(["eval", "--suite", "{root}/missing.json"])

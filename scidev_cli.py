@@ -17,6 +17,7 @@ from scidev_core import CodingAgent, EventLedger, GitManager, PermanentError, Su
 from scidev_policy import ExecutionMode
 from scidev_attachments import AttachmentError, load_image_file
 from scidev_eval import EvalError, EvalRunner
+from scidev_worktree import WorktreeError, WorktreeManager
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -60,6 +61,16 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="attach a PNG/JPEG/GIF/WebP image (repeatable, max 4)",
+    )
+    exec_parser.add_argument(
+        "--worktree",
+        action="store_true",
+        help="run in an isolated git worktree branch instead of the current checkout",
+    )
+    exec_parser.add_argument(
+        "--worktree-id",
+        default="",
+        help="stable worktree id (default: session id)",
     )
     exec_parser.add_argument(
         "--request-timeout",
@@ -120,6 +131,8 @@ def _print_human(payload: dict[str, Any]) -> None:
     print()
     print(f"session: {payload.get('session_id') or '-'}")
     print(f"git: {payload.get('git_result_sha') or 'no commit'}")
+    if payload.get("worktree"):
+        print(f"worktree: {payload['worktree']} ({payload.get('worktree_branch', '')})")
     verification = payload.get("verification_report") or {}
     if verification:
         print(f"verification: {verification.get('status', 'unknown')}")
@@ -234,6 +247,26 @@ def main(argv: list[str] | None = None) -> int:
             print(f"image rejected: {exc}", file=sys.stderr)
             return 2
     session_id = args.session_id.strip() or new_id("cli")
+    workspace_effective = workspace
+    worktree_meta: dict[str, Any] = {}
+    if args.worktree:
+        try:
+            worktree = WorktreeManager(workspace).create(args.worktree_id or session_id)
+        except WorktreeError as exc:
+            print(f"worktree rejected: {exc}", file=sys.stderr)
+            return 2
+        workspace_effective = worktree.path
+        worktree_meta = {
+            "workspace": str(worktree.path),
+            "worktree": str(worktree.path),
+            "worktree_branch": worktree.branch,
+            "worktree_base_sha": worktree.base_sha,
+        }
+
+    def with_worktree(data: dict[str, Any]) -> dict[str, Any]:
+        data.update(worktree_meta)
+        return data
+
     payload = {
         "payload": {
             "session_id": session_id,
@@ -244,12 +277,12 @@ def main(argv: list[str] | None = None) -> int:
     }
     agent: CodingAgent | None = None
     try:
-        settings = SummarySettings.load(workspace)
+        settings = SummarySettings.load(workspace_effective)
         settings.execution_mode = ExecutionMode.parse(args.execution_mode).value
-        ledger = EventLedger(workspace)
-        git = GitManager(workspace)
+        ledger = EventLedger(workspace_effective)
+        git = GitManager(workspace_effective)
         agent = CodingAgent(
-            workspace,
+            workspace_effective,
             ledger,
             git,
             summary_settings=settings,
@@ -257,25 +290,25 @@ def main(argv: list[str] | None = None) -> int:
             command_approval=None,
             prefer_environment_provider=bool(args.api_base or args.api_key or args.model),
         )
-        result = _execute(agent, payload)
+        result = with_worktree(_execute(agent, payload))
         if not result.get("session_id"):
             result["session_id"] = session_id
     except PermanentError as exc:
-        payload = _failure_payload(str(exc), args, session_id, agent)
+        payload = with_worktree(_failure_payload(str(exc), args, session_id, agent))
         if args.json:
             print(json.dumps(payload, ensure_ascii=False))
         else:
             print(payload["error"], file=sys.stderr)
         return 1
     except Exception as exc:  # noqa: BLE001 - CLI boundary must report, not traceback
-        payload = _failure_payload(f"{type(exc).__name__}: {exc}", args, session_id, agent)
+        payload = with_worktree(_failure_payload(f"{type(exc).__name__}: {exc}", args, session_id, agent))
         if args.json:
             print(json.dumps(payload, ensure_ascii=False))
         else:
             print(payload["error"], file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        payload = _failure_payload("cancelled", args, session_id, agent)
+        payload = with_worktree(_failure_payload("cancelled", args, session_id, agent))
         if args.json:
             print(json.dumps(payload, ensure_ascii=False))
         else:
