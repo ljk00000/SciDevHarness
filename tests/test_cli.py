@@ -31,6 +31,9 @@ class _FakeAgent:
             "verification_report": {"status": "passed"},
         }
 
+    def restore_last_checkpoint(self):
+        return {"restored": ["app.py"], "deleted": [], "failed": {}}
+
 
 class CliTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -83,6 +86,25 @@ class CliTests(unittest.TestCase):
         payload = json.loads(output)
         self.assertFalse(payload["success"])
         self.assertIn("provider unavailable", payload["error"])
+
+    def test_restore_on_failure_reports_checkpoint_result(self) -> None:
+        class FailingAgent(_FakeAgent):
+            def run(self, payload):
+                raise PermanentError("task failed")
+
+        code, output, _root = self._run([
+            "exec", "--workspace", "{root}", "--task", "fix", "--json", "--restore-on-failure",
+        ], fake=FailingAgent)
+        self.assertEqual(code, 1)
+        payload = json.loads(output)
+        self.assertEqual(payload["checkpoint_restore"]["restored"], ["app.py"])
+
+    def test_restore_on_failure_is_not_called_for_success(self) -> None:
+        code, output, _root = self._run([
+            "exec", "--workspace", "{root}", "--task", "fix", "--json", "--restore-on-failure",
+        ])
+        self.assertEqual(code, 0)
+        self.assertNotIn("checkpoint_restore", json.loads(output))
 
     def test_missing_workspace_is_a_usage_error(self) -> None:
         output = io.StringIO()

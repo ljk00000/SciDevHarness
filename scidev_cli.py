@@ -44,6 +44,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not require a passing current-code check before completion",
     )
+    exec_parser.add_argument(
+        "--restore-on-failure",
+        action="store_true",
+        help="restore files changed by the task when it fails",
+    )
     exec_parser.add_argument("--session-id", default="", help="stable session id for retries")
     exec_parser.add_argument("--api-base", default="", help="OpenAI-compatible base URL")
     exec_parser.add_argument("--api-key", default="", help="API key (prefer the environment variable)")
@@ -79,6 +84,7 @@ def _result_payload(result: dict[str, Any]) -> dict[str, Any]:
         "git_result_sha": result.get("git_result_sha", ""),
         "verification_report": result.get("verification_report"),
         "no_changes_detected": bool(result.get("no_changes_detected")),
+        "checkpoint_id": result.get("checkpoint_id", ""),
     }
 
 
@@ -94,6 +100,27 @@ def _print_human(payload: dict[str, Any]) -> None:
 
 def _execute(agent: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return _result_payload(agent.run(payload))
+
+
+def _restore_if_requested(agent: Any, args: argparse.Namespace) -> dict[str, Any] | None:
+    if not args.restore_on_failure or agent is None:
+        return None
+    try:
+        return agent.restore_last_checkpoint()
+    except Exception as exc:  # noqa: BLE001 - report restore failure with the task failure
+        return {"failed": {"checkpoint": f"{type(exc).__name__}: {exc}"}}
+
+
+def _failure_payload(error: str, args: argparse.Namespace, session_id: str, agent: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "success": False,
+        "session_id": session_id,
+        "error": error,
+    }
+    restore = _restore_if_requested(agent, args)
+    if restore is not None:
+        payload["checkpoint_restore"] = restore
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -115,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
             "planning_mode": "off",
         }
     }
+    agent: CodingAgent | None = None
     try:
         settings = SummarySettings.load(workspace)
         settings.execution_mode = ExecutionMode.parse(args.execution_mode).value
@@ -132,34 +160,23 @@ def main(argv: list[str] | None = None) -> int:
         if not result.get("session_id"):
             result["session_id"] = session_id
     except PermanentError as exc:
-        error = str(exc)
+        payload = _failure_payload(str(exc), args, session_id, agent)
         if args.json:
-            print(json.dumps({
-                "success": False,
-                "session_id": session_id,
-                "error": error,
-            }, ensure_ascii=False))
+            print(json.dumps(payload, ensure_ascii=False))
         else:
-            print(error, file=sys.stderr)
+            print(payload["error"], file=sys.stderr)
         return 1
     except Exception as exc:  # noqa: BLE001 - CLI boundary must report, not traceback
-        error = f"{type(exc).__name__}: {exc}"
+        payload = _failure_payload(f"{type(exc).__name__}: {exc}", args, session_id, agent)
         if args.json:
-            print(json.dumps({
-                "success": False,
-                "session_id": session_id,
-                "error": error,
-            }, ensure_ascii=False))
+            print(json.dumps(payload, ensure_ascii=False))
         else:
-            print(error, file=sys.stderr)
+            print(payload["error"], file=sys.stderr)
         return 1
     except KeyboardInterrupt:
+        payload = _failure_payload("cancelled", args, session_id, agent)
         if args.json:
-            print(json.dumps({
-                "success": False,
-                "session_id": session_id,
-                "error": "cancelled",
-            }, ensure_ascii=False))
+            print(json.dumps(payload, ensure_ascii=False))
         else:
             print("cancelled", file=sys.stderr)
         return 130

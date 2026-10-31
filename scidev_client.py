@@ -5034,6 +5034,13 @@ class ClientWindow(QMainWindow):
         provider_note.setWordWrap(True)
         provider_note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         settings_layout.addWidget(provider_note, 20, 0, 1, 4)
+        self.restore_checkpoint_button = QPushButton("回滚上次任务改动的文件")
+        self.restore_checkpoint_button.setObjectName("Quiet")
+        self.restore_checkpoint_button.setToolTip(
+            "只恢复 Agent 上次任务实际写过的文件；任务开始前不存在的文件会被删除。"
+        )
+        self.restore_checkpoint_button.clicked.connect(self._restore_last_checkpoint)
+        settings_layout.addWidget(self.restore_checkpoint_button, 21, 0, 1, 4)
 
         self.task_plan_panel = TaskPlanPanel(
             self.planning_mode,
@@ -5269,6 +5276,37 @@ class ClientWindow(QMainWindow):
             self._close_settings()
             return
         self._open_agent_settings_from_preferences()
+
+    def _restore_last_checkpoint(self) -> None:
+        agent = getattr(self, "agent", None)
+        if agent is None or getattr(agent, "last_checkpoint", None) is None:
+            self._append_log("没有可回滚的任务检查点")
+            return
+        answer = QMessageBox.question(
+            self,
+            "回滚上次任务",
+            "只恢复 Agent 上次任务写过的文件；任务开始前不存在的文件会被删除。\n"
+            "你在任务开始后对这些文件做的修改也会被覆盖。继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = agent.restore_last_checkpoint()
+        except Exception as exc:  # noqa: BLE001 - report a failed rollback in the UI
+            self._append_log(f"回滚失败：{type(exc).__name__}: {exc}")
+            return
+        restored = len(result.get("restored") or [])
+        deleted = len(result.get("deleted") or [])
+        failed = result.get("failed") or {}
+        message = f"已回滚上次任务：恢复 {restored} 个文件，删除 {deleted} 个新文件"
+        if failed:
+            message += f"，{len(failed)} 个失败"
+        self._append_log(message)
+        self.refresh_file_tree()
+        self.refresh_git_status()
+        self._refresh_open_file_after_task()
 
     def _persist_summary_settings(self) -> None:
         if not hasattr(self, "summary_enabled_checkbox"):

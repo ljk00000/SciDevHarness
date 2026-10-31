@@ -35,6 +35,7 @@ from urllib.request import ProxyHandler, Request, build_opener, getproxies, prox
 
 from scidev_acceptance import SemanticAcceptance
 from scidev_browser import BrowserAgent, BrowserApprovalDenied
+from scidev_checkpoint import WorkspaceCheckpoint
 from scidev_visual import VisualArtifactReviewer
 from scidev_context import ProjectContext
 from scidev_memory import ProjectMemory
@@ -2593,6 +2594,7 @@ class CodingToolbox:
         self.browser_agent = BrowserAgent(project_root, ledger, approval=browser_approval)
         self.enforce_patch_review_for_existing = bool(enforce_patch_review_for_existing)
         self.execution_policy = ExecutionPolicy(ExecutionMode.parse(execution_mode))
+        self.checkpoint: WorkspaceCheckpoint | None = None
         self._task_created_file_hashes: dict[str, str] = {}
         self.last_command_execution: dict[str, Any] | None = None
         self._active_command_lock = threading.Lock()
@@ -2619,6 +2621,17 @@ class CodingToolbox:
     def set_execution_mode(self, mode: str | ExecutionMode) -> None:
         """Apply a new mode to the next tool call without restarting the session."""
         self.execution_policy = ExecutionPolicy(ExecutionMode.parse(mode))
+
+    def set_checkpoint(self, checkpoint: WorkspaceCheckpoint | None) -> None:
+        self.checkpoint = checkpoint
+
+    def _capture_checkpoint(self, target: Path) -> None:
+        if self.checkpoint is None:
+            return
+        try:
+            self.checkpoint.capture(target)
+        except (OSError, ValueError) as exc:
+            raise PermanentError(f"创建任务回滚检查点失败：{exc}") from exc
 
     def _require_write_allowed(self, action: str = "修改文件") -> None:
         if not self.execution_policy.can_write_files:
@@ -3197,6 +3210,7 @@ class CodingToolbox:
     def _write_file_bytes(self, target: Path, data: bytes) -> None:
         if len(target.name) > 255:
             raise PermanentError("文件名过长（上限 255 个字符）")
+        self._capture_checkpoint(target)
         try:
             atomic_write_bytes(target, data)
         except (OSError, ValueError) as exc:
@@ -3237,6 +3251,7 @@ class CodingToolbox:
         except OSError as exc:
             raise PermanentError(f"创建目标目录失败：{exc}") from exc
         if self.enforce_patch_review_for_existing and not exists:
+            self._capture_checkpoint(target)
             try:
                 with target.open("xb") as stream:
                     stream.write(encoded)
@@ -3470,6 +3485,13 @@ class CodingToolbox:
             self.ledger.append("patch_review_rejected", {"patch_id": plan.patch_id, "reason": reason})
             raise PatchReviewRejected(reason)
 
+        for file_plan in plan.files:
+            target = (self.project_root / file_plan.path).resolve()
+            try:
+                target.relative_to(self.project_root)
+            except ValueError:
+                continue
+            self._capture_checkpoint(target)
         result = self.patch_engine.apply(plan, selected)
         if not result["applied_paths"]:
             reason = "所选补丁块没有产生文件变化。"
@@ -4293,6 +4315,7 @@ class CodingAgent:
             execution_mode=self.summary_settings.execution_mode,
         )
         self.toolbox.cancel_event = self._cancel
+        self.last_checkpoint: WorkspaceCheckpoint | None = None
 
     def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self.event_callback:
@@ -4322,6 +4345,17 @@ class CodingAgent:
         """Ask the running task to stop before its next model call or tool."""
         self._cancel.set()
         self.toolbox.cancel_running_command()
+
+    def restore_last_checkpoint(self) -> dict[str, Any]:
+        """Restore files captured before this Agent's most recent task."""
+        checkpoint = self.last_checkpoint
+        if checkpoint is None:
+            raise PermanentError("没有可回滚的任务检查点")
+        result = checkpoint.restore()
+        payload = {"checkpoint_id": checkpoint.checkpoint_id, **result}
+        self.ledger.append("checkpoint_restored", payload)
+        self._emit("checkpoint_restored", payload)
+        return result
 
     def _raise_if_cancelled(self, session: dict[str, Any], session_id: str) -> None:
         if not self._cancel.is_set():
@@ -6103,6 +6137,18 @@ class CodingAgent:
         self._tool_loop_repeats = 0
         self.toolbox.reset_task_write_scope()
         self.toolbox.clear_editor_context()
+        checkpoint_id = f"{str(payload.get('session_id') or 'task')}-{new_id('ckpt')}"
+        try:
+            WorkspaceCheckpoint.prune(self.project_root, keep=10)
+            self.last_checkpoint = WorkspaceCheckpoint(self.project_root, checkpoint_id)
+            self.toolbox.set_checkpoint(self.last_checkpoint)
+        except (OSError, ValueError) as exc:
+            self.last_checkpoint = None
+            self.toolbox.set_checkpoint(None)
+            self.ledger.append("checkpoint_unavailable", {
+                "checkpoint_id": checkpoint_id,
+                "error": str(exc)[:300],
+            })
         try:
             self.toolbox.set_editor_context(
                 payload.get("context_overrides"),
@@ -6115,6 +6161,7 @@ class CodingAgent:
         finally:
             self.toolbox.clear_editor_context()
             self.toolbox.reset_task_write_scope()
+            self.toolbox.set_checkpoint(None)
 
     def _prepare_coding_run(
         self,
@@ -6775,6 +6822,7 @@ class CodingAgent:
             "no_changes_detected": bool(no_change_warning),
             "verification_report": verification_report,
             "semantic_acceptance_report": acceptance_report,
+            "checkpoint_id": self.last_checkpoint.checkpoint_id if self.last_checkpoint else "",
         }
 
     def _execute_tool_calls(

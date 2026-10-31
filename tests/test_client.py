@@ -3153,6 +3153,7 @@ class SummarySettingsUiTests(unittest.TestCase):
                 window.toggle_summary_settings()
                 self.app.processEvents()
                 self.assertTrue(window.summary_settings_panel.isVisible())
+                self.assertTrue(window.restore_checkpoint_button.isVisible())
 
                 interval = 7 if window.summary_interval_spin.value() != 7 else 8
                 window.summary_interval_spin.setValue(interval)

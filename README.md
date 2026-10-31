@@ -46,7 +46,7 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
   --json
 ```
 
-`--execution-mode` 支持 `read-only`、`manual`、`workspace-write`、`full-access`；`--no-verify` 关闭提交前验证门；`--api-base`/`--api-key`/`--model` 可临时覆盖环境变量。成功退出码为 0，任务失败为 1，参数错误为 2，取消为 130。CLI 与桌面端共用 Agent、执行策略、Git 自动提交和 `.research` 审计记录。
+`--execution-mode` 支持 `read-only`、`manual`、`workspace-write`、`full-access`；`--no-verify` 关闭提交前验证门；`--restore-on-failure` 在任务失败时自动回滚本次任务写过的文件；`--api-base`/`--api-key`/`--model` 可临时覆盖环境变量。成功退出码为 0，任务失败为 1，参数错误为 2，取消为 130。CLI 与桌面端共用 Agent、执行策略、Git 自动提交和 `.research` 审计记录。
 
 客户端包含：
 
@@ -65,6 +65,8 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 - 过程记录：`.research/events.jsonl`、`.research/runs.db`、`.research/sessions/`
 
 自动 Git 安全策略：Agent 发给模型的 Git 状态/diff 会隐藏常见凭据路径（包括重命名涉及凭据文件的整个差异）；Agent 自动提交会跳过敏感/内部路径、符号链接或目录联接、超过 240,000 字节的文件，以及二进制/非 UTF-8 文件，并在聊天记录中说明，文件仍留在工作区供你从 Git 面板审核。`.env.example` 等模板不受凭据过滤。Git 面板里的手动 diff 与提交是用户主动操作，不受 Agent 自动筛选策略限制。
+
+任务检查点：Agent 在每次写文件前把原始内容保存到 `.research/checkpoints/<id>/`；任务结束后可在 Agent 设置里点“回滚上次任务改动的文件”，只恢复本次任务实际写过的文件，并删除任务开始前不存在的新文件。CLI 可用 `--restore-on-failure` 在任务失败时自动回滚。回滚会覆盖你在任务开始后对这些文件做的修改；检查点只保留最近 10 个，不替代 Git。
 
 其他安全边界：文件工具会阻止项目根目录之外的路径和常见凭据文件（例如 `.env`、`.ssh`、`.npmrc`）。文本编辑只接受有效 UTF-8，不会把含 NUL/非法编码的文件当文本覆盖；完整重写会拒绝超大既有文件，文本替换会校验结果大小和 NUL 字节。应用不是操作系统级沙箱：批准后的命令仍以当前 Windows 用户权限执行。
 
