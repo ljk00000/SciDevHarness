@@ -46,6 +46,12 @@ from scidev_multi_agent import (
     validate_parallel_delegations,
 )
 from scidev_planning import PLAN_TOOL, TaskPlan, planning_mode
+from scidev_policy import (
+    ExecutionMode,
+    ExecutionPolicy,
+    assess_command,
+    format_verification_diagnostics,
+)
 from scidev_process import background_process_options, shell_command_arguments, terminate_process_tree
 from scidev_patching import PatchEngine, PatchError, PatchReviewRejected
 from scidev_usage import ModelRequestUsage
@@ -1483,6 +1489,7 @@ class SummarySettings:
     multi_agent_enabled: bool = False
     multi_agent_model: str = ""
     context_window_tokens: int = 32768
+    execution_mode: str = "workspace-write"
 
     @classmethod
     def config_path(cls, project_root: Path) -> Path:
@@ -1556,10 +1563,13 @@ class SummarySettings:
             context_window_tokens = max(1024, min(1_048_576, int(context_window_tokens)))
         except (TypeError, ValueError, OverflowError):
             context_window_tokens = cls.context_window_tokens
+        execution_mode = ExecutionMode.parse(
+            os.getenv("SCIDEV_EXECUTION_MODE") or data.get("execution_mode", cls.execution_mode)
+        ).value
         return cls(bool(enabled), model, max_tokens, context_chars, retries, interval_turns, instruction,
                    bool(memory_enabled), memory_results, memory_context_chars,
                    acceptance_mode, acceptance_model, bool(multi_agent_enabled), multi_agent_model,
-                   context_window_tokens)
+                   context_window_tokens, execution_mode)
 
     def save(self, project_root: Path) -> None:
         path = self.config_path(project_root)
@@ -1582,6 +1592,7 @@ class SummarySettings:
                     "multi_agent_enabled": bool(self.multi_agent_enabled),
                     "multi_agent_model": self.multi_agent_model.strip()[:160],
                     "model_context_window_tokens": max(1024, min(1_048_576, int(self.context_window_tokens))),
+                    "execution_mode": ExecutionMode.parse(self.execution_mode).value,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -2572,6 +2583,7 @@ class CodingToolbox:
         patch_review: Callable[[dict[str, Any]], set[int] | None] | None = None,
         enforce_patch_review_for_existing: bool = False,
         browser_approval: Callable[[str, str], bool] | None = None,
+        execution_mode: str | ExecutionMode = ExecutionMode.WORKSPACE_WRITE,
     ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
@@ -2580,6 +2592,7 @@ class CodingToolbox:
         self.patch_review = patch_review
         self.browser_agent = BrowserAgent(project_root, ledger, approval=browser_approval)
         self.enforce_patch_review_for_existing = bool(enforce_patch_review_for_existing)
+        self.execution_policy = ExecutionPolicy(ExecutionMode.parse(execution_mode))
         self._task_created_file_hashes: dict[str, str] = {}
         self.last_command_execution: dict[str, Any] | None = None
         self._active_command_lock = threading.Lock()
@@ -2602,6 +2615,22 @@ class CodingToolbox:
             max_file_bytes=self.MAX_WRITE_BYTES,
             validate_content=self._validate_svg_document,
         )
+
+    def set_execution_mode(self, mode: str | ExecutionMode) -> None:
+        """Apply a new mode to the next tool call without restarting the session."""
+        self.execution_policy = ExecutionPolicy(ExecutionMode.parse(mode))
+
+    def _require_write_allowed(self, action: str = "修改文件") -> None:
+        if not self.execution_policy.can_write_files:
+            raise PermanentError(
+                f"当前执行策略为只读，禁止{action}。请在 Agent 设置中切换为“工作区可写”后再试。"
+            )
+
+    def _require_command_allowed(self) -> None:
+        if not self.execution_policy.can_run_commands:
+            raise PermanentError(
+                "当前执行策略为只读，禁止执行终端命令。请在 Agent 设置中切换为“工作区可写”后再试。"
+            )
 
     def set_editor_context(
         self,
@@ -3174,6 +3203,7 @@ class CodingToolbox:
             raise PermanentError(f"写入文件失败：{exc}") from exc
 
     def write_file(self, path: str, content: str) -> str:
+        self._require_write_allowed("写入文件")
         if not isinstance(path, str) or not path.strip():
             raise PermanentError("write_file 的 path 必须是非空字符串")
         if not isinstance(content, str):
@@ -3234,6 +3264,7 @@ class CodingToolbox:
         replace_all: bool = False,
         edits: list[dict[str, Any]] | None = None,
     ) -> str:
+        self._require_write_allowed("替换文件内容")
         if edits is not None:
             if old_text or new_text or replace_all:
                 raise PermanentError("不能同时使用 edits 与 old_text/new_text/replace_all")
@@ -3295,6 +3326,7 @@ class CodingToolbox:
         return self._append_visual_review(target, relative, result)
 
     def replace_many_in_file(self, path: str, edits: list[dict[str, Any]]) -> str:
+        self._require_write_allowed("批量替换文件内容")
         if not isinstance(path, str) or not path.strip():
             raise PermanentError("replace_in_file 的 path 必须是非空字符串")
         if not isinstance(edits, list) or not 1 <= len(edits) <= 50:
@@ -3376,6 +3408,7 @@ class CodingToolbox:
         return self._append_visual_review(target, relative, result)
 
     def apply_patch(self, patch: str) -> str:
+        self._require_write_allowed("应用补丁")
         if not isinstance(patch, str) or not patch.strip():
             raise PermanentError("apply_patch 的 patch 必须是非空字符串")
         self.last_patch_result = None
@@ -3556,6 +3589,7 @@ class CodingToolbox:
             "started_at": now_iso(),
             "finished_at": "",
             "approval_status": "pending",
+            "approval_source": "",
         }
         self.last_command_execution = dict(execution)
         method_started = time.monotonic()
@@ -3563,6 +3597,14 @@ class CodingToolbox:
             execution["approval_status"] = "rejected"
             self._finish_command_execution(execution, "rejected")
             raise PermanentError("命令不能为空")
+        assessment = assess_command(command)
+        execution["command_category"] = assessment.category
+        if not self.execution_policy.can_run_commands:
+            execution["approval_status"] = "rejected"
+            self._finish_command_execution(execution, "rejected")
+            raise PermanentError(
+                "当前执行策略为只读，禁止执行终端命令。请在 Agent 设置中切换为“工作区可写”后再试。"
+            )
         if destructive_command_reason(command):
             execution["approval_status"] = "rejected"
             self._finish_command_execution(execution, "rejected")
@@ -3594,18 +3636,35 @@ class CodingToolbox:
                 raise PermanentError("命令超时参数无效") from exc
         timeout = max(1, min(requested_timeout, 300))
         execution["timeout_seconds"] = timeout
-        self.ledger.append(
-            "command_approval_requested",
-            {"command": command, "timeout_seconds": timeout, "cwd": str(self.project_root)},
-        )
+        auto_approved = self.execution_policy.auto_approves(assessment)
         approved = False
         reason = "未配置用户审批回调"
-        if self.command_approval is not None:
-            try:
-                approved = bool(self.command_approval(command, timeout))
-                reason = "用户拒绝或审批超时"
-            except Exception as exc:
-                reason = f"审批界面异常：{type(exc).__name__}: {exc}"
+        if auto_approved:
+            approved = True
+            reason = f"执行策略自动批准：{assessment.reason}"
+            execution["approval_source"] = "policy"
+            self.ledger.append(
+                "command_auto_approved",
+                {
+                    "command": command,
+                    "timeout_seconds": timeout,
+                    "category": assessment.category,
+                    "mode": self.execution_policy.mode.value,
+                    "cwd": str(self.project_root),
+                },
+            )
+        else:
+            execution["approval_source"] = "user"
+            self.ledger.append(
+                "command_approval_requested",
+                {"command": command, "timeout_seconds": timeout, "cwd": str(self.project_root)},
+            )
+            if self.command_approval is not None:
+                try:
+                    approved = bool(self.command_approval(command, timeout))
+                    reason = "用户拒绝或审批超时"
+                except Exception as exc:
+                    reason = f"审批界面异常：{type(exc).__name__}: {exc}"
         if not approved:
             execution["approval_status"] = "denied"
             self._finish_command_execution(
@@ -3631,7 +3690,12 @@ class CodingToolbox:
         execution["approval_status"] = "approved"
         self.ledger.append(
             "command_approval_granted",
-            {"command": command, "timeout_seconds": timeout},
+            {
+                "command": command,
+                "timeout_seconds": timeout,
+                "source": execution["approval_source"],
+                "category": assessment.category,
+            },
         )
         self.ledger.append("tool_called", {"tool": "run_command", "command": command})
         execution["started_at"] = now_iso()
@@ -3705,13 +3769,19 @@ class CodingToolbox:
             raise PermanentError(f"命令启动失败：{exc}") from exc
         output = output[-24000:]
         status = "passed" if process.returncode == 0 else "failed"
+        diagnostics = format_verification_diagnostics(assessment.category, output)
+        if diagnostics:
+            execution["diagnostics_count"] = diagnostics.count("\n- ")
         self._finish_command_execution(
             execution,
             status,
             exit_code=process.returncode,
             elapsed_ms=int((time.monotonic() - execution_started) * 1000),
         )
-        return f"退出码：{process.returncode}\n执行状态：{status}\n{output}".rstrip()
+        result = f"退出码：{process.returncode}\n执行状态：{status}\n{output}".rstrip()
+        if diagnostics:
+            result += f"\n\n{diagnostics}"
+        return result
 
     def git_diff(self) -> str:
         manager = GitManager(self.project_root)
@@ -4220,6 +4290,7 @@ class CodingAgent:
             patch_review=patch_review,
             enforce_patch_review_for_existing=True,
             browser_approval=browser_approval,
+            execution_mode=self.summary_settings.execution_mode,
         )
         self.toolbox.cancel_event = self._cancel
 
@@ -6233,14 +6304,14 @@ class CodingAgent:
             and session.get("verification_code_changed")
             and verification_report.get("status") != "passed"
         ):
-            if self.toolbox.command_approval is None:
-                # Without an approval channel run_command can never execute, so
-                # asking the model for checks only burns turns. Fail closed
-                # immediately with an accurate, actionable reason.
+            if self.toolbox.command_approval is None and not self.toolbox.execution_policy.can_run_commands:
+                # Without an approval channel and with a read-only policy,
+                # run_command can never execute. Asking the model for checks
+                # only burns turns; fail closed with an actionable reason.
                 blocked_message = (
-                    "代码改动尚未验证：当前运行没有命令审批通道，无法执行项目检查。"
+                    "代码改动尚未验证：当前运行没有命令审批通道，且执行策略为只读。"
                     "改动保留在工作区，本次不会自动提交；"
-                    "请在桌面客户端中运行，或为该调用提供 command_approval 后重试。"
+                    "请在桌面客户端中运行，或切换为“工作区可写”/提供 command_approval 后重试。"
                 )
                 session["status"] = "verification_required"
                 session["verification_required"] = True

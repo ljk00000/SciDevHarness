@@ -84,6 +84,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtQuickWidgets import QQuickWidget
 
 from scidev_planning import TaskPlan, planning_mode
+from scidev_policy import ExecutionMode
 from scidev_preferences import AppearancePreferences
 from scidev_process import StreamingCommand
 from scidev_settings import SettingsPage
@@ -4974,6 +4975,33 @@ class ClientWindow(QMainWindow):
         self.multi_agent_note.setObjectName("Hint")
         self.multi_agent_note.setWordWrap(True)
         settings_layout.addWidget(self.multi_agent_note, 14, 0, 1, 4)
+        self.execution_mode_label = QLabel("执行策略")
+        self.execution_mode_combo = QComboBox()
+        self.execution_mode_combo.setMinimumContentsLength(10)
+        self.execution_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.execution_mode_combo.addItem("只读（不写文件、不跑命令）", ExecutionMode.READ_ONLY.value)
+        self.execution_mode_combo.addItem("手动审批（每条命令都询问）", ExecutionMode.MANUAL.value)
+        self.execution_mode_combo.addItem("工作区可写（自动跑验证命令）", ExecutionMode.WORKSPACE_WRITE.value)
+        self.execution_mode_combo.addItem("完全访问（自动跑所有命令，危险）", ExecutionMode.FULL_ACCESS.value)
+        mode_index = self.execution_mode_combo.findData(self.summary_settings.execution_mode)
+        self.execution_mode_combo.setCurrentIndex(max(0, mode_index))
+        self.execution_mode_combo.setToolTip(
+            "只读：禁止写文件和运行命令。\n"
+            "手动审批：允许写文件，但每条终端命令都需要确认。\n"
+            "工作区可写：文件限制在项目内；自动批准 pytest/unittest/npm test、ruff/eslint、mypy/tsc 等验证命令，"
+            "其他命令仍需逐条批准。\n"
+            "完全访问：自动批准所有终端命令，仍保留破坏性命令和手动 Git 操作拦截。"
+        )
+        self.execution_mode_combo.currentIndexChanged.connect(lambda _index: self._persist_summary_settings())
+        settings_layout.addWidget(self.execution_mode_label, 16, 0)
+        settings_layout.addWidget(self.execution_mode_combo, 16, 1, 1, 3)
+        self.execution_mode_note = QLabel(
+            "这是命令策略，不是操作系统沙箱：已批准的命令仍以当前 Windows 用户权限运行，"
+            "无法保证网络或项目外文件访问。完全访问模式请只在可信项目中使用。"
+        )
+        self.execution_mode_note.setObjectName("Hint")
+        self.execution_mode_note.setWordWrap(True)
+        settings_layout.addWidget(self.execution_mode_note, 17, 0, 1, 4)
         self.context_window_label = QLabel("模型上下文窗口")
         self.context_window_spin = QSpinBox()
         self.context_window_spin.setRange(1024, 1_048_576)
@@ -5259,6 +5287,9 @@ class ClientWindow(QMainWindow):
         self.summary_settings.memory_results = self.project_memory_results_spin.value()
         self.summary_settings.memory_context_chars = self.project_memory_context_spin.value()
         self.summary_settings.context_window_tokens = self.context_window_spin.value()
+        self.summary_settings.execution_mode = ExecutionMode.parse(
+            self.execution_mode_combo.currentData()
+        ).value
         self.summary_settings.acceptance_mode = SemanticAcceptance.mode(self.acceptance_mode_combo.currentData())
         self.summary_settings.acceptance_model = self.acceptance_model_edit.text().strip()[:160]
         self.summary_settings.multi_agent_enabled = self.multi_agent_enabled_checkbox.isChecked()
@@ -5267,6 +5298,7 @@ class ClientWindow(QMainWindow):
             self.summary_settings.save(self.project_root)
             self.settings_page.refresh_filter()
             self.agent.summary_settings = self.summary_settings
+            self.agent.toolbox.set_execution_mode(self.summary_settings.execution_mode)
             self._render_context_meter()
             state = self._summary_status_text()
             compact_state = (

@@ -505,7 +505,7 @@ class VerificationAgentTests(unittest.TestCase):
             root, ledger, git,
             event_callback=lambda name, payload: events.append((name, payload)),
             command_approval=lambda _command, _timeout: approved,
-            summary_settings=SummarySettings(enabled=False),
+            summary_settings=SummarySettings(enabled=False, execution_mode="manual"),
             require_verification=True,
         )
         provider = _ScriptedProvider(responses)

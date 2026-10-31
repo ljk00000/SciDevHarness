@@ -2,6 +2,8 @@
 .env.*
 !.env.example
 .tmp-tests/
+# Local launcher shortcuts contain machine-specific absolute paths.
+*.lnk
 # Local probe/session artifacts (reports, logs, databases, screenshots).
 .research/
 .coverage

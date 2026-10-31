@@ -4566,6 +4566,7 @@ class VerificationGateConfigurationTests(unittest.TestCase):
             ledger = EventLedger(root)
             agent = CodingAgent(
                 root, ledger, GitManager(root),
+                summary_settings=SummarySettings(enabled=False, execution_mode="read-only"),
                 require_verification=True,
                 command_approval=None,
             )

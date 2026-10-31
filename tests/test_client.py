@@ -3191,6 +3191,19 @@ class SummarySettingsUiTests(unittest.TestCase):
                 self.assertEqual(saved["multi_agent_model"], "specialist-v2")
                 self.assertTrue(window.multi_agent_model_edit.isEnabled())
 
+                window.execution_mode_combo.setCurrentIndex(
+                    window.execution_mode_combo.findData("read-only")
+                )
+                saved = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["execution_mode"], "read-only")
+                self.assertEqual(window.agent.toolbox.execution_policy.mode.value, "read-only")
+                window.execution_mode_combo.setCurrentIndex(
+                    window.execution_mode_combo.findData("workspace-write")
+                )
+                self.assertEqual(
+                    window.agent.toolbox.execution_policy.mode.value, "workspace-write",
+                )
+
                 window.resize(820, 600)
                 self.app.processEvents()
                 QTest.qWait(30)
@@ -3211,6 +3224,7 @@ class SummarySettingsUiTests(unittest.TestCase):
                     (window.acceptance_mode_label, window.acceptance_mode_combo),
                     (window.acceptance_model_label, window.acceptance_model_edit),
                     (window.multi_agent_model_label, window.multi_agent_model_edit),
+                    (window.execution_mode_label, window.execution_mode_combo),
                 ):
                     self.assertLess(label.geometry().right(), control.geometry().left())
                     self.assertLessEqual(control.geometry().right(), window.summary_settings_panel.rect().right())

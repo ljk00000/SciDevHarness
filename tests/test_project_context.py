@@ -800,7 +800,9 @@ class ProjectContextRepositoryRegressionTests(unittest.TestCase):
                 result = context.build(query, focus_paths=focus)
                 # Ranking is a bounded lexical heuristic over a live repository;
                 # new files can shift neighbours without losing the right answer.
-                self.assertIn(expected, result["sources"][:6], result["sources"])
+                # Assert against the eight sources that are actually sent to the
+                # model, not an arbitrary top-six prefix.
+                self.assertIn(expected, result["sources"], result["sources"])
 
 
 if __name__ == "__main__":
