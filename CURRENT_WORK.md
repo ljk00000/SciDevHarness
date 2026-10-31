@@ -5,6 +5,7 @@
 - 支持 `--workspace`、`--task`、`--json`、`--execution-mode`、`--no-verify`、`--session-id`、`--api-base`、`--api-key`、`--model`、`--request-timeout`。
 - 退出码：成功 0，任务失败 1，参数/工作区错误 2，取消 130；JSON 失败也输出结构化 `success=false`。
 - 发布 staging 和测试期望已加入 CLI；新增 `tests/test_cli.py` 6 项，覆盖策略传递、JSON 结果、失败输出、工作区校验和 provider 环境覆盖。
+- 验证：全量套件 589 项 0 失败、13 跳过、覆盖率 80%；CLI 本地 Qwen 烟测成功；CI #121 三套 Python 全绿。
 - 下一步：让 CLI 支持自动验证命令选择/重试闭环，并把 checkpoint、模型配置继续补齐。
 
 ## 2026-10-31 17:15（Asia/Shanghai）· 执行策略与结构化验证诊断

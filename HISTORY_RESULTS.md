@@ -5,7 +5,7 @@
 - 支持 JSON 单对象输出、退出码 0/1/2/130、`--execution-mode`、`--no-verify`、`--session-id` 和临时 `--api-base/--api-key/--model/--request-timeout` 覆盖；不把密钥写入项目设置。
 - CLI 中 `command_approval=None`：工作区可写自动批准验证命令，完全访问自动批准全部命令；手动审批模式无法批准命令，会按验证门失败关闭。
 - 发布 staging 与测试期望加入 `scidev_cli.py`；新增 `tests/test_cli.py` 6 项。
-- 验证：CLI 单测通过；全量套件待跑；文档与 README 已补充用法。
+- 验证：全量套件 589 项 0 失败、13 跳过、覆盖率 80%；CLI 本地 Qwen 烟测成功（创建 `hello.py`、自动提交、JSON 输出）；CI #120 仅 3.13 的项目锁测试启动超时，放宽等待后 #121 三套 Python 全绿（9 分 30 秒）。
 
 ## 2026-10-31 17:15（Asia/Shanghai）· 执行策略与结构化验证诊断
 - 背景：此前所有 shell 命令逐条审批，批准后拥有当前用户全部权限；既不安全也无法让 Agent 自主完成“测试→修复→重跑”闭环。
