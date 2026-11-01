@@ -117,6 +117,7 @@ from scidev_lsp import collect_diagnostics as collect_lsp_diagnostics
 from scidev_worktree import WorktreeError, WorktreeManager
 from scidev_pty import PTYSession, PTYUnavailable
 from scidev_attachments import AttachmentError, load_image_file
+from scidev_crash import install_crash_reporter
 from scidev_intel import IntelUnavailable, PythonIntel
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
@@ -2795,6 +2796,7 @@ class ClientWindow(QMainWindow):
         self._lsp_thread: LSPDiagnosticsThread | None = None
         self._lsp_generation = 0
         self._lsp_diagnostics: dict[str, list[dict]] = {}
+        self._code_intel_syntax_errors: dict[str, SyntaxError] = {}
         self.terminal_cwd = self.project_root
         self._entry_parent = self.project_root
         self._explorer_entry_mode = "create"
@@ -7807,6 +7809,10 @@ class ClientWindow(QMainWindow):
             except SyntaxError as exc:
                 syntax_error = exc
         self._render_outline(path, text, syntax_tree)
+        if syntax_error is not None:
+            self._code_intel_syntax_errors[str(path)] = syntax_error
+        else:
+            self._code_intel_syntax_errors.pop(str(path), None)
         self._render_diagnostics(path, syntax_error)
         if path.suffix.lower() == ".py":
             self._schedule_lsp_diagnostics(path, text)
@@ -7840,12 +7846,7 @@ class ClientWindow(QMainWindow):
         active_path = self._editor_paths.get(editor) if editor is not None else None
         if editor is None or active_path is None or active_path != path:
             return
-        text = editor.toPlainText()
-        syntax_error = None
-        try:
-            ast.parse(text or "\n")
-        except SyntaxError as exc:
-            syntax_error = exc
+        syntax_error = self._code_intel_syntax_errors.get(str(path))
         self._render_diagnostics(path, syntax_error)
 
     def _refresh_outline(self) -> None:
@@ -9268,6 +9269,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.smoke_test:
         settings.setValue("lastWorkspace", str(workspace_root))
+    app._scidev_crash_reporter = install_crash_reporter(workspace_root)
     window = ClientWindow(workspace_root)
     app._scidev_windows = [window]
     window.show()

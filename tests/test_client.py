@@ -1439,7 +1439,9 @@ class EditorOutlineTests(unittest.TestCase):
                 self.app.processEvents()
 
     def test_typing_debounces_to_a_single_parse_and_large_files_skip_it(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="scidev-code-intel-") as temp:
+        with tempfile.TemporaryDirectory(
+            prefix="scidev-code-intel-", ignore_cleanup_errors=True,
+        ) as temp:
             root = Path(temp)
             source = root / "module.py"
             source.write_text(
@@ -1449,6 +1451,9 @@ class EditorOutlineTests(unittest.TestCase):
             window = ClientWindow(root)
             try:
                 window._open_file(source, preview=False)
+                # Drain the parse scheduled by opening the file before counting
+                # keystroke-driven parses.
+                QTest.qWait(window.CODE_INTEL_DEBOUNCE_MS + 100)
                 editor = window._active_editor()
                 parsed: list[int] = []
                 real_parse = ast.parse

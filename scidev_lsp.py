@@ -8,7 +8,6 @@ blocks the UI thread waiting for a language server.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import ast
 import json
 import os
 from pathlib import Path
@@ -277,14 +276,7 @@ def collect_diagnostics(
         client.start()
         client.initialize()
         uri = client.did_open(path, text)
-        wait_timeout = timeout
-        try:
-            ast.parse(text or "\n")
-        except SyntaxError:
-            pass
-        else:
-            # Ruff may not publish an empty diagnostic set for a clean file.
-            wait_timeout = min(timeout, 2.0)
+        wait_timeout = min(timeout, 2.0)
         return client.wait_diagnostics(uri, timeout=wait_timeout)
     except LSPUnavailable:
         raise

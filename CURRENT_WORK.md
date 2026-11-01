@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-11-01 11:05（Asia/Shanghai）· 本地崩溃报告
+- 新增 `scidev_crash.py`：安装未捕获异常/线程异常钩子，写 `.research/crashes/crash-*.json`，含版本、Python、平台、线程、异常类型、有界 traceback。
+- 写盘前脱敏主目录和 API key/token/password；保留最近 20 份；不联网、不收集局部变量；KeyboardInterrupt/SystemExit 不记录。
+- 桌面 `main` 启动后安装；新增 3 项测试；mypy 扩到 13 个文件；全量套件 680 项 0 失败、14 跳过、覆盖率 79%。
+- 同时移除 LSP 线程内重复的 `ast.parse`：语法状态由主线程 code-intel 缓存复用，避免一次输入触发两次解析；outline 防抖测试连续 3 次稳定通过。
+
 ## 2026-11-01 10:45（Asia/Shanghai）· GUI 隔离 worktree
 - 命令面板新增 `> new worktree` / `新建 worktree` / `隔离工作区`：从当前 Git 仓库创建 `scidev/agent-gui-*` 分支，并自动打开独立窗口。
 - 多窗口可并行跑任务；每个窗口有自己的仓库副本、编辑器、Git 面板和 Agent；worktree 默认保留。

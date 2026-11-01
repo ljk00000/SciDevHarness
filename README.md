@@ -84,6 +84,10 @@ python scidev_cli.py pr-review --workspace . --number 12 --action approve
 
 `pr-view` 读取编号、标题、状态、作者、head/base、review decision 和 mergeable；`pr-review` 支持 `approve`、`comment`、`request-changes`，comment/request-changes 必须提供 body。两者都受网络 deny 约束，需要 `--allow-network` 才放行。
 
+### 崩溃报告
+
+桌面端启动后安装本地异常钩子。未捕获异常写入 `.research/crashes/crash-*.json`，包含版本、Python、平台、线程、异常类型和有界 traceback；API key/token/password 和用户主目录会先脱敏。保留最近 20 份，不上传网络。
+
 ### 版本迁移
 
 ```powershell
