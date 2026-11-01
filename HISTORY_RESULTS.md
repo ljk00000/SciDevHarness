@@ -2,7 +2,7 @@
 
 ## 2026-11-01 14:25（Asia/Shanghai）· Inno Setup 安装器脚本
 - 新增 per-user Inno Setup 配置与构建脚本：完整 deployment、开始菜单/可选桌面快捷方式、卸载信息、安装日志、可选 Authenticode 签名和 SHA-256 输出。
-- 验证：2 项静态测试通过，PowerShell 语法解析 0 错误；全量 713 项 0 失败、14 跳过、覆盖率 78%。边界：本机无 Inno Setup，未实际构建；CI 尚未加入安装器构建/签名。
+- 验证：2 项静态测试通过，PowerShell 语法解析 0 错误；全量 713 项 0 失败、14 跳过、覆盖率 78%。本机 Inno Setup 6.7.1 以 notepad fixture 实际构建出 2,182,836 字节安装器（SHA-256 `0b1f39a0…bb838`，未签名）；只证明脚本链路，fixture 不代表正式程序。边界：CI 尚未加入安装器构建/签名。
 
 ## 2026-11-01 14:10（Asia/Shanghai）· 可校验的更新包下载
 - 新增 `download_asset()` 与 CLI `update --download`：HTTPS、大小上限、Release 声明值、SHA-256 和空文件检查全部通过后才原子落盘；下载后只报告摘要，不执行安装包。
