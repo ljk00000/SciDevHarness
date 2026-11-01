@@ -32,6 +32,13 @@ class InstallerBuildTests(unittest.TestCase):
         self.assertNotIn("curl ", text)
         self.assertNotIn("msiexec", text.lower())
 
+    def test_package_workflow_builds_and_uploads_the_installer(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "windows-package.yml").read_text(encoding="utf-8")
+        self.assertIn("choco install innosetup", workflow)
+        self.assertIn("build_installer.ps1", workflow)
+        self.assertIn("SciDevHarness-Windows-x64-installer", workflow)
+        self.assertIn("Get-FileHash", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

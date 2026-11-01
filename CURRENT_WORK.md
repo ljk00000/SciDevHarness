@@ -3,7 +3,7 @@
 ## 2026-11-01 14:25（Asia/Shanghai）· Inno Setup 安装器脚本
 - 新增 `packaging/windows/scidev.iss`：per-user 安装到 `{localappdata}\Programs\SciDevHarness`，包含完整 deployment、开始菜单/可选桌面快捷方式、卸载信息和安装日志。
 - 新增 `scripts/build_installer.ps1`：校验 deployment/版本/签名指纹/HTTPS 时间戳，查找 Inno Setup 6，调用 ISCC 构建，可选调用 `sign_release.ps1`，输出路径/字节数/SHA-256；不下载依赖、不执行安装器、不自动安装。
-- 新增 2 项静态测试并做 PowerShell 语法解析；全量 713 项 0 失败、14 跳过、覆盖率 78%。本机安装 Inno Setup 6.7.1 后用 notepad 作为 `scidev_client.exe` fixture 实际构建成功：`SciDevHarness-Setup-0.1.0.exe` 2,182,836 字节，SHA-256 `0b1f39a0d76ae402137c6491a179720a0dbd7aea2ed9793c835e0ff67adbb838`，未签名；fixture 只证明打包链路，不代表正式二进制。CI 尚未加入安装器构建/签名。
+- 新增 3 项静态测试并做 PowerShell 语法解析；全量 714 项 0 失败、14 跳过、覆盖率 78%。本机安装 Inno Setup 6.7.1 后用 notepad 作为 `scidev_client.exe` fixture 实际构建成功：`SciDevHarness-Setup-0.1.0.exe` 2,182,836 字节，SHA-256 `0b1f39a0d76ae402137c6491a179720a0dbd7aea2ed9793c835e0ff67adbb838`，未签名；fixture 只证明打包链路，不代表正式二进制。Windows Package Verification 现在安装 Inno Setup、构建并上传 unsigned installer/manifest；尚未在远端触发实际运行。
 
 ## 2026-11-01 14:10（Asia/Shanghai）· 可校验的更新包下载
 - `scidev_update.download_asset()`：只接受 HTTPS，流式写入同目录临时文件，校验 Content-Length/Release 大小/上限/SHA-256 后原子改名；拒绝空文件、超限、HTTP 重定向和摘要缺失。

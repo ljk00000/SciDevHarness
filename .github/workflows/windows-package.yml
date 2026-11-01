@@ -80,6 +80,48 @@ jobs:
             throw "Standalone runtime/license inventory failed (exit $LASTEXITCODE)."
           }
 
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build per-user installer
+        shell: pwsh
+        run: |
+          $deployment = Join-Path $env:RUNNER_TEMP "scidev-package-stage\deployment"
+          if (-not (Test-Path -LiteralPath $deployment -PathType Container)) {
+            throw "Standalone deployment is missing: $deployment"
+          }
+          $versionLine = Select-String -Path "$env:GITHUB_WORKSPACE\scidev_update.py" -Pattern '^APP_VERSION = "([^"]+)"'
+          if (-not $versionLine) { throw "APP_VERSION was not found in scidev_update.py" }
+          $version = $versionLine.Matches[0].Groups[1].Value
+          $installerDir = Join-Path $env:RUNNER_TEMP "scidev-installer"
+          & "$env:GITHUB_WORKSPACE\scripts\build_installer.ps1" `
+            -Deployment $deployment -Version $version -OutputDirectory $installerDir
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed (exit $LASTEXITCODE)" }
+          $installer = Join-Path $installerDir "SciDevHarness-Setup-$version.exe"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "Expected installer was not produced: $installer"
+          }
+          $manifest = [pscustomobject]@{
+            version = $version
+            path = $installer
+            bytes = (Get-Item -LiteralPath $installer).Length
+            sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+            signed = $false
+          }
+          $manifestPath = Join-Path $env:RUNNER_TEMP "SciDevHarness-Windows-x64-installer.json"
+          $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
+          $manifest | ConvertTo-Json -Compress
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: SciDevHarness-Windows-x64-installer
+          path: |
+            ${{ runner.temp }}\scidev-installer\SciDevHarness-Setup-*.exe
+            ${{ runner.temp }}\SciDevHarness-Windows-x64-installer.json
+          if-no-files-found: error
+          retention-days: 7
+
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: SciDevHarness-Windows-x64-build-manifest

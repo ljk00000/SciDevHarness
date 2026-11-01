@@ -68,7 +68,7 @@ class BootstrapTests(unittest.TestCase):
     def test_github_actions_are_sha_pinned_and_dependabot_tracks_updates(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         workflows_dir = project_root / ".github" / "workflows"
-        expected_action_counts = {"ci.yml": 3, "windows-package.yml": 3}
+        expected_action_counts = {"ci.yml": 3, "windows-package.yml": 4}
         self.assertEqual(
             {path.name for path in workflows_dir.glob("*.yml")},
             set(expected_action_counts),
