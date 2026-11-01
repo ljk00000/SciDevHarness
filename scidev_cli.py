@@ -27,7 +27,7 @@ from scidev_pr import (
     view_pull_request,
 )
 from scidev_migrations import migrate_project
-from scidev_update import APP_VERSION, UpdateError, check_for_update, detect_repo
+from scidev_update import APP_VERSION, UpdateError, check_for_update, detect_repo, download_asset
 from scidev_errors import classify_message
 from scidev_mcp import MCPError, MCPManager
 
@@ -179,11 +179,19 @@ def _parser() -> argparse.ArgumentParser:
     update_parser = subparsers.add_parser(
         "update",
         help="check GitHub releases for a newer build",
-        description="Report a newer GitHub release without downloading or installing it.",
+        description="Report a newer GitHub release; --download verifies it without installing.",
     )
     update_parser.add_argument("--workspace", default=".", help="project used to detect the GitHub origin")
     update_parser.add_argument("--repo", default="", help="override owner/repo")
     update_parser.add_argument("--json", action="store_true")
+    update_parser.add_argument(
+        "--download", default="", metavar="PATH",
+        help="download the release asset to PATH (or an existing directory) and verify its SHA-256",
+    )
+    update_parser.add_argument(
+        "--sha256", default="",
+        help="expected SHA-256 when the Release does not expose a digest",
+    )
     update_parser.add_argument(
         "--fail-if-available", action="store_true",
         help="exit 1 when a newer release exists",
@@ -389,13 +397,34 @@ def _update_command(args: argparse.Namespace) -> int:
     except UpdateError as exc:
         print(f"update check failed: {exc}", file=sys.stderr)
         return 1
+    downloaded = None
+    if args.download:
+        if not info.available:
+            print("no newer release; nothing was downloaded", file=sys.stderr)
+            return 1
+        try:
+            downloaded = download_asset(
+                info,
+                Path(args.download).expanduser(),
+                expected_sha256=args.sha256,
+            )
+        except UpdateError as exc:
+            print(f"update download failed: {exc}", file=sys.stderr)
+            return 1
     if args.json:
-        print(json.dumps(info.as_dict(), ensure_ascii=False))
+        payload = info.as_dict()
+        if downloaded is not None:
+            payload["downloaded"] = downloaded.as_dict()
+        print(json.dumps(payload, ensure_ascii=False))
     elif info.available:
         print(f"update available: {info.current} -> {info.latest}")
         print(info.url)
         if info.asset_url:
             print(info.asset_url)
+        if downloaded is not None:
+            print(f"downloaded and verified: {downloaded.path}")
+            print(f"sha256: {downloaded.sha256}")
+            print("not installed or executed")
     else:
         print(f"up to date: {info.current}")
     if args.fail_if_available and info.available:

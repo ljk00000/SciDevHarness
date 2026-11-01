@@ -1,7 +1,8 @@
-"""Check GitHub releases for a newer SciDevHarness build.
+"""Check GitHub releases and optionally download a verified Windows asset.
 
-This module only reports updates. It never downloads or executes an installer;
-installing remains an explicit user action.
+The download path is deliberately separate from installation: it verifies the
+SHA-256 and size, writes the file atomically, and never executes it. Installing
+remains an explicit user action.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 from typing import Any, Callable
 
 APP_VERSION = "0.1.0"
@@ -79,6 +81,131 @@ def verify_downloaded_asset(
     if actual != expected:
         raise UpdateError("安装包 SHA-256 不匹配，拒绝更新")
     return actual
+
+
+@dataclass(frozen=True)
+class DownloadedAsset:
+    path: Path
+    sha256: str
+    size: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"path": str(self.path), "sha256": self.sha256, "size": self.size}
+
+
+def download_asset(
+    info: UpdateInfo,
+    destination: Path,
+    *,
+    expected_sha256: str = "",
+    max_bytes: int = 1_500_000_000,
+    timeout: float = 60.0,
+    overwrite: bool = False,
+    open_url: Callable[[str, float], Any] | None = None,
+) -> DownloadedAsset:
+    """Download one HTTPS release asset, verify it, and stop before execution.
+
+    The caller supplies the destination file, or an existing directory in which
+    the release asset name is used. A digest is mandatory: either the caller's
+    explicit value or the GitHub asset digest. Downloads stream to a temporary
+    file in the same directory and are atomically renamed only after both size
+    and SHA-256 checks pass.
+    """
+    url = str(info.asset_url or "")
+    if not url.startswith("https://"):
+        raise UpdateError("安装包地址必须是 HTTPS")
+    target = Path(destination).expanduser()
+    if target.is_dir():
+        if not info.asset_name:
+            raise UpdateError("下载目录需要安装包文件名")
+        target = target / info.asset_name
+    if target.exists() and not overwrite:
+        raise UpdateError(f"目标文件已存在，拒绝覆盖：{target}")
+    expected = str(expected_sha256 or info.asset_digest or "").strip().lower().removeprefix("sha256:")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise UpdateError("Release 没有可用的 SHA-256 摘要；请用 --sha256 显式提供")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    request_timeout = max(5.0, min(float(timeout), 600.0))
+    try:
+        from urllib import request as urllib_request
+
+        def default_open(asset_url: str, seconds: float) -> Any:
+            request = urllib_request.Request(
+                asset_url,
+                headers={"User-Agent": f"SciDevHarness/{APP_VERSION}"},
+            )
+            return urllib_request.urlopen(request, timeout=seconds)
+
+        response = (open_url or default_open)(url, request_timeout)
+    except UpdateError:
+        raise
+    except Exception as exc:  # urllib raises several unrelated exception types
+        raise UpdateError(f"下载安装包失败：{exc}") from exc
+
+    temporary_name = ""
+    try:
+        with response:
+            final_url = str(getattr(response, "geturl", lambda: url)() or url)
+            if not final_url.startswith("https://"):
+                raise UpdateError("下载被重定向到非 HTTPS 地址，拒绝继续")
+            content_length = 0
+            try:
+                content_length = int(getattr(response, "headers", {}).get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                content_length = 0
+            if content_length > max_bytes:
+                raise UpdateError(f"安装包声明大小超过上限：{content_length} 字节")
+            if info.asset_size and content_length and content_length != info.asset_size:
+                raise UpdateError("安装包声明大小与 Release 不一致")
+            handle = tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=str(target.parent),
+                prefix=f".{target.name}.",
+                suffix=".part",
+                delete=False,
+            )
+            temporary_name = handle.name
+            digest = hashlib.sha256()
+            size = 0
+            try:
+                with handle:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise UpdateError(f"安装包超过大小上限：{max_bytes} 字节")
+                        digest.update(chunk)
+                        handle.write(chunk)
+            except Exception:
+                try:
+                    os.unlink(temporary_name)
+                except OSError:
+                    pass
+                temporary_name = ""
+                raise
+        if size <= 0:
+            raise UpdateError("下载到的安装包为空")
+        if info.asset_size and size != info.asset_size:
+            raise UpdateError(f"安装包大小不匹配：{size} != {info.asset_size}")
+        actual = digest.hexdigest()
+        if actual != expected:
+            raise UpdateError("安装包 SHA-256 不匹配，拒绝更新")
+        os.replace(temporary_name, target)
+        temporary_name = ""
+        return DownloadedAsset(path=target, sha256=actual, size=size)
+    except UpdateError:
+        raise
+    except OSError as exc:
+        raise UpdateError(f"写入安装包失败：{exc}") from exc
+    finally:
+        if temporary_name:
+            try:
+                os.unlink(temporary_name)
+            except OSError:
+                pass
 
 
 def parse_version(value: str) -> tuple[int, int, int] | None:

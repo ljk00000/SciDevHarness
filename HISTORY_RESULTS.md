@@ -1,5 +1,13 @@
 # 历史与结果
 
+## 2026-11-01 14:25（Asia/Shanghai）· Inno Setup 安装器脚本
+- 新增 per-user Inno Setup 配置与构建脚本：完整 deployment、开始菜单/可选桌面快捷方式、卸载信息、安装日志、可选 Authenticode 签名和 SHA-256 输出。
+- 验证：2 项静态测试通过，PowerShell 语法解析 0 错误；全量 713 项 0 失败、14 跳过、覆盖率 78%。边界：本机无 Inno Setup，未实际构建；CI 尚未加入安装器构建/签名。
+
+## 2026-11-01 14:10（Asia/Shanghai）· 可校验的更新包下载
+- 新增 `download_asset()` 与 CLI `update --download`：HTTPS、大小上限、Release 声明值、SHA-256 和空文件检查全部通过后才原子落盘；下载后只报告摘要，不执行安装包。
+- 验证：新增下载与 CLI 测试；`test_update` 9 项通过。边界：仍无签名证书/Inno Setup 安装器/自动安装，摘要依赖 Release 提供或用户显式提供。
+
 ## 2026-11-01 13:55（Asia/Shanghai）· TypeScript LSP 与双语言常驻
 - 新增 `LanguageSpec` 与后缀路由：Python 继续用 Ruff，TypeScript/JavaScript 使用 `typescript-language-server`；可用 `SCIDEV_TYPESCRIPT_LSP` 指定命令。
 - `ResidentLSP` 按语言维护多个客户端，Python 与 TS 互不重启；编辑器 `.py/.pyi/.ts/.tsx/.js/.jsx/.mjs/.cjs` 统一进入诊断调度。

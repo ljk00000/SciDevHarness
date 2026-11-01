@@ -72,7 +72,7 @@ python scidev_cli.py update --workspace . --json
 python scidev_cli.py update --fail-if-available
 ```
 
-从 `origin` 推断 GitHub 仓库（可用 `--repo owner/repo` 或 `SCIDEV_UPDATE_REPO` 覆盖），读取 latest GitHub Release 的 tag、页面、说明和 HTTPS 安装包地址，并报告名称、大小和 `digest`；只提示、不下载、不安装。`--fail-if-available` 在发现新版本时返回 1，便于脚本检查。下载后可调用 `scidev_update.verify_downloaded_asset(path, sha256)` 按摘要和大小上限校验。
+从 `origin` 推断 GitHub 仓库（可用 `--repo owner/repo` 或 `SCIDEV_UPDATE_REPO` 覆盖），读取 latest GitHub Release 的 tag、页面、说明和 HTTPS 安装包地址，并报告名称、大小和 `digest`；只提示、不安装。`--download PATH` 会把安装包下载到 PATH（或已存在目录）并以 `digest` 或显式 `--sha256` 校验，声明大小、重定向到 HTTP、超限、摘要不符或空文件都会拒绝；下载成功后只报告路径和摘要，不执行安装包。`--fail-if-available` 在发现新版本时返回 1，便于脚本检查。也可调用 `scidev_update.verify_downloaded_asset(path, sha256)` 校验已有文件。
 
 发布签名：
 
@@ -308,7 +308,7 @@ $exe = Get-ChildItem (Join-Path $stage "deployment") -Filter "scidev_client.exe"
 
 实际打包会按固定版本安装 Nuitka（已缓存时复用）；CI 的暂存和打包器 dry-run 不下载 Nuitka，也不编译 Windows 二进制。发布前仍需在具备 MSVC 的 Windows 环境中完成打包并审查 Qt 第三方许可声明。
 
-仓库 Actions 中的“Windows Package Verification”是手动触发的完整构建检查：它会在固定的 Windows Server 2022 runner 初始化 MSVC、构建 standalone 并实际启动 exe 验证 QML；7 天工件现在包含打包 native binary 的路径/大小/SHA-256，以及构建环境的许可证 metadata，供人工核对；不上传二进制，也不创建 GitHub Release。清单明确标记需人工审核，并不代表许可证合规结论。构建固定使用 `requirements-build.txt` 中的 PySide6-Essentials 6.11.2，Dependabot 每周检查依赖更新，升级后需重新通过打包烟测。公开分发前仍要按实际打包组件补齐 Qt/PySide 第三方许可与声明；Nuitka 编译器受 AGPLv3 约束，其 [Runtime Library Exception](https://github.com/Nuitka/Nuitka/blob/develop/LICENSE-RUNTIME.txt) 对符合条件的编译输出另有许可，二者不能混为一谈。详见 [Qt 官方部署说明](https://doc.qt.io/qtforpython-6/deployment/deployment-pyside6-deploy.html) 与 [Nuitka 4.1.1 元数据](https://pypi.org/project/Nuitka/4.1.1/)。以上不是法律意见。
+仓库 Actions 中的“Windows Package Verification”是手动触发的完整构建检查：它会在固定的 Windows Server 2022 runner 初始化 MSVC、构建 standalone 并实际启动 exe 验证 QML；7 天工件现在包含打包 native binary 的路径/大小/SHA-256，以及构建环境的许可证 metadata，供人工核对；不上传二进制，也不创建 GitHub Release。需要安装器时，在本机装 Inno Setup 6 后运行 `scripts/build_installer.ps1 -Deployment <staged deployment> -Version <x.y.z>`；它只构建 per-user 安装器并可选调用签名脚本，不下载依赖、不执行安装器、不自动安装。清单明确标记需人工审核，并不代表许可证合规结论。构建固定使用 `requirements-build.txt` 中的 PySide6-Essentials 6.11.2，Dependabot 每周检查依赖更新，升级后需重新通过打包烟测。公开分发前仍要按实际打包组件补齐 Qt/PySide 第三方许可与声明；Nuitka 编译器受 AGPLv3 约束，其 [Runtime Library Exception](https://github.com/Nuitka/Nuitka/blob/develop/LICENSE-RUNTIME.txt) 对符合条件的编译输出另有许可，二者不能混为一谈。详见 [Qt 官方部署说明](https://doc.qt.io/qtforpython-6/deployment/deployment-pyside6-deploy.html) 与 [Nuitka 4.1.1 元数据](https://pypi.org/project/Nuitka/4.1.1/)。以上不是法律意见。
 
 当前版本先把 Codex 式编码闭环跑通：
 

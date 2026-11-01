@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import tempfile
 from pathlib import Path
 import unittest
 
 from scidev_update import (
     APP_VERSION,
+    DownloadedAsset,
     UpdateError,
+    UpdateInfo,
     check_for_update,
     compare_versions,
     detect_repo,
+    download_asset,
     parse_version,
     verify_downloaded_asset,
 )
@@ -71,8 +76,6 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(info.asset_url, "")
 
     def test_downloaded_asset_digest_is_verified(self) -> None:
-        import hashlib
-
         with tempfile.TemporaryDirectory(prefix="scidev-update-", ignore_cleanup_errors=True) as temp:
             path = Path(temp) / "setup.exe"
             path.write_bytes(b"installer")
@@ -84,6 +87,89 @@ class UpdateTests(unittest.TestCase):
                 verify_downloaded_asset(path, "not-a-digest")
             with self.assertRaises(UpdateError):
                 verify_downloaded_asset(path, digest, max_bytes=3)
+
+    def test_download_asset_streams_and_verifies_without_executing(self) -> None:
+        payload = b"installer-bytes"
+        digest = hashlib.sha256(payload).hexdigest()
+        info = UpdateInfo(
+            current="0.1.0",
+            latest="0.2.0",
+            url="https://example/release",
+            published_at="",
+            notes="",
+            asset_url="https://example/setup.exe",
+            asset_name="setup.exe",
+            asset_size=len(payload),
+            asset_digest="sha256:" + digest,
+        )
+
+        class Response:
+            def __init__(self, data: bytes):
+                self._stream = io.BytesIO(data)
+                self.headers = {"Content-Length": str(len(data))}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self._stream.close()
+
+            def read(self, size: int = -1) -> bytes:
+                return self._stream.read(size)
+
+            def geturl(self) -> str:
+                return "https://example/setup.exe"
+
+        with tempfile.TemporaryDirectory(prefix="scidev-download-", ignore_cleanup_errors=True) as temp:
+            target = Path(temp) / "setup.exe"
+            result = download_asset(info, target, open_url=lambda _url, _timeout: Response(payload))
+            self.assertEqual(result.path, target)
+            self.assertEqual(result.sha256, digest)
+            self.assertEqual(target.read_bytes(), payload)
+            self.assertEqual(result.as_dict()["size"], len(payload))
+
+            with self.assertRaisesRegex(UpdateError, "SHA-256"):
+                download_asset(
+                    info,
+                    Path(temp) / "bad.exe",
+                    open_url=lambda _url, _timeout: Response(b"x" * len(payload)),
+                )
+            self.assertFalse((Path(temp) / "bad.exe").exists())
+            with self.assertRaisesRegex(UpdateError, "HTTPS"):
+                download_asset(
+                    UpdateInfo("0.1.0", "0.2.0", "u", "", "", asset_url="http://example/setup.exe"),
+                    Path(temp) / "http.exe",
+                    open_url=lambda _url, _timeout: Response(payload),
+                )
+            with self.assertRaisesRegex(UpdateError, "大小"):
+                download_asset(info, Path(temp) / "big.exe", max_bytes=3,
+                               open_url=lambda _url, _timeout: Response(payload))
+
+    def test_cli_downloads_and_reports_a_verified_asset(self) -> None:
+        import contextlib
+        import json
+        from unittest.mock import patch
+
+        import scidev_cli
+
+        info = UpdateInfo(
+            current="0.1.0", latest="0.2.0", url="https://example/release", published_at="", notes="",
+            asset_url="https://example/setup.exe", asset_name="setup.exe",
+            asset_size=7, asset_digest="sha256:" + "a" * 64,
+        )
+        downloaded = DownloadedAsset(Path("setup.exe"), "a" * 64, 7)
+        output = io.StringIO()
+        with (
+            patch.object(scidev_cli, "check_for_update", return_value=info),
+            patch.object(scidev_cli, "download_asset", return_value=downloaded),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(output),
+        ):
+            code = scidev_cli.main(["update", "--workspace", ".", "--json", "--download", "setup.exe"])
+        self.assertEqual(code, 0, output.getvalue())
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["downloaded"]["sha256"], "a" * 64)
+        self.assertEqual(payload["downloaded"]["path"], "setup.exe")
 
     def test_invalid_repository_and_bad_tag_are_rejected(self) -> None:
         with self.assertRaises(UpdateError):
