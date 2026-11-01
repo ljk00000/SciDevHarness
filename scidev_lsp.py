@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 from scidev_process import background_process_options
 
@@ -209,6 +209,18 @@ class LSPClient:
         })
         return uri
 
+    def did_change(self, path: Path, text: str, version: int) -> str:
+        uri = document_uri(path)
+        self._send({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {"uri": uri, "version": max(1, int(version))},
+                "contentChanges": [{"text": text}],
+            },
+        })
+        return uri
+
     def wait_diagnostics(self, uri: str, timeout: float = 6.0) -> list[LSPDiagnostic]:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -259,6 +271,107 @@ class LSPClient:
                     pass
             self.process = None
             self._reader = None
+
+
+class ResidentLSP:
+    """One long-lived Ruff process with coalesced didOpen/didChange requests."""
+
+    def __init__(
+        self,
+        project_root: Path,
+        callback: Callable[[Path, int, list[LSPDiagnostic], str], None],
+        *,
+        timeout: float = 3.0,
+        client_factory: Callable[[Path], LSPClient] | None = None,
+    ):
+        self.project_root = Path(project_root).resolve()
+        self.callback = callback
+        self.timeout = max(1.0, min(float(timeout), 10.0))
+        self.client_factory = client_factory or LSPClient
+        self._client: LSPClient | None = None
+        self._queue: queue.Queue[tuple[str, Path, int, str] | None] = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._closed = False
+        self._lock = threading.Lock()
+        self._versions: dict[str, int] = {}
+        self._opened: set[str] = set()
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._closed = False
+            self._thread = threading.Thread(target=self._run, name="scidev-resident-lsp", daemon=True)
+            self._thread.start()
+
+    def submit(self, path: Path, text: str, generation: int = 0) -> None:
+        if self._closed:
+            return
+        self.start()
+        self._queue.put((str(path), Path(path), int(generation), str(text)))
+
+    def _ensure_client(self) -> LSPClient:
+        if self._client is None:
+            client = self.client_factory(self.project_root)
+            client.start()
+            client.initialize()
+            self._client = client
+            self._versions.clear()
+            self._opened.clear()
+        return self._client
+
+    def _run(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                return
+            latest: dict[str, tuple[str, Path, int, str]] = {item[0]: item}
+            while True:
+                try:
+                    extra = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if extra is None:
+                    self._queue.put(None)
+                    break
+                latest[extra[0]] = extra
+            for _key, (raw_path, path, generation, text) in latest.items():
+                try:
+                    client = self._ensure_client()
+                    uri = document_uri(path)
+                    version = self._versions.get(uri, 0) + 1
+                    if uri in self._opened:
+                        client.did_change(path, text, version)
+                    else:
+                        client.did_open(path, text)
+                        self._opened.add(uri)
+                    self._versions[uri] = version
+                    diagnostics = client.wait_diagnostics(uri, timeout=self.timeout)
+                    self.callback(path, generation, diagnostics, "")
+                except (LSPUnavailable, OSError, ValueError, RuntimeError) as exc:
+                    self._close_client()
+                    self.callback(path, generation, [], f"{type(exc).__name__}: {exc}")
+
+    def _close_client(self) -> None:
+        client = self._client
+        self._client = None
+        if client is not None:
+            try:
+                client.close()
+            except (OSError, RuntimeError):
+                pass
+
+    def close(self, timeout: float = 5.0) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            thread = self._thread
+            self._thread = None
+        if thread is not None:
+            self._queue.put(None)
+            thread.join(timeout=max(0.1, timeout))
+        self._close_client()
 
 
 def collect_diagnostics(

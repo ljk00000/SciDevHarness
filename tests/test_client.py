@@ -1894,7 +1894,9 @@ class EditorSplitInteractionTests(unittest.TestCase):
                 self.app.processEvents()
 
     def test_closing_split_restores_primary_file_context_focus_and_save_target(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="scidev-editor-split-focus-") as temp:
+        with tempfile.TemporaryDirectory(
+            prefix="scidev-editor-split-focus-", ignore_cleanup_errors=True,
+        ) as temp:
             root = Path(temp)
             primary_path = root / "primary.py"
             secondary_path = root / "secondary.py"

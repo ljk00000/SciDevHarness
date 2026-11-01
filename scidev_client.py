@@ -113,7 +113,7 @@ from scidev_core import (
 )
 from scidev_icons import activity_icon
 from scidev_highlighting import LanguageHighlighter, PythonHighlighter
-from scidev_lsp import collect_diagnostics as collect_lsp_diagnostics
+from scidev_lsp import ResidentLSP, collect_diagnostics as collect_lsp_diagnostics
 from scidev_worktree import WorktreeError, WorktreeManager
 from scidev_worktree_ui import WorktreeDialog
 from scidev_pty import PTYSession, PTYUnavailable
@@ -793,6 +793,24 @@ class ProviderCheckThread(QThread):
         except Exception as exc:  # noqa: BLE001 - a connectivity probe must not crash the UI
             ok, message = False, f"{type(exc).__name__}: {exc}"
         self.checked.emit(ok, message)
+
+
+class ResidentLSPBridge(QObject):
+    diagnostics_ready = Signal(str, int, object, str)
+
+    def __init__(self, root: Path, parent=None):
+        super().__init__(parent)
+        self._resident = ResidentLSP(root, self._deliver)
+        self._resident.start()
+
+    def _deliver(self, path: Path, generation: int, diagnostics: object, error: str) -> None:
+        self.diagnostics_ready.emit(str(path), generation, diagnostics, error)
+
+    def submit(self, path: Path, text: str, generation: int) -> None:
+        self._resident.submit(path, text, generation)
+
+    def close(self) -> None:
+        self._resident.close()
 
 
 class LSPDiagnosticsThread(QThread):
@@ -2795,6 +2813,7 @@ class ClientWindow(QMainWindow):
         self._code_intel_timer.setInterval(self.CODE_INTEL_DEBOUNCE_MS)
         self._code_intel_timer.timeout.connect(self._refresh_code_intel)
         self._lsp_thread: LSPDiagnosticsThread | None = None
+        self._resident_lsp_bridge: ResidentLSPBridge | None = None
         self._lsp_generation = 0
         self._lsp_diagnostics: dict[str, list[dict]] = {}
         self._code_intel_syntax_errors: dict[str, SyntaxError] = {}
@@ -7834,19 +7853,11 @@ class ClientWindow(QMainWindow):
     def _schedule_lsp_diagnostics(self, path: Path, text: str) -> None:
         if len(text) > self.CODE_INTEL_MAX_PARSE_CHARS:
             return
-        if self._lsp_thread is not None and self._lsp_thread.isRunning():
-            return
+        if not hasattr(self, "_resident_lsp_bridge") or self._resident_lsp_bridge is None:
+            self._resident_lsp_bridge = ResidentLSPBridge(self.project_root, self)
+            self._resident_lsp_bridge.diagnostics_ready.connect(self._on_lsp_diagnostics)
         self._lsp_generation += 1
-        generation = self._lsp_generation
-        thread = LSPDiagnosticsThread(self.project_root, path, text, generation, self)
-        thread.diagnostics_ready.connect(self._on_lsp_diagnostics)
-        def clear(thread_ref=thread) -> None:
-            if self._lsp_thread is thread_ref:
-                self._lsp_thread = None
-        thread.finished.connect(clear)
-        thread.finished.connect(thread.deleteLater)
-        self._lsp_thread = thread
-        thread.start()
+        self._resident_lsp_bridge.submit(path, text, self._lsp_generation)
 
     def _on_lsp_diagnostics(self, raw_path: str, generation: int, diagnostics: object, error: str) -> None:
         if generation != self._lsp_generation:
@@ -9236,6 +9247,10 @@ class ClientWindow(QMainWindow):
             if lsp_thread.isRunning():
                 lsp_thread.terminate()
                 lsp_thread.wait(1000)
+        resident_lsp = getattr(self, "_resident_lsp_bridge", None)
+        if resident_lsp is not None:
+            resident_lsp.close()
+            self._resident_lsp_bridge = None
         app = QApplication.instance()
         windows = getattr(app, "_scidev_windows", []) if app is not None else []
         if self in windows:

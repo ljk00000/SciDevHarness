@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-01 16:00（Asia/Shanghai）· 常驻 Python LSP
+- `scidev_lsp.py` 新增 `ResidentLSP`：每个窗口复用一个 Ruff 进程，合并连续输入，首次 didOpen、后续 didChange，回调可携带 generation。
+- 桌面端用 `ResidentLSPBridge` 把后台诊断转成 Qt 信号；关闭窗口时停止 worker 和 Ruff 进程。
+- 新增 1 项 fake-client 测试（复用单进程、didOpen→didChange、关闭）；mypy 扩到 16 个文件；全量套件 689 项 0 失败、14 跳过、覆盖率 78%。
+
 ## 2026-11-01 15:00（Asia/Shanghai）· CLI 无改动语义
 - CLI `exec` 默认把“完成但 `no_changes_detected`”判为失败：`success=false`、`status=no_changes`、`error_kind=no_changes`、退出码 1。
 - 新增 `--allow-no-changes`，供问答/分析类任务显式放行。

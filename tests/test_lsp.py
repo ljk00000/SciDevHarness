@@ -1,10 +1,74 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
-from scidev_lsp import LSPUnavailable, collect_diagnostics, document_uri
+from scidev_lsp import LSPDiagnostic, LSPUnavailable, ResidentLSP, collect_diagnostics, document_uri
+
+
+class ResidentLSPTests(unittest.TestCase):
+    def test_reuses_one_client_and_sends_did_change(self) -> None:
+        class FakeClient:
+            instances = []
+
+            def __init__(self, root):
+                self.root = root
+                self.opened = []
+                self.changed = []
+                self.closed = False
+                FakeClient.instances.append(self)
+
+            def start(self):
+                pass
+
+            def initialize(self):
+                pass
+
+            def did_open(self, path, text, language_id="python"):
+                self.opened.append((str(path), text))
+                return document_uri(path)
+
+            def did_change(self, path, text, version):
+                self.changed.append((str(path), text, version))
+                return document_uri(path)
+
+            def wait_diagnostics(self, uri, timeout=6.0):
+                return [LSPDiagnostic(1, 1, 1, 2, "error", "fake")]
+
+            def close(self):
+                self.closed = True
+
+        events: list[tuple[str, int, int]] = []
+        first_done = threading.Event()
+        ready = threading.Event()
+
+        def callback(path, generation, diagnostics, error):
+            events.append((str(path), generation, len(diagnostics)))
+            if generation == 1:
+                first_done.set()
+            if len(events) >= 2:
+                ready.set()
+
+        with tempfile.TemporaryDirectory(prefix="scidev-resident-lsp-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            path = root / "app.py"
+            path.write_text("x = 1\n", encoding="utf-8")
+            resident = ResidentLSP(root, callback, client_factory=FakeClient)
+            try:
+                resident.start()
+                resident.submit(path, "x = 1\n", 1)
+                self.assertTrue(first_done.wait(3.0), events)
+                resident.submit(path, "x = 2\n", 2)
+                self.assertTrue(ready.wait(3.0), events)
+            finally:
+                resident.close()
+            self.assertEqual(len(FakeClient.instances), 1)
+            client = FakeClient.instances[0]
+            self.assertGreaterEqual(len(client.opened), 1)
+            self.assertGreaterEqual(len(client.changed), 1)
+            self.assertTrue(client.closed)
 
 
 class LSPDiagnosticsTests(unittest.TestCase):
