@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-11-01T09:46:56+08:00",
+  "provider": {
+    "api_base": "http://127.0.0.1:11434/v1",
+    "model": "scidev-qwen2.5-coder-7b:q4_k_m"
+  },
+  "suite": "evals/local/suite.json",
+  "environment": {
+    "SCIDEV_TEXT_TOOL_CALL_FALLBACK": "1",
+    "SCIDEV_MAX_AGENT_TURNS": "8"
+  },
+  "total": 3,
+  "passed": 1,
+  "failed": 2,
+  "pass_rate": 0.3333,
+  "average_turns": 2.67,
+  "elapsed_seconds": 16.004,
+  "tasks": {
+    "fix-add": {
+      "passed": false,
+      "turns": 5,
+      "note": "模型改为先询问确认，未修改文件；check 仍失败"
+    },
+    "create-notes": {
+      "passed": true,
+      "turns": 3,
+      "note": "通过文本工具调用回退成功写文件"
+    },
+    "fix-unittest": {
+      "passed": false,
+      "turns": 0,
+      "note": "补丁需要审批但 CLI 没有审核界面，被归为 approval 错误"
+    }
+  },
+  "without_text_tool_fallback": {
+    "total": 3,
+    "passed": 0,
+    "failed": 3,
+    "average_turns": 1.0,
+    "elapsed_seconds": 15.963,
+    "note": "弱模型把工具调用写成 fenced JSON 文本后停止；默认 fallback 关闭"
+  },
+  "notes": [
+    "这是弱本地模型基线，不代表 harness 对强模型的效果。",
+    "Ollama 未返回 usage，token/成本为 0，不能用于成本对比。",
+    "标准 20 项套件尚未用真实模型跑完。"
+  ]
+}

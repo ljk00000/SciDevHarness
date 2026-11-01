@@ -13,6 +13,8 @@ class ErrorClassificationTests(unittest.TestCase):
             "request timed out": ("timeout", True),
             "connection refused by proxy": ("network", True),
             "tool arguments do not match schema": ("tool", True),
+            "工具参数无效": ("tool", True),
+            "当前没有可用的补丁审核界面": ("approval", False),
             "pytest failed with exit code 1": ("verification", True),
             "git worktree path missing": ("workspace", False),
             "unexpected shutdown": ("internal", True),

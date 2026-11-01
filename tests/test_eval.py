@@ -65,6 +65,34 @@ class EvalHarnessTests(unittest.TestCase):
             self.assertEqual(again["previous_pass_rate"], 0.5)
             self.assertEqual(again["regression"], 0.5)
 
+    def test_suite_environment_is_limited_to_scidev_variables(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-eval-env-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            suite = root / "suite.json"
+            suite.write_text(json.dumps({
+                "name": "env-suite",
+                "environment": {
+                    "SCIDEV_TEXT_TOOL_CALL_FALLBACK": "1",
+                    "SCIDEV_MAX_AGENT_TURNS": 6,
+                },
+                "tasks": [{
+                    "id": "one",
+                    "prompt": "one",
+                    "check": [sys.executable, "-c", "pass"],
+                }],
+            }), encoding="utf-8")
+            runner = EvalRunner(root, suite, task_runner=lambda _work, _task: {"success": True})
+            self.assertEqual(runner.tasks[0].env["SCIDEV_TEXT_TOOL_CALL_FALLBACK"], "1")
+            self.assertEqual(runner.tasks[0].env["SCIDEV_MAX_AGENT_TURNS"], "6")
+
+            suite.write_text(json.dumps({
+                "name": "bad-env",
+                "environment": {"PATH": "x"},
+                "tasks": [{"id": "one", "prompt": "one", "check": ["x"]}],
+            }), encoding="utf-8")
+            with self.assertRaises(EvalError):
+                EvalRunner(root, suite)
+
     def test_parallel_jobs_and_cost_reporting(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-eval-cost-", ignore_cleanup_errors=True) as temp:
             root = Path(temp)

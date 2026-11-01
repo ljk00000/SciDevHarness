@@ -96,6 +96,7 @@ python scidev_cli.py pr-review --workspace . --number 12 --action approve
 - `rate_limit`：限流/额度
 - `timeout`：超时
 - `network`：网络
+- `approval`：需要审批但当前界面/模式无法批准
 - `tool`：工具参数/补丁
 - `verification`：测试/lint/typecheck
 - `workspace`：路径/文件/Git
@@ -154,6 +155,7 @@ python scidev_cli.py migrate --workspace .
 - 隔离 worktree：命令面板输入 `> new worktree`（或“新建 worktree”/“隔离工作区”），在当前 Git 仓库创建 `scidev/agent-gui-*` 分支，并打开一个独立窗口。两个窗口可以并行跑任务，文件和提交互相隔离；worktree 默认保留，需要手动清理。
 - 管理 worktree：`> worktrees` 打开列表，可查看分支、路径、HEAD，打开或删除；删除有未提交改动时会失败，勾选“强制删除”才忽略改动并删除分支。
 - 真实仓库 eval：`python scidev_cli.py eval --suite evals/standard/suite.json --output .research/evals/report.json --jobs 2` 会在隔离副本里跑固定任务，用确定性 check 判断成败，报告完成率、平均轮数、prompt/completion token、耗时、相对上次的回归和按定价估算的成本。`evals/smoke/` 是 3 个冒烟任务，`evals/standard/suite.json` 是 20 个固定任务；测试会确认每个任务在修复前确实失败。价格可在 suite 写 `"pricing": {"input_per_million": 1.0, "output_per_million": 2.0}`，或用 `SCIDEV_EVAL_INPUT_PRICE`/`SCIDEV_EVAL_OUTPUT_PRICE` 覆盖。
+- 本地弱模型基线：`evals/local/suite.json` 自动打开 `SCIDEV_TEXT_TOOL_CALL_FALLBACK=1` 并把轮次限制为 8；本机 Qwen2.5-Coder-7B 的 3 项冒烟结果为 **1/3**（无 fallback 时 0/3），记录在 `evals/baselines/local-qwen2.5-coder-7b.json`。这是弱模型基线，不代表强模型效果；Ollama 不返回 usage，token/成本为 0。
 - 项目上下文：按任务关键词（含有限中英软件术语映射）与当前文件自动定位相关代码，附带项目结构、依赖声明、Git 状态和适用目录指令；点击聊天输入区 `@` →“查看项目上下文”可预览、刷新
 - 任务规划：右侧计划面板提供自动规划、必须先规划、关闭三种模式；计划步骤随会话保存，重试可恢复，未完成计划不会被当作成功提交
 - 本地任务队列：最多 6 次尝试（含首次）；429/5xx 优先遵从服务端 `Retry-After`，否则指数退避，进程重启后可恢复。相同任务/请求体重试保持幂等键，任务或请求体改变则更换键；服务端可能不支持幂等键，不能保证网络中断时绝不重复计费

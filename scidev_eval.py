@@ -36,6 +36,7 @@ class EvalTask:
     check: list[str] = field(default_factory=list)
     timeout: float = 180.0
     verify: bool = False
+    env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -90,6 +91,15 @@ def _parse_suite(path: Path) -> tuple[str, Path | None, list[EvalTask]]:
             raise EvalError(f"workspace 模板不存在：{workspace_path}")
     tasks: list[EvalTask] = []
     seen: set[str] = set()
+    env_raw = data.get("environment") or {}
+    if not isinstance(env_raw, dict):
+        raise EvalError("eval suite environment 必须是对象")
+    suite_env: dict[str, str] = {}
+    for raw_key, raw_value in list(env_raw.items())[:20]:
+        key = str(raw_key).strip()
+        if not key.startswith("SCIDEV_") or not key.replace("_", "").isalnum():
+            raise EvalError(f"environment 只允许 SCIDEV_* 变量：{key}")
+        suite_env[key] = str(raw_value)[:500]
     for index, raw in enumerate(raw_tasks):
         if not isinstance(raw, dict):
             raise EvalError(f"tasks[{index}] 必须是对象")
@@ -127,6 +137,7 @@ def _parse_suite(path: Path) -> tuple[str, Path | None, list[EvalTask]]:
             check=check,
             timeout=timeout,
             verify=bool(raw.get("verify", False)),
+            env=dict(suite_env),
         ))
     return str(data.get("name") or path.stem), workspace_path, tasks
 
@@ -179,6 +190,7 @@ def _default_task_runner(work: Path, task: EvalTask) -> dict[str, Any]:
             errors="replace",
             timeout=task.timeout,
             check=False,
+            env={**os.environ, **task.env},
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"success": False, "error": str(exc), "output": ""}

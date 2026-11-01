@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-01 14:00（Asia/Shanghai）· 真实本地模型基线
+- 用本机 Ollama `scidev-qwen2.5-coder-7b:q4_k_m` 跑 3 项 smoke：无 fallback 0/3，开启 `SCIDEV_TEXT_TOOL_CALL_FALLBACK=1` 后 1/3（`create-notes` 通过），平均 4.33 轮。
+- eval suite 新增受限 `environment`（只允许 `SCIDEV_*`），任务子进程会继承；新增 `evals/local/suite.json`（fallback + 8 轮）和 `evals/baselines/local-qwen2.5-coder-7b.json`。
+- 新增 1 项 suite 环境测试；全量套件 687 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：本地 7B 基线不代表强模型；Ollama 不返回 usage，token/成本为 0；标准 20 项尚未用真实模型跑完；基线是合成小任务，不是完整仓库。
+
 ## 2026-11-01 13:00（Asia/Shanghai）· 结构化错误分类
 - 新增 `scidev_errors.py`：把失败分为 auth/rate_limit/timeout/network/tool/verification/workspace/internal，附用户消息、是否可重试和有界 detail。
 - RetryQueue 的 `task_failed`/`task_retry` 事件、CLI 失败 JSON 都带 `error_kind`、`user_message`、`retryable`、`detail`；桌面失败气泡显示分类前缀。

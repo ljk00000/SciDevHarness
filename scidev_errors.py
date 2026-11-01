@@ -26,13 +26,14 @@ class ErrorInfo:
         }
 
 
-_AUTH = re.compile(r"(?i)\b(401|403|unauthori[sz]ed|invalid api key|authentication|forbidden|permission denied)\b")
-_RATE = re.compile(r"(?i)\b(429|rate limit|too many requests|quota)\b")
-_TIMEOUT = re.compile(r"(?i)\b(timeout|timed out|deadline exceeded)\b")
-_NETWORK = re.compile(r"(?i)\b(connection|connect|network|dns|name resolution|proxy|ssl|tls)\b")
-_TOOL = re.compile(r"(?i)\b(tool|schema|json|argument|patch|apply_patch)\b")
-_VERIFY = re.compile(r"(?i)\b(test|pytest|unittest|lint|ruff|mypy|tsc|verification|check)\b")
-_WORKSPACE = re.compile(r"(?i)\b(workspace|project|path|file|directory|git|worktree)\b")
+_AUTH = re.compile(r"(?i)\b(401|403|unauthori[sz]ed|invalid api key|authentication|forbidden|permission denied)\b|认证|未授权|权限不足|密钥无效")
+_RATE = re.compile(r"(?i)\b(429|rate limit|too many requests|quota)\b|限流|额度|过于频繁")
+_TIMEOUT = re.compile(r"(?i)\b(timeout|timed out|deadline exceeded)\b|超时")
+_NETWORK = re.compile(r"(?i)\b(connection|connect|network|dns|name resolution|proxy|ssl|tls)\b|网络|连接失败|代理")
+_APPROVAL = re.compile(r"(?i)\b(approval|approve|review screen|rejected)\b|审批|审核界面|未批准|拒绝批准")
+_TOOL = re.compile(r"(?i)\b(tool|schema|json|argument|patch|apply_patch)\b|工具|补丁|参数|调用")
+_VERIFY = re.compile(r"(?i)\b(test|pytest|unittest|lint|ruff|mypy|tsc|verification|check)\b|测试|检查|验证")
+_WORKSPACE = re.compile(r"(?i)\b(workspace|project|path|file|directory|git|worktree)\b|工作区|文件|路径|仓库")
 
 
 def classify_message(message: str, *, retryable: bool = True) -> ErrorInfo:
@@ -47,6 +48,8 @@ def classify_message(message: str, *, retryable: bool = True) -> ErrorInfo:
         return ErrorInfo("timeout", "请求超时；可重试，或拆小任务/降低上下文。", True, detail)
     if _NETWORK.search(combined):
         return ErrorInfo("network", "网络连接失败；检查直连、代理或服务地址。", True, detail)
+    if _APPROVAL.search(combined):
+        return ErrorInfo("approval", "操作需要人工审批，但当前界面/模式无法批准。", False, detail)
     if _TOOL.search(combined):
         return ErrorInfo("tool", "工具调用或补丁参数无效；模型应修正参数后重试。", True, detail)
     if _VERIFY.search(combined):
