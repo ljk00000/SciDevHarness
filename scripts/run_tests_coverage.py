@@ -157,6 +157,12 @@ def _parent() -> int:
     RESULT.unlink(missing_ok=True)
     shutil.rmtree(PARTS, ignore_errors=True)
     PARTS.mkdir(parents=True, exist_ok=True)
+    # A previous run can leave partial .coverage.* files that combine into a
+    # misleadingly low percentage. Every full run starts from a clean database.
+    for pattern in (".coverage", ".coverage.*"):
+        for path in ROOT.glob(pattern):
+            if path.is_file():
+                path.unlink(missing_ok=True)
     totals = {"success": True, "tests_run": 0, "failures": 0, "errors": 0, "skipped": 0}
     details: list[dict[str, str]] = []
     crashed: list[str] = []
