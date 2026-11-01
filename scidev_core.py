@@ -6365,6 +6365,24 @@ class CodingAgent:
         return used, reports
 
     @staticmethod
+    def _task_estimated_tokens(session: dict[str, Any]) -> int:
+        """Estimate tokens for providers (for example Ollama) that omit usage."""
+        current = ModelRequestUsage.snapshot(session)
+        baseline = session.get("task_usage_baseline")
+        baseline = baseline if isinstance(baseline, dict) else {}
+        request_bytes = max(
+            0,
+            current["request_body_bytes"] - ModelRequestUsage._count(baseline.get("request_body_bytes")),
+        )
+        response_bytes = max(
+            0,
+            current["response_body_bytes"] - ModelRequestUsage._count(baseline.get("response_body_bytes")),
+        )
+        # Four UTF-8 bytes per token is a deliberate approximation; this is
+        # only a safety budget, never a billing figure.
+        return (request_bytes + response_bytes) // 4
+
+    @staticmethod
     def _should_fallback_provider(exc: Exception) -> bool:
         text = str(exc).casefold()
         if "http 404" in text or "model_not_found" in text or "model not found" in text:
@@ -7559,7 +7577,13 @@ class CodingAgent:
             max_task_tokens = int(self.summary_settings.max_task_tokens or 0)
             if max_task_tokens:
                 used_tokens, token_reports = self._task_token_usage(session)
-                if token_reports and used_tokens >= max_task_tokens:
+                estimated = False
+                if not token_reports:
+                    estimated_tokens = self._task_estimated_tokens(session)
+                    if estimated_tokens > used_tokens:
+                        used_tokens = estimated_tokens
+                        estimated = True
+                if (token_reports or estimated) and used_tokens >= max_task_tokens:
                     message = (
                         f"任务 token 预算已用尽（{used_tokens}/{max_task_tokens}）；"
                         "未完成改动保留在工作区，不会自动提交。"
@@ -7569,6 +7593,7 @@ class CodingAgent:
                         "turn": turn,
                         "used_tokens": used_tokens,
                         "limit": max_task_tokens,
+                        "estimated": estimated,
                     }
                     self.ledger.append("task_token_budget_exhausted", event)
                     self._emit("task_token_budget_exhausted", event)

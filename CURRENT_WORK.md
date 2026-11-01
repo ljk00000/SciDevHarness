@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-01 18:00（Asia/Shanghai）· 无 usage 模型的 token 预算
+- 服务端不返回 usage 时（Ollama 等），按任务内请求/响应字节数 `/4` 估算 token，并让 `max_task_tokens` 继续生效。
+- `task_token_budget_exhausted` 事件新增 `estimated` 标记；新增 1 项估算测试；全量套件 692 项 0 失败、14 跳过、覆盖率 78%。
+
 ## 2026-11-01 17:00（Asia/Shanghai）· MCP 图形浏览器
 - 新增 `scidev_mcp_ui.py`：树形显示工具/资源/提示词，读取资源、渲染 prompt、预览并显式插入输入框。
 - 命令面板新增 `> mcp`；管理器随对话框启动，关闭时释放；资源/prompt 不自动进入模型上下文。

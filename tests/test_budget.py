@@ -44,6 +44,13 @@ class BudgetSettingsTests(unittest.TestCase):
         }
         self.assertEqual(CodingAgent._task_token_usage(session), (60, 2))
 
+    def test_task_estimated_tokens_use_request_and_response_bytes(self) -> None:
+        session = {
+            "model_usage": {"request_body_bytes": 400, "response_body_bytes": 200},
+            "task_usage_baseline": {"request_body_bytes": 100, "response_body_bytes": 50},
+        }
+        self.assertEqual(CodingAgent._task_estimated_tokens(session), 112)
+
     def test_configured_turn_limit_is_applied(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)

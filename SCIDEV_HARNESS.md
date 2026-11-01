@@ -10,7 +10,7 @@
 |---|---|---|---|
 | Agent 循环 | ✅ 已实现 | 最多 32 轮模型/工具交互；工具结果回传给模型，允许根据报错继续处理；结束时核对 Git diff | 模型仍可能误判；达到轮数上限会失败，不保证一次完成 |
 | 会话恢复 | ✅ 基础已实现 | Agent 设置列出最近会话，恢复后复用原 session id 和 messages 继续对话；CLI `sessions` 列出会话，`exec --session-id` 继续；不会自动重放已完成的工具调用 | 恢复的是会话上下文，不是完整 UI 消息回放；不自动恢复已中断的命令/进程；会话文件损坏时拒绝恢复 |
-| 任务预算 | ✅ 基础已实现 | Agent 设置可配置单任务最多模型轮次（1–64）和最多 token（0 = 不限）；token 按任务起点扣除历史累计，用尽后失败并保留未提交改动 | token 预算只统计服务端实际返回的 usage；未返回 usage 的 endpoint 无法执行 token 硬限；没有货币成本换算 |
+| 任务预算 | ✅ 基础已实现 | Agent 设置可配置单任务最多模型轮次（1–64）和最多 token（0 = 不限）；token 按任务起点扣除历史累计，用尽后失败并保留未提交改动；服务端不返回 usage 时（如 Ollama）按任务内请求/响应 UTF-8 字节数除以 4 估算并继续执行硬限，事件标记 `estimated=true` | 估算不是真实计费；字节/token 比例因语言和 tokenizer 而异；没有货币成本换算；预算用尽只停止任务，不自动回滚已改文件 |
 | 代码智能 | 🟡 Python 诊断/补全/跳转已实现 | Python 文件使用常驻 Ruff LSP 进程，异步发送 didOpen/didChange 并把诊断显示在“问题”面板；同一窗口复用进程，输入请求合并；双击跳到行列。编辑器 `Ctrl+Space` 用本机 Jedi 显示补全，`Ctrl+F12` 用 Jedi 跳转到工作区内定义；原有 `F12` 符号跳转保留。语法错误仍由 AST 即时显示 | Ruff 进程按窗口常驻，不是全局共享；Jedi 只支持 Python，补全同步执行、首次可能较慢；无重命名/引用/调用层级/tsserver/调试器；Ruff 或 Jedi 未安装时静默跳过；诊断不保证每个版本都送达 |
 | 模型接入 | ✅ 基础已实现 | Agent 设置内可填写 API Base URL、模型、推理强度、回退模型和 API Key；Key 存入 Windows 凭据管理器，非敏感配置存 `.research/provider.json`；环境变量作为后备；CLI 显式 provider 参数强制覆盖；可异步测试 `/models` 连通性，并用一次极小 ping 工具调用探测工具调用/上下文/视觉元数据；HTTP 404/模型不存在 400 时自动用回退模型重试一次 | 不是 OpenAI/ChatGPT 账号登录或 OAuth；Key 仍可被同一 Windows 用户下的进程读取；只支持 OpenAI-compatible Chat Completions；能力探测依赖 endpoint 报告且会消耗少量 token；回退只覆盖模型解析错误，不覆盖认证/限流/网络错误 |
 | 编码工具 | ✅ 核心已实现 | `search_code`、`get_project_context`、`list_files`、`read_file`、`write_file`、`apply_patch`、精确/批量 `replace_in_file`、`run_command`、`git_diff`；按用户意图启用网页搜索/打开/点击/截图；可选视觉制品检查 | 网页操作逐次审批且不复用登录态；截图只本机保存；符号提取不是完整语言服务器 |
