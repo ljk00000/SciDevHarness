@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-01 09:35（Asia/Shanghai）· PR 查询与审查
+- `scidev_pr.py` 新增 `view_pull_request`、`review_pull_request`：调用已登录 `gh` 读取 PR 元数据，提交 approve/comment/request-changes。
+- CLI 新增 `pr-view`、`pr-review`；支持 `--json`、`--allow-network`，comment/request-changes 强制 body，校验编号与 action。
+- 网络 deny 默认拒绝；新增测试覆盖查询、审查命令、空 body 和非法 action；全量套件 670 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：需要 GitHub 写权限；不做自动 review 修复；不合并 PR；仍是 gh CLI 凭据，不是 GitHub App/OAuth。
+
 ## 2026-11-01 09:15（Asia/Shanghai）· Eval 并行与成本
 - `EvalRunner` 新增 `jobs`（1–8），用线程池并行跑隔离任务；CLI `eval` 新增 `--jobs`。
 - 结果记录 prompt/completion token，按 suite `pricing` 或 `SCIDEV_EVAL_INPUT_PRICE`/`SCIDEV_EVAL_OUTPUT_PRICE` 估算美元成本。

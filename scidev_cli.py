@@ -18,7 +18,13 @@ from scidev_policy import ExecutionMode
 from scidev_attachments import AttachmentError, load_image_file
 from scidev_eval import EvalError, EvalRunner
 from scidev_worktree import WorktreeError, WorktreeManager
-from scidev_pr import PullRequestError, build_plan, create_pull_request
+from scidev_pr import (
+    PullRequestError,
+    build_plan,
+    create_pull_request,
+    review_pull_request,
+    view_pull_request,
+)
 from scidev_migrations import migrate_project
 
 
@@ -111,6 +117,29 @@ def _parser() -> argparse.ArgumentParser:
     pr_parser.add_argument("--allow-network", action="store_true", help="override a deny network policy")
     pr_parser.add_argument("--dry-run", action="store_true", help="print the plan without pushing")
     pr_parser.add_argument("--json", action="store_true", help="emit one JSON object")
+    pr_view_parser = subparsers.add_parser(
+        "pr-view",
+        help="show GitHub pull request metadata",
+        description="Read a pull request with the authenticated gh CLI.",
+    )
+    pr_view_parser.add_argument("--workspace", required=True)
+    pr_view_parser.add_argument("--number", required=True, help="pull request number")
+    pr_view_parser.add_argument("--allow-network", action="store_true")
+    pr_view_parser.add_argument("--json", action="store_true")
+    pr_review_parser = subparsers.add_parser(
+        "pr-review",
+        help="approve, comment on, or request changes on a GitHub PR",
+        description="Submit a PR review with the authenticated gh CLI.",
+    )
+    pr_review_parser.add_argument("--workspace", required=True)
+    pr_review_parser.add_argument("--number", required=True, help="pull request number")
+    pr_review_parser.add_argument(
+        "--action", required=True,
+        choices=("approve", "comment", "request-changes"),
+    )
+    pr_review_parser.add_argument("--body", default="", help="review body")
+    pr_review_parser.add_argument("--allow-network", action="store_true")
+    pr_review_parser.add_argument("--json", action="store_true")
     migrate_parser = subparsers.add_parser(
         "migrate",
         help="migrate project settings, sessions and event DB to the current schema",
@@ -247,6 +276,41 @@ def _eval_command(args: argparse.Namespace) -> int:
     return 0 if report["failed"] == 0 else 1
 
 
+def _pr_view_command(args: argparse.Namespace) -> int:
+    try:
+        payload = view_pull_request(
+            Path(args.workspace), args.number, allow_network=args.allow_network,
+        )
+    except PullRequestError as exc:
+        print(f"pr-view failed: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(f"#{payload.get('number')} {payload.get('title')} [{payload.get('state')}]")
+        print(payload.get("url") or "")
+    return 0
+
+
+def _pr_review_command(args: argparse.Namespace) -> int:
+    try:
+        payload = review_pull_request(
+            Path(args.workspace),
+            args.number,
+            args.action,
+            body=args.body,
+            allow_network=args.allow_network,
+        )
+    except PullRequestError as exc:
+        print(f"pr-review failed: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(f"#{payload['number']} {payload['action']}: {payload['url']}")
+    return 0
+
+
 def _migrate_command(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     if not workspace.is_dir():
@@ -322,6 +386,10 @@ def main(argv: list[str] | None = None) -> int:
         return _eval_command(args)
     if args.command == "pr":
         return _pr_command(args)
+    if args.command == "pr-view":
+        return _pr_view_command(args)
+    if args.command == "pr-review":
+        return _pr_review_command(args)
     if args.command == "migrate":
         return _migrate_command(args)
     if args.command != "exec":

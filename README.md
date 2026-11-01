@@ -65,6 +65,16 @@ python scidev_cli.py pr --workspace .research/worktrees/login --title "登录页
 - 项目网络策略为 `deny` 时需要显式 `--allow-network`
 - 不在 `main`/`master` 上创建 PR，避免直接把主分支当 head
 
+查看和审查：
+
+```powershell
+python scidev_cli.py pr-view --workspace . --number 12 --json
+python scidev_cli.py pr-review --workspace . --number 12 --action comment --body "请补测试"
+python scidev_cli.py pr-review --workspace . --number 12 --action approve
+```
+
+`pr-view` 读取编号、标题、状态、作者、head/base、review decision 和 mergeable；`pr-review` 支持 `approve`、`comment`、`request-changes`，comment/request-changes 必须提供 body。两者都受网络 deny 约束，需要 `--allow-network` 才放行。
+
 ### 版本迁移
 
 ```powershell

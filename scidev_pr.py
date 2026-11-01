@@ -142,6 +142,92 @@ def build_plan(
     )
 
 
+def _validate_number(number: object) -> int:
+    try:
+        value = int(number)
+    except (TypeError, ValueError) as exc:
+        raise PullRequestError(f"无效的 PR 编号：{number}") from exc
+    if value < 1 or value > 1_000_000_000:
+        raise PullRequestError(f"无效的 PR 编号：{number}")
+    return value
+
+
+def view_pull_request(
+    workspace: Path,
+    number: object,
+    *,
+    runner: Runner | None = None,
+    allow_network: bool = False,
+) -> dict[str, Any]:
+    workspace = Path(workspace).resolve()
+    if _network_denied(workspace) and not allow_network:
+        raise PullRequestError("网络策略为 deny；使用 --allow-network 显式放行 PR 查询")
+    pr_number = _validate_number(number)
+    completed = _run(
+        workspace,
+        ["gh", "pr", "view", str(pr_number), "--json",
+         "number,title,state,url,author,headRefName,baseRefName,reviewDecision,mergeable"],
+        timeout=60,
+        runner=runner,
+    )
+    if completed.returncode != 0:
+        raise PullRequestError((completed.stderr or completed.stdout or "gh pr view 失败").strip()[-800:])
+    try:
+        data = json.loads(_output(completed) or "{}")
+    except ValueError as exc:
+        raise PullRequestError("gh pr view 没有返回 JSON") from exc
+    if not isinstance(data, dict):
+        raise PullRequestError("gh pr view 返回了非对象 JSON")
+    return data
+
+
+def review_pull_request(
+    workspace: Path,
+    number: object,
+    action: str,
+    *,
+    body: str = "",
+    runner: Runner | None = None,
+    allow_network: bool = False,
+) -> dict[str, Any]:
+    workspace = Path(workspace).resolve()
+    if _network_denied(workspace) and not allow_network:
+        raise PullRequestError("网络策略为 deny；使用 --allow-network 显式放行 PR 审查")
+    pr_number = _validate_number(number)
+    normalized = str(action or "").strip().lower()
+    flags = {
+        "approve": "--approve",
+        "comment": "--comment",
+        "request-changes": "--request-changes",
+        "request_changes": "--request-changes",
+    }
+    if normalized not in flags:
+        raise PullRequestError("action 必须是 approve、comment 或 request-changes")
+    body_text = str(body or "").strip()[:20_000]
+    if normalized in {"comment", "request-changes", "request_changes"} and not body_text:
+        raise PullRequestError(f"{normalized} 需要 --body")
+    command = ["gh", "pr", "review", str(pr_number), flags[normalized]]
+    if body_text:
+        command.extend(["--body", body_text])
+    completed = _run(workspace, command, timeout=60, runner=runner)
+    if completed.returncode != 0:
+        raise PullRequestError((completed.stderr or completed.stdout or "gh pr review 失败").strip()[-800:])
+    return {
+        "number": pr_number,
+        "action": normalized,
+        "url": f"https://github.com/{_repo_slug(workspace, runner=runner)}/pull/{pr_number}",
+    }
+
+
+def _repo_slug(workspace: Path, *, runner: Runner | None = None) -> str:
+    try:
+        remote = _git(workspace, "remote", "get-url", "origin", runner=runner)
+    except PullRequestError:
+        return ""
+    parsed = parse_github_remote(remote)
+    return f"{parsed[0]}/{parsed[1]}" if parsed else ""
+
+
 def create_pull_request(
     plan: PullRequestPlan,
     *,

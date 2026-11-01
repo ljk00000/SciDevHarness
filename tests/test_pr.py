@@ -11,6 +11,8 @@ from scidev_pr import (
     build_plan,
     create_pull_request,
     parse_github_remote,
+    review_pull_request,
+    view_pull_request,
 )
 
 
@@ -85,6 +87,39 @@ class PullRequestTests(unittest.TestCase):
             self.assertIn("gh", calls[1][0])
             self.assertIn("--draft", calls[1])
             self.assertIn("--fill", calls[1])
+
+
+    def test_view_and_review_pull_request(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-pr-review-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            _repo(root)
+            calls: list[list[str]] = []
+
+            def runner(args, **kwargs):
+                calls.append(list(args))
+                if "view" in args:
+                    return subprocess.CompletedProcess(
+                        args, 0,
+                        stdout='{"number": 7, "title": "Task", "state": "OPEN", "url": "https://github.com/example/project/pull/7"}',
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+            viewed = view_pull_request(root, 7, runner=runner)
+            self.assertEqual(viewed["number"], 7)
+            self.assertEqual(calls[0][:4], ["gh", "pr", "view", "7"])
+            reviewed = review_pull_request(
+                root, 7, "comment", body="Please add a test", runner=runner,
+            )
+            self.assertEqual(reviewed["number"], 7)
+            self.assertEqual(calls[1][:5], ["gh", "pr", "review", "7", "--comment"])
+            self.assertIn("Please add a test", calls[1])
+            with self.assertRaises(PullRequestError):
+                review_pull_request(root, 7, "comment", body="", runner=runner)
+            with self.assertRaises(PullRequestError):
+                review_pull_request(root, 7, "dismiss", runner=runner)
+            with self.assertRaises(PullRequestError):
+                view_pull_request(root, 0, runner=runner)
 
 
 if __name__ == "__main__":
