@@ -1,9 +1,9 @@
-"""Minimal LSP client used for on-demand Python diagnostics.
+"""Small LSP client used for on-demand editor diagnostics.
 
-The client starts the installed Ruff language server for one document, waits
-for its first publishDiagnostics notification, then shuts the server down. It
-is intentionally one-shot: the desktop editor keeps its own debounce and never
-blocks the UI thread waiting for a language server.
+Python uses Ruff's language server. TypeScript/JavaScript uses an installed
+``typescript-language-server`` (or an explicit ``SCIDEV_TYPESCRIPT_LSP``
+command), so the editor can show compiler diagnostics without the Python
+process pretending to be a TypeScript compiler.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import shlex
 import subprocess
 import sys
 import threading
@@ -38,7 +39,50 @@ class LSPDiagnostic:
 
 
 SEVERITY = {1: "error", 2: "warning", 3: "info", 4: "hint"}
-SUPPORTED_SUFFIXES = {".py", ".pyi"}
+
+
+@dataclass(frozen=True)
+class LanguageSpec:
+    """How to start one language server and label its documents."""
+
+    suffixes: tuple[str, ...]
+    command: tuple[str, ...]
+    language_id: str
+    source: str
+
+
+def _typescript_command() -> tuple[str, ...]:
+    configured = os.getenv("SCIDEV_TYPESCRIPT_LSP", "").strip()
+    if configured:
+        # POSIX quoting is useful on Linux/macOS; on Windows keep backslashes
+        # literal so an explicit ``C:\...\server.cmd`` command is not mangled.
+        return tuple(shlex.split(configured, posix=os.name != "nt"))
+    return ("typescript-language-server", "--stdio")
+
+
+def python_language_spec() -> LanguageSpec:
+    return LanguageSpec((".py", ".pyi"), (sys.executable, "-m", "ruff", "server"), "python", "ruff")
+
+
+def typescript_language_spec() -> LanguageSpec:
+    return LanguageSpec(
+        (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"),
+        _typescript_command(),
+        "typescript",
+        "typescript",
+    )
+
+
+def language_spec(path: Path) -> LanguageSpec | None:
+    suffix = Path(path).suffix.lower()
+    if suffix in python_language_spec().suffixes:
+        return python_language_spec()
+    if suffix in typescript_language_spec().suffixes:
+        return typescript_language_spec()
+    return None
+
+
+SUPPORTED_SUFFIXES = set(python_language_spec().suffixes) | set(typescript_language_spec().suffixes)
 
 
 def document_uri(path: Path) -> str:
@@ -50,7 +94,7 @@ def _encode_message(payload: dict[str, Any]) -> bytes:
     return f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
 
 
-def _parse_diagnostics(payload: dict[str, Any]) -> list[LSPDiagnostic]:
+def _parse_diagnostics(payload: dict[str, Any], default_source: str = "ruff") -> list[LSPDiagnostic]:
     result: list[LSPDiagnostic] = []
     for item in payload.get("diagnostics") or []:
         if not isinstance(item, dict):
@@ -76,7 +120,7 @@ def _parse_diagnostics(payload: dict[str, Any]) -> list[LSPDiagnostic]:
             severity=severity,
             message=message,
             code=code_text,
-            source=str(item.get("source") or "ruff")[:60],
+            source=str(item.get("source") or default_source)[:60],
         ))
         if len(result) >= 100:
             break
@@ -84,8 +128,9 @@ def _parse_diagnostics(payload: dict[str, Any]) -> list[LSPDiagnostic]:
 
 
 class LSPClient:
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path, spec: LanguageSpec | None = None):
         self.project_root = Path(project_root).resolve()
+        self.spec = spec or python_language_spec()
         self.process: subprocess.Popen[bytes] | None = None
         self._messages: queue.Queue[dict[str, Any]] = queue.Queue()
         self._reader: threading.Thread | None = None
@@ -93,7 +138,7 @@ class LSPClient:
         self._stderr_text = ""
 
     def start(self) -> None:
-        command = [sys.executable, "-m", "ruff", "server"]
+        command = list(self.spec.command)
         try:
             self.process = subprocess.Popen(
                 command,
@@ -104,7 +149,7 @@ class LSPClient:
                 **background_process_options(),
             )
         except OSError as exc:
-            raise LSPUnavailable(f"无法启动 Ruff LSP：{exc}") from exc
+            raise LSPUnavailable(f"无法启动 {self.spec.source} LSP：{exc}") from exc
         self._reader = threading.Thread(target=self._read_loop, name="scidev-lsp-reader", daemon=True)
         self._reader.start()
 
@@ -143,7 +188,7 @@ class LSPClient:
 
     def _send(self, payload: dict[str, Any]) -> None:
         if self.process is None or self.process.stdin is None:
-            raise LSPUnavailable("Ruff LSP 未启动")
+            raise LSPUnavailable(f"{self.spec.source} LSP 未启动")
         self.process.stdin.write(_encode_message(payload))
         self.process.stdin.flush()
 
@@ -188,12 +233,12 @@ class LSPClient:
             and ("result" in message or "error" in message),
         )
         if response is None:
-            raise LSPUnavailable("Ruff LSP 初始化超时")
+            raise LSPUnavailable(f"{self.spec.source} LSP 初始化超时")
         if "error" in response:
-            raise LSPUnavailable(f"Ruff LSP 初始化失败：{response['error']}")
+            raise LSPUnavailable(f"{self.spec.source} LSP 初始化失败：{response['error']}")
         self._send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
 
-    def did_open(self, path: Path, text: str, language_id: str = "python") -> str:
+    def did_open(self, path: Path, text: str, language_id: str | None = None) -> str:
         uri = document_uri(path)
         self._send({
             "jsonrpc": "2.0",
@@ -201,7 +246,7 @@ class LSPClient:
             "params": {
                 "textDocument": {
                     "uri": uri,
-                    "languageId": language_id,
+                    "languageId": language_id or self.spec.language_id,
                     "version": 1,
                     "text": text,
                 },
@@ -234,7 +279,7 @@ class LSPClient:
             params = message.get("params")
             if not isinstance(params, dict) or str(params.get("uri") or "") != uri:
                 continue
-            return _parse_diagnostics(params)
+            return _parse_diagnostics(params, self.spec.source)
         return []
 
     def close(self) -> None:
@@ -274,7 +319,11 @@ class LSPClient:
 
 
 class ResidentLSP:
-    """One long-lived Ruff process with coalesced didOpen/didChange requests."""
+    """Long-lived language servers with coalesced didOpen/didChange requests.
+
+    Python and TypeScript have separate server processes; a document is routed
+    by suffix, so switching editor tabs does not restart the other language.
+    """
 
     def __init__(
         self,
@@ -288,7 +337,7 @@ class ResidentLSP:
         self.callback = callback
         self.timeout = max(1.0, min(float(timeout), 10.0))
         self.client_factory = client_factory or LSPClient
-        self._client: LSPClient | None = None
+        self._clients: dict[str, LSPClient] = {}
         self._queue: queue.Queue[tuple[str, Path, int, str] | None] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._closed = False
@@ -310,15 +359,20 @@ class ResidentLSP:
         self.start()
         self._queue.put((str(path), Path(path), int(generation), str(text)))
 
-    def _ensure_client(self) -> LSPClient:
-        if self._client is None:
-            client = self.client_factory(self.project_root)
+    def _ensure_client(self, path: Path) -> tuple[LSPClient, LanguageSpec]:
+        spec = language_spec(path)
+        if spec is None:
+            raise LSPUnavailable(f"不支持的 LSP 文件类型：{path.suffix or '(none)'}")
+        client = self._clients.get(spec.source)
+        if client is None:
+            if self.client_factory is LSPClient:
+                client = LSPClient(self.project_root, spec)
+            else:
+                client = self.client_factory(self.project_root)
             client.start()
             client.initialize()
-            self._client = client
-            self._versions.clear()
-            self._opened.clear()
-        return self._client
+            self._clients[spec.source] = client
+        return client, spec
 
     def _run(self) -> None:
         while True:
@@ -336,26 +390,32 @@ class ResidentLSP:
                     break
                 latest[extra[0]] = extra
             for _key, (raw_path, path, generation, text) in latest.items():
+                source = "unknown"
                 try:
-                    client = self._ensure_client()
+                    client, spec = self._ensure_client(path)
+                    source = spec.source
                     uri = document_uri(path)
                     version = self._versions.get(uri, 0) + 1
                     if uri in self._opened:
                         client.did_change(path, text, version)
                     else:
-                        client.did_open(path, text)
+                        client.did_open(path, text, language_id=spec.language_id)
                         self._opened.add(uri)
                     self._versions[uri] = version
                     diagnostics = client.wait_diagnostics(uri, timeout=self.timeout)
                     self.callback(path, generation, diagnostics, "")
                 except (LSPUnavailable, OSError, ValueError, RuntimeError) as exc:
-                    self._close_client()
+                    self._close_client(source if source != "unknown" else None)
                     self.callback(path, generation, [], f"{type(exc).__name__}: {exc}")
 
-    def _close_client(self) -> None:
-        client = self._client
-        self._client = None
-        if client is not None:
+    def _close_client(self, source: str | None = None) -> None:
+        if source is None:
+            clients = list(self._clients.values())
+            self._clients.clear()
+        else:
+            client = self._clients.pop(source, None)
+            clients = [client] if client is not None else []
+        for client in clients:
             try:
                 client.close()
             except (OSError, RuntimeError):
@@ -382,18 +442,19 @@ def collect_diagnostics(
     timeout: float = 6.0,
 ) -> list[LSPDiagnostic]:
     path = Path(path)
-    if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+    spec = language_spec(path)
+    if spec is None:
         raise LSPUnavailable(f"不支持的 LSP 文件类型：{path.suffix or '(none)'}")
-    client = LSPClient(project_root)
+    client = LSPClient(project_root, spec)
     try:
         client.start()
         client.initialize()
-        uri = client.did_open(path, text)
+        uri = client.did_open(path, text, language_id=spec.language_id)
         wait_timeout = min(timeout, 2.0)
         return client.wait_diagnostics(uri, timeout=wait_timeout)
     except LSPUnavailable:
         raise
     except (OSError, ValueError, RuntimeError) as exc:
-        raise LSPUnavailable(f"Ruff LSP 诊断失败：{exc}") from exc
+        raise LSPUnavailable(f"{spec.source} LSP 诊断失败：{exc}") from exc
     finally:
         client.close()

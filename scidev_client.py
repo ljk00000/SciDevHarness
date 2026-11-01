@@ -113,7 +113,7 @@ from scidev_core import (
 )
 from scidev_icons import activity_icon
 from scidev_highlighting import LanguageHighlighter, PythonHighlighter
-from scidev_lsp import ResidentLSP, collect_diagnostics as collect_lsp_diagnostics
+from scidev_lsp import ResidentLSP, collect_diagnostics as collect_lsp_diagnostics, language_spec
 from scidev_worktree import WorktreeError, WorktreeManager
 from scidev_worktree_ui import WorktreeDialog
 from scidev_pty import PTYSession, PTYUnavailable
@@ -7886,7 +7886,7 @@ class ClientWindow(QMainWindow):
         else:
             self._code_intel_syntax_errors.pop(str(path), None)
         self._render_diagnostics(path, syntax_error)
-        if path.suffix.lower() == ".py":
+        if language_spec(path) is not None:
             self._schedule_lsp_diagnostics(path, text)
 
     def _schedule_lsp_diagnostics(self, path: Path, text: str) -> None:

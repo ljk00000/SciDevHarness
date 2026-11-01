@@ -1,5 +1,10 @@
 # 历史与结果
 
+## 2026-11-01 13:55（Asia/Shanghai）· TypeScript LSP 与双语言常驻
+- 新增 `LanguageSpec` 与后缀路由：Python 继续用 Ruff，TypeScript/JavaScript 使用 `typescript-language-server`；可用 `SCIDEV_TYPESCRIPT_LSP` 指定命令。
+- `ResidentLSP` 按语言维护多个客户端，Python 与 TS 互不重启；编辑器 `.py/.pyi/.ts/.tsx/.js/.jsx/.mjs/.cjs` 统一进入诊断调度。
+- 验证：LSP 专项 7 项通过（含 TS 命令解析、双语言客户端、Ruff 真实诊断）；全量 709 项 0 失败、14 跳过、覆盖率 78%。未安装 TS 服务器时静默跳过。边界：未做真实 TS 项目 E2E，仍无重命名/引用/调试器。
+
 ## 2026-11-01 13:30（Asia/Shanghai）· 无头补丁与多类验证闭环
 - CLI `exec` 新增 `--patch-approval auto|reject`，默认在无审核界面时应用全部已校验补丁块；修复 eval/CI 对已有文件只能写新文件的问题。
 - 自动验证按 test/lint/typecheck 各选一个安全候选，输出结构化诊断后进入修复轮次；仍受执行策略、网络策略、命令白名单和当前代码指纹约束。

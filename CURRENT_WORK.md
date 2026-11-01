@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-11-01 13:55（Asia/Shanghai）· TypeScript LSP 与双语言常驻
+- `scidev_lsp.py` 新增 LanguageSpec/语言路由：Python 用 Ruff；`.ts/.tsx/.js/.jsx/.mjs/.cjs` 用 `typescript-language-server --stdio`，可用 `SCIDEV_TYPESCRIPT_LSP` 覆盖命令。
+- `ResidentLSP` 改为按语言持有多个客户端；Python/TS 进程互不重启，仍合并连续输入并复用 didOpen/didChange。
+- 编辑器对支持的后缀统一调度 LSP；TS 服务器缺失时静默跳过，诊断错误不阻断编辑。
+- 新增 TS 命令解析与双语言客户端测试；LSP 专项 7 项通过；全量套件 709 项 0 失败、14 跳过、覆盖率 78%。
+
 ## 2026-11-01 13:30（Asia/Shanghai）· 无头补丁与多类验证闭环
 - CLI `exec` 新增 `--patch-approval auto|reject`：默认 `auto` 在没有审核界面时应用全部已校验补丁块，仍受工作区路径限制；`reject` 保持旧文件不变。修复 CLI/eval 对已有文件的修改一律被“无审核界面”拒绝的问题。
 - Harness 自动验证从“只跑首个候选”改为按 test/lint/typecheck 各选一个可自动批准命令；每个结果附结构化文件/行号诊断，再进入有界修复轮次。

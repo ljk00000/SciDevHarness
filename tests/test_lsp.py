@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from scidev_lsp import LSPDiagnostic, LSPUnavailable, ResidentLSP, collect_diagnostics, document_uri
+from scidev_lsp import (
+    LSPDiagnostic,
+    LSPUnavailable,
+    ResidentLSP,
+    collect_diagnostics,
+    document_uri,
+    language_spec,
+)
 
 
 class ResidentLSPTests(unittest.TestCase):
@@ -71,6 +80,63 @@ class ResidentLSPTests(unittest.TestCase):
             self.assertTrue(client.closed)
 
 
+    def test_python_and_typescript_documents_use_separate_clients(self) -> None:
+        class FakeClient:
+            instances = []
+
+            def __init__(self, root):
+                self.root = root
+                self.languages = []
+                self.closed = False
+                FakeClient.instances.append(self)
+
+            def start(self):
+                pass
+
+            def initialize(self):
+                pass
+
+            def did_open(self, path, text, language_id=None):
+                self.languages.append(language_id)
+                return document_uri(path)
+
+            def did_change(self, path, text, version):
+                return document_uri(path)
+
+            def wait_diagnostics(self, uri, timeout=6.0):
+                return []
+
+            def close(self):
+                self.closed = True
+
+        done = threading.Event()
+        seen: list[str] = []
+
+        def callback(path, generation, diagnostics, error):
+            seen.append(str(path))
+            if len(seen) >= 2:
+                done.set()
+
+        with tempfile.TemporaryDirectory(prefix="scidev-multi-lsp-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            py = root / "app.py"
+            ts = root / "app.ts"
+            py.write_text("x = 1\n", encoding="utf-8")
+            ts.write_text("const x = 1\n", encoding="utf-8")
+            resident = ResidentLSP(root, callback, client_factory=FakeClient)
+            try:
+                resident.start()
+                resident.submit(py, "x = 1\n", 1)
+                resident.submit(ts, "const x = 1\n", 2)
+                self.assertTrue(done.wait(3.0), seen)
+            finally:
+                resident.close()
+            self.assertEqual(len(FakeClient.instances), 2)
+            languages = [language for client in FakeClient.instances for language in client.languages]
+            self.assertEqual(sorted(languages), ["python", "typescript"])
+            self.assertTrue(all(client.closed for client in FakeClient.instances))
+
+
 class LSPDiagnosticsTests(unittest.TestCase):
     def test_collects_ruff_syntax_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
@@ -106,6 +172,17 @@ class LSPDiagnosticsTests(unittest.TestCase):
             path = root / "notes.txt"
             with self.assertRaises(LSPUnavailable):
                 collect_diagnostics(root, path, "text", timeout=1)
+
+    def test_typescript_spec_uses_an_explicit_command_and_language_id(self) -> None:
+        with patch.dict(os.environ, {"SCIDEV_TYPESCRIPT_LSP": "custom-ls --stdio"}):
+            spec = language_spec(Path("app.ts"))
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        self.assertEqual(spec.source, "typescript")
+        self.assertEqual(spec.language_id, "typescript")
+        self.assertEqual(spec.command, ("custom-ls", "--stdio"))
+        self.assertIn(".tsx", spec.suffixes)
+        self.assertIsNone(language_spec(Path("notes.txt")))
 
     def test_document_uri_is_absolute_file_uri(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
