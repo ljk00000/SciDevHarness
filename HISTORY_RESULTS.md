@@ -4,7 +4,7 @@
 - CLI `exec` 新增 `--patch-approval auto|reject`，默认在无审核界面时应用全部已校验补丁块；修复 eval/CI 对已有文件只能写新文件的问题。
 - 自动验证按 test/lint/typecheck 各选一个安全候选，输出结构化诊断后进入修复轮次；仍受执行策略、网络策略、命令白名单和当前代码指纹约束。
 - 标准 20 项本地 Qwen2.5-Coder-7B 基线 1/20 → 2/20（自动补丁开启后），平均 4.0 轮、464.5 秒；摘要基线 `evals/baselines/standard-20-qwen2.5-coder-7b.json`，完整报告 `.research/evals/standard-20-auto-patch.json`。这是弱模型基线，不代表强模型或 Harness 上限。
-- 验证：全量 707 项 0 失败、14 跳过、覆盖率 78%；ruff/mypy 通过。新增文本补丁恢复：弱模型只打印完整 `*** Begin Patch` 时转为 `apply_patch` 工具调用，仍走原有路径校验与审核；不完整补丁返回可修复错误。
+- 验证：全量 707 项 0 失败、14 跳过、覆盖率 78%；ruff/mypy 通过。新增文本补丁恢复：弱模型只打印完整 `*** Begin Patch` 时转为 `apply_patch` 工具调用，仍走原有路径校验与审核；不完整补丁返回可修复错误。修复覆盖率合并无新数据时的退出码误报。
 - 边界：CLI 无逐块人工审核，`auto` 是显式无头策略而非交互审批；20 项任务仍受本地 7B 模型能力限制。
 
 ## 2026-11-01 21:00（Asia/Shanghai）· PR diff 与 review 桌面联动

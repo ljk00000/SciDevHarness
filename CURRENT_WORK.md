@@ -4,7 +4,7 @@
 - CLI `exec` 新增 `--patch-approval auto|reject`：默认 `auto` 在没有审核界面时应用全部已校验补丁块，仍受工作区路径限制；`reject` 保持旧文件不变。修复 CLI/eval 对已有文件的修改一律被“无审核界面”拒绝的问题。
 - Harness 自动验证从“只跑首个候选”改为按 test/lint/typecheck 各选一个可自动批准命令；每个结果附结构化文件/行号诊断，再进入有界修复轮次。
 - 标准 20 项本地 Qwen2.5-Coder-7B 基线：修复前 1/20（开启无头补丁前）、开启后 2/20，平均 4.0 轮，464.5 秒；摘要基线在 `evals/baselines/standard-20-qwen2.5-coder-7b.json`，完整报告在 `.research/evals/standard-20-auto-patch.json`，用于后续强模型对照。
-- 新增 CLI 补丁审核测试、候选分类测试和文本补丁恢复测试；全量套件 707 项 0 失败、14 跳过、覆盖率 78%；ruff/mypy 通过。
+- 新增 CLI 补丁审核测试、候选分类测试和文本补丁恢复测试；全量套件 707 项 0 失败、14 跳过、覆盖率 78%；ruff/mypy 通过。修复 `run_tests_coverage.py` 在 `coverage combine` 无新数据时误返回 1 的问题。
 
 ## 2026-11-01 21:00（Asia/Shanghai）· PR diff 与 review 桌面联动
 - `scidev_pr.py` 新增 `pull_request_diff()`：有界 `gh pr diff`（默认 30 万字符、最多 100 万）、网络策略门控。
