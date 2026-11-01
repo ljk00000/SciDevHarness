@@ -31,6 +31,7 @@ $releaseFiles = @(
     "scidev_eval.py",
     "scidev_intel.py",
     "scidev_worktree.py",
+    "scidev_worktree_ui.py",
     "scidev_pr.py",
     "scidev_migrations.py",
     "scidev_update.py",

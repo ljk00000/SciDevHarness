@@ -115,6 +115,7 @@ from scidev_icons import activity_icon
 from scidev_highlighting import LanguageHighlighter, PythonHighlighter
 from scidev_lsp import collect_diagnostics as collect_lsp_diagnostics
 from scidev_worktree import WorktreeError, WorktreeManager
+from scidev_worktree_ui import WorktreeDialog
 from scidev_pty import PTYSession, PTYUnavailable
 from scidev_attachments import AttachmentError, load_image_file
 from scidev_crash import install_crash_reporter
@@ -3059,6 +3060,7 @@ class ClientWindow(QMainWindow):
                 [
                     "> open folder",
                     "> new worktree",
+                    "> worktrees",
                     "> terminal",
                     "> problems",
                     "> search",
@@ -3359,6 +3361,11 @@ class ClientWindow(QMainWindow):
         selected = _choose_workspace_directory(self.project_root, self)
         if selected is not None:
             self._open_workspace_root(selected)
+
+    def _show_worktree_dialog(self) -> None:
+        dialog = WorktreeDialog(WorktreeManager(self.project_root), self.project_root, self)
+        dialog.open_requested.connect(lambda path: self._open_workspace_root(path))
+        dialog.exec()
 
     def _create_isolated_worktree(self) -> "ClientWindow | None":
         counter = getattr(self, "_gui_worktree_counter", 0) + 1
@@ -7699,6 +7706,10 @@ class ClientWindow(QMainWindow):
             if "new worktree" in command or "隔离工作区" in command or "新建 worktree" in command:
                 self.command_search.clear()
                 self._create_isolated_worktree()
+                return
+            if command == "worktrees" or "worktree list" in command or "工作树" in command:
+                self.command_search.clear()
+                self._show_worktree_dialog()
                 return
             if "open folder" in command or "打开文件夹" in command or "workspace" in command:
                 self.command_search.clear()

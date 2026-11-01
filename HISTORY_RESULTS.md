@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-11-01 11:30（Asia/Shanghai）· Worktree 管理 UI
+- 新增 `scidev_worktree_ui.py`：列表显示分支、路径、HEAD，支持打开、删除、强制删除。
+- 命令面板新增 `> worktrees` / `> worktree list` / `工作树`；打开选中 worktree 会切到独立窗口。
+- 删除默认拒绝未提交改动；强制删除忽略改动并清理分支；当前窗口所在 worktree 不允许删除。
+- 新增 1 项对话框测试；mypy 扩到 14 个文件；全量套件 681 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：对话框只管理 `.research/worktrees` 里的 worktree；不显示普通 `git worktree`；删除分支失败会被忽略；当前窗口自己所在的 worktree 由 UI 阻止删除。
+
 ## 2026-11-01 11:05（Asia/Shanghai）· 本地崩溃报告
 - 新增 `scidev_crash.py`：安装未捕获异常/线程异常钩子，写 `.research/crashes/crash-*.json`，含版本、Python、平台、线程、异常类型、有界 traceback。
 - 写盘前脱敏主目录和 API key/token/password；保留最近 20 份；不联网、不收集局部变量；KeyboardInterrupt/SystemExit 不记录。
