@@ -113,7 +113,7 @@ class SettingsPage(QWidget):
         self.categories.setFixedWidth(150)
         self.categories.currentRowChanged.connect(self._category_changed)
         content.addWidget(self.categories)
-        self.scroll = QScrollArea()
+        self.scroll: QScrollArea = QScrollArea()
         self.scroll.setObjectName("PreferencesScroll")
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -257,7 +257,7 @@ class SettingsPage(QWidget):
             value = profile if key == "profile" else getattr(preferences, key)
             blocker = QSignalBlocker(control)
             if isinstance(control, QSpinBox):
-                control.setValue(value)
+                control.setValue(int(value))
             elif isinstance(control, QComboBox):
                 index = control.findData(value)
                 if index < 0 and key.endswith("font_family"):

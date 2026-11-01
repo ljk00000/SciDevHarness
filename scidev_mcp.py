@@ -375,7 +375,7 @@ class MCPManager:
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
         self.config_path = Path(config_path) if config_path is not None else self.project_root / ".research" / "mcp.json"
-        self.clients: dict[str, MCPClient] = {}
+        self.clients: dict[str, MCPClient | MCPHTTPClient] = {}
         self.tools: list[MCPTool] = []
         self.errors: list[str] = []
         self._started = False
@@ -422,6 +422,7 @@ class MCPManager:
                 if not isinstance(raw_server, dict):
                     self.errors.append(f"{name}: 服务配置必须是对象")
                     continue
+                client: MCPClient | MCPHTTPClient
                 url = str(raw_server.get("url") or "").strip()
                 transport = str(raw_server.get("transport") or "").strip().lower()
                 if url:

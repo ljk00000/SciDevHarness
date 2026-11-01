@@ -50,7 +50,19 @@ ignore = ["E501"]
 python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "skip"
-files = ["scidev_process.py", "scidev_usage.py"]
+files = [
+    "scidev_process.py",
+    "scidev_usage.py",
+    "scidev_policy.py",
+    "scidev_pr.py",
+    "scidev_migrations.py",
+    "scidev_eval.py",
+    "scidev_worktree.py",
+    "scidev_mcp.py",
+    "scidev_settings.py",
+    "scidev_intel.py",
+    "scidev_credentials.py",
+]
 
 [tool.coverage.run]
 branch = true

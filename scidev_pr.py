@@ -143,10 +143,14 @@ def build_plan(
 
 
 def _validate_number(number: object) -> int:
-    try:
-        value = int(number)
-    except (TypeError, ValueError) as exc:
-        raise PullRequestError(f"无效的 PR 编号：{number}") from exc
+    if isinstance(number, bool):
+        raise PullRequestError(f"无效的 PR 编号：{number}")
+    if isinstance(number, int):
+        value = number
+    elif isinstance(number, str) and number.strip().isdigit():
+        value = int(number.strip())
+    else:
+        raise PullRequestError(f"无效的 PR 编号：{number}")
     if value < 1 or value > 1_000_000_000:
         raise PullRequestError(f"无效的 PR 编号：{number}")
     return value

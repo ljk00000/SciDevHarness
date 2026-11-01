@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-01 10:00（Asia/Shanghai）· 扩大 mypy 覆盖
+- `pyproject.toml` 的 mypy 文件从 2 个扩到 11 个：process、usage、policy、pr、migrations、eval、worktree、mcp、settings、intel、credentials。
+- 修复新增类型错误：PR 编号解析、eval usage 字典/回归计算、MCP HTTP/stdio client 联合类型、settings 滚动区与 spinbox 值。
+- `python -m mypy` 对 11 个文件通过；全量套件 670 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：`scidev_core.py`/`scidev_client.py` 仍未纳入 mypy；`follow_imports = skip` 只看显式文件。
+
 ## 2026-11-01 09:35（Asia/Shanghai）· PR 查询与审查
 - `scidev_pr.py` 新增 `view_pull_request`、`review_pull_request`：调用已登录 `gh` 读取 PR 元数据，提交 approve/comment/request-changes。
 - CLI 新增 `pr-view`、`pr-review`；支持 `--json`、`--allow-network`，comment/request-changes 强制 body，校验编号与 action。

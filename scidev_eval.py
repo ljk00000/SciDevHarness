@@ -190,7 +190,8 @@ def _default_task_runner(work: Path, task: EvalTask) -> dict[str, Any]:
                 break
             except ValueError:
                 continue
-    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    usage_raw = payload.get("usage")
+    usage: dict[str, Any] = usage_raw if isinstance(usage_raw, dict) else {}
     return {
         "success": bool(payload.get("success")) and completed.returncode == 0,
         "exit_code": completed.returncode,
@@ -315,6 +316,7 @@ class EvalRunner:
             total_prompt * self.pricing["input_per_million"]
             + total_completion * self.pricing["output_per_million"]
         ) / 1_000_000
+        pass_rate = round(passed / total, 4) if total else 0.0
         summary = {
             "suite": self.suite_name,
             "started_at": datetime.now(timezone.utc).isoformat(),
@@ -322,7 +324,7 @@ class EvalRunner:
             "total": total,
             "passed": passed,
             "failed": total - passed,
-            "pass_rate": round(passed / total, 4) if total else 0.0,
+            "pass_rate": pass_rate,
             "average_turns": round(total_turns / total, 2) if total else 0.0,
             "total_tokens": total_tokens,
             "total_prompt_tokens": total_prompt,
@@ -340,7 +342,7 @@ class EvalRunner:
             previous_rate = previous.get("pass_rate")
             summary["previous_pass_rate"] = previous_rate
             if isinstance(previous_rate, (int, float)):
-                summary["regression"] = round(summary["pass_rate"] - float(previous_rate), 4)
+                summary["regression"] = round(pass_rate - float(previous_rate), 4)
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self.output_path.write_text(
             json.dumps(summary, ensure_ascii=False, indent=2),
