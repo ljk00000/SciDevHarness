@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import scidev_cli
 from scidev_core import PermanentError
+from scidev_update import UpdateInfo
 
 
 class _FakeAgent:
@@ -94,6 +95,28 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["repo"], "example/project")
             self.assertEqual(payload["branch"], "feature/task")
             self.assertTrue(payload["draft"])
+
+    def test_update_command_reports_release_and_optional_failure(self) -> None:
+        info = UpdateInfo(
+            current="0.1.0",
+            latest="0.2.0",
+            url="https://github.com/example/repo/releases/tag/v0.2.0",
+            published_at="2026-01-01",
+            notes="",
+            asset_url="https://example/setup.exe",
+        )
+        output = io.StringIO()
+        with patch.object(scidev_cli, "check_for_update", return_value=info):
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                code = scidev_cli.main(["update", "--workspace", ".", "--json"])
+            self.assertEqual(code, 0, output.getvalue())
+            payload = json.loads(output.getvalue())
+            self.assertTrue(payload["available"])
+            self.assertEqual(payload["latest"], "0.2.0")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                code = scidev_cli.main(["update", "--workspace", ".", "--fail-if-available"])
+            self.assertEqual(code, 1)
 
     def test_exec_can_run_in_an_isolated_worktree(self) -> None:
         output = io.StringIO()

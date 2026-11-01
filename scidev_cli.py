@@ -26,6 +26,7 @@ from scidev_pr import (
     view_pull_request,
 )
 from scidev_migrations import migrate_project
+from scidev_update import APP_VERSION, UpdateError, check_for_update, detect_repo
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,7 +34,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="scidev",
         description="Run a SciDevHarness coding task without the desktop UI.",
     )
-    parser.add_argument("--version", action="version", version="SciDevHarness 0.1.0")
+    parser.add_argument("--version", action="version", version=f"SciDevHarness {APP_VERSION}")
     subparsers = parser.add_subparsers(dest="command")
 
     exec_parser = subparsers.add_parser(
@@ -148,6 +149,18 @@ def _parser() -> argparse.ArgumentParser:
     migrate_parser.add_argument("--workspace", required=True, help="project directory")
     migrate_parser.add_argument("--dry-run", action="store_true", help="report changes without writing")
     migrate_parser.add_argument("--json", action="store_true", help="emit one JSON object")
+    update_parser = subparsers.add_parser(
+        "update",
+        help="check GitHub releases for a newer build",
+        description="Report a newer GitHub release without downloading or installing it.",
+    )
+    update_parser.add_argument("--workspace", default=".", help="project used to detect the GitHub origin")
+    update_parser.add_argument("--repo", default="", help="override owner/repo")
+    update_parser.add_argument("--json", action="store_true")
+    update_parser.add_argument(
+        "--fail-if-available", action="store_true",
+        help="exit 1 when a newer release exists",
+    )
     return parser
 
 
@@ -276,6 +289,28 @@ def _eval_command(args: argparse.Namespace) -> int:
     return 0 if report["failed"] == 0 else 1
 
 
+def _update_command(args: argparse.Namespace) -> int:
+    workspace = Path(args.workspace).expanduser().resolve()
+    repo = args.repo or detect_repo(workspace if workspace.is_dir() else None)
+    try:
+        info = check_for_update(repo=repo)
+    except UpdateError as exc:
+        print(f"update check failed: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(info.as_dict(), ensure_ascii=False))
+    elif info.available:
+        print(f"update available: {info.current} -> {info.latest}")
+        print(info.url)
+        if info.asset_url:
+            print(info.asset_url)
+    else:
+        print(f"up to date: {info.current}")
+    if args.fail_if_available and info.available:
+        return 1
+    return 0
+
+
 def _pr_view_command(args: argparse.Namespace) -> int:
     try:
         payload = view_pull_request(
@@ -392,6 +427,8 @@ def main(argv: list[str] | None = None) -> int:
         return _pr_review_command(args)
     if args.command == "migrate":
         return _migrate_command(args)
+    if args.command == "update":
+        return _update_command(args)
     if args.command != "exec":
         parser.print_help()
         return 2

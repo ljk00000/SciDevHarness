@@ -65,6 +65,15 @@ python scidev_cli.py pr --workspace .research/worktrees/login --title "登录页
 - 项目网络策略为 `deny` 时需要显式 `--allow-network`
 - 不在 `main`/`master` 上创建 PR，避免直接把主分支当 head
 
+### 检查更新
+
+```powershell
+python scidev_cli.py update --workspace . --json
+python scidev_cli.py update --fail-if-available
+```
+
+从 `origin` 推断 GitHub 仓库（可用 `--repo owner/repo` 或 `SCIDEV_UPDATE_REPO` 覆盖），读取 latest GitHub Release 的 tag、页面、说明和安装包地址，只提示、不下载、不安装。`--fail-if-available` 在发现新版本时返回 1，便于脚本检查。
+
 查看和审查：
 
 ```powershell

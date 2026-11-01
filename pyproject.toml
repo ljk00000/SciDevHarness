@@ -62,6 +62,7 @@ files = [
     "scidev_settings.py",
     "scidev_intel.py",
     "scidev_credentials.py",
+    "scidev_update.py",
 ]
 
 [tool.coverage.run]

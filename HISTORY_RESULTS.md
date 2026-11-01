@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-01 10:20（Asia/Shanghai）· 更新检查
+- 新增 `scidev_update.py`：从 `origin` 或 `--repo`/`SCIDEV_UPDATE_REPO` 推断仓库，读取 GitHub latest Release 的 tag、页面、说明、安装包 URL；只提示，不下载/安装。
+- 语义版本比较、`--json`、`--fail-if-available`；CLI `--version` 改用统一 `APP_VERSION`。
+- 新增 5 项模块测试和 CLI 测试；mypy 扩到 12 个文件；全量套件 676 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：本机直连 GitHub API 当前超时，已正确报错不崩溃；只查 latest Release，不查 prerelease/tag；无自动下载、签名校验、安装或 GUI 启动检查。
+
 ## 2026-11-01 10:00（Asia/Shanghai）· 扩大 mypy 覆盖
 - `pyproject.toml` 的 mypy 文件从 2 个扩到 11 个：process、usage、policy、pr、migrations、eval、worktree、mcp、settings、intel、credentials。
 - 修复新增类型错误：PR 编号解析、eval usage 字典/回归计算、MCP HTTP/stdio client 联合类型、settings 滚动区与 spinbox 值。
