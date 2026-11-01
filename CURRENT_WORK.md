@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-11-01 12:00（Asia/Shanghai）· MCP 资源与提示
+- `MCPClient`/`MCPHTTPClient` 新增 `resources/list`、`resources/read`、`prompts/list`、`prompts/get`。
+- `MCPManager` 聚合多 server 的 resources/prompts，按 server 读取资源、渲染 prompt；结果有界。
+- CLI 新增 `mcp`：默认列出 tools/resources/prompts，`--read SERVER URI`、`--prompt SERVER NAME --arg key=value`、`--json`。
+- 新增 manager 与 CLI 测试；全量套件 683 项 0 失败、14 跳过、覆盖率 78%。
+
 ## 2026-11-01 11:30（Asia/Shanghai）· Worktree 管理 UI
 - 新增 `scidev_worktree_ui.py`：列表显示分支、路径、HEAD，支持打开、删除、强制删除。
 - 命令面板新增 `> worktrees` / `> worktree list` / `工作树`；打开选中 worktree 会切到独立窗口。

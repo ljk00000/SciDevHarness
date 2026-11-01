@@ -5,6 +5,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -95,6 +96,28 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["repo"], "example/project")
             self.assertEqual(payload["branch"], "feature/task")
             self.assertTrue(payload["draft"])
+
+    def test_mcp_command_lists_resources_and_prompts(self) -> None:
+        from tests.test_mcp import FAKE_SERVER
+
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory(prefix="scidev-cli-mcp-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            (root / ".research").mkdir()
+            (root / "server.py").write_text(FAKE_SERVER, encoding="utf-8")
+            (root / ".research" / "mcp.json").write_text(json.dumps({
+                "enabled": True,
+                "servers": {
+                    "demo": {"command": sys.executable, "args": ["server.py"], "cwd": "."},
+                },
+            }), encoding="utf-8")
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                code = scidev_cli.main(["mcp", "--workspace", str(root), "--json"])
+            self.assertEqual(code, 0, output.getvalue())
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["tools"][0]["name"], "mcp__demo__echo")
+            self.assertEqual(payload["resources"][0]["uri"], "file:///notes.txt")
+            self.assertEqual(payload["prompts"][0]["name"], "greet")
 
     def test_update_command_reports_release_and_optional_failure(self) -> None:
         info = UpdateInfo(

@@ -66,6 +66,24 @@ while True:
             "content": [{"type": "text", "text": "echo:" + str(arguments.get("text", ""))}],
             "isError": False,
         }})
+    elif method == "resources/list":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {"resources": [
+            {"uri": "file:///notes.txt", "name": "notes", "mimeType": "text/plain"},
+        ]}})
+    elif method == "resources/read":
+        uri = request.get("params", {}).get("uri")
+        send({"jsonrpc": "2.0", "id": request_id, "result": {"contents": [
+            {"uri": uri, "mimeType": "text/plain", "text": "resource-body"},
+        ]}})
+    elif method == "prompts/list":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {"prompts": [
+            {"name": "greet", "description": "greeting", "arguments": [{"name": "who"}]},
+        ]}})
+    elif method == "prompts/get":
+        arguments = request.get("params", {}).get("arguments", {})
+        send({"jsonrpc": "2.0", "id": request_id, "result": {"messages": [
+            {"role": "user", "content": {"type": "text", "text": "hello " + str(arguments.get("who", ""))}},
+        ]}})
     elif request_id is not None:
         send({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "unknown"}})
 '''
@@ -206,6 +224,23 @@ class MCPTests(unittest.TestCase):
             self.assertIn("mcp__demo__echo", names)
             result = manager.call("mcp__demo__echo", {"text": "hello"})
             self.assertEqual(result, "echo:hello")
+        finally:
+            manager.close()
+
+    def test_manager_lists_resources_and_prompts(self) -> None:
+        root, _server = self._workspace()
+        manager = MCPManager(root)
+        try:
+            resources = manager.list_resources()
+            self.assertEqual(resources[0]["uri"], "file:///notes.txt")
+            self.assertEqual(resources[0]["server"], "demo")
+            self.assertEqual(manager.read_resource("demo", "file:///notes.txt"), "resource-body")
+            prompts = manager.list_prompts()
+            self.assertEqual(prompts[0]["name"], "greet")
+            self.assertEqual(
+                manager.get_prompt("demo", "greet", {"who": "Ada"}),
+                "hello Ada",
+            )
         finally:
             manager.close()
 

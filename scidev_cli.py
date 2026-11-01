@@ -27,6 +27,7 @@ from scidev_pr import (
 )
 from scidev_migrations import migrate_project
 from scidev_update import APP_VERSION, UpdateError, check_for_update, detect_repo
+from scidev_mcp import MCPError, MCPManager
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -161,6 +162,16 @@ def _parser() -> argparse.ArgumentParser:
         "--fail-if-available", action="store_true",
         help="exit 1 when a newer release exists",
     )
+    mcp_parser = subparsers.add_parser(
+        "mcp",
+        help="inspect MCP tools, resources and prompts",
+        description="Start configured MCP servers and list or read their capabilities.",
+    )
+    mcp_parser.add_argument("--workspace", default=".", help="project directory")
+    mcp_parser.add_argument("--read", nargs=2, metavar=("SERVER", "URI"), help="read one resource")
+    mcp_parser.add_argument("--prompt", nargs=2, metavar=("SERVER", "NAME"), help="render one prompt")
+    mcp_parser.add_argument("--arg", action="append", default=[], metavar="KEY=VALUE", help="prompt argument")
+    mcp_parser.add_argument("--json", action="store_true")
     return parser
 
 
@@ -287,6 +298,60 @@ def _eval_command(args: argparse.Namespace) -> int:
             if not item["success"]:
                 print(f"FAIL {item['task_id']}: {item['error'] or item['check_output'][:200]}")
     return 0 if report["failed"] == 0 else 1
+
+
+def _mcp_command(args: argparse.Namespace) -> int:
+    workspace = Path(args.workspace).expanduser().resolve()
+    if not workspace.is_dir():
+        print(f"workspace is not a directory: {workspace}", file=sys.stderr)
+        return 2
+    manager = MCPManager(workspace)
+    try:
+        if args.read:
+            server, uri = args.read
+            try:
+                value = manager.read_resource(server, uri)
+            except MCPError as exc:
+                print(f"mcp read failed: {exc}", file=sys.stderr)
+                return 1
+            payload: dict[str, object] = {"server": server, "uri": uri, "text": value}
+        elif args.prompt:
+            server, name = args.prompt
+            arguments: dict[str, str] = {}
+            for raw in args.arg:
+                key, _, value = str(raw).partition("=")
+                if key.strip():
+                    arguments[key.strip()] = value
+            try:
+                value = manager.get_prompt(server, name, arguments)
+            except MCPError as exc:
+                print(f"mcp prompt failed: {exc}", file=sys.stderr)
+                return 1
+            payload = {"server": server, "prompt": name, "text": value}
+        else:
+            payload = {
+                "tools": [
+                    {"name": tool.public_name, "description": tool.description}
+                    for tool in manager.start()
+                ],
+                "resources": manager.list_resources(),
+                "prompts": manager.list_prompts(),
+                "errors": list(manager.errors),
+            }
+    finally:
+        manager.close()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        if "text" in payload:
+            print(str(payload["text"]))
+        else:
+            print(f"tools: {len(payload.get('tools') or [])}")
+            print(f"resources: {len(payload.get('resources') or [])}")
+            print(f"prompts: {len(payload.get('prompts') or [])}")
+            for error in payload.get("errors") or []:
+                print(f"error: {error}", file=sys.stderr)
+    return 0
 
 
 def _update_command(args: argparse.Namespace) -> int:
@@ -429,6 +494,8 @@ def main(argv: list[str] | None = None) -> int:
         return _migrate_command(args)
     if args.command == "update":
         return _update_command(args)
+    if args.command == "mcp":
+        return _mcp_command(args)
     if args.command != "exec":
         parser.print_help()
         return 2

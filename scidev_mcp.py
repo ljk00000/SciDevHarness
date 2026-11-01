@@ -179,6 +179,49 @@ class MCPHTTPClient:
             return json.dumps(structured, ensure_ascii=False)[:80_000]
         return "MCP 工具没有返回文本内容"
 
+    def list_resources(self) -> list[dict[str, Any]]:
+        result = self._request("resources/list", {})
+        raw_resources = result.get("resources")
+        resources: list[Any] = raw_resources if isinstance(raw_resources, list) else []
+        return [item for item in resources if isinstance(item, dict)][:200]
+
+    def read_resource(self, uri: str) -> str:
+        result = self._request("resources/read", {"uri": str(uri)})
+        raw_contents = result.get("contents")
+        contents: list[Any] = raw_contents if isinstance(raw_contents, list) else []
+        parts: list[str] = []
+        for item in contents[:50]:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+            elif item.get("blob"):
+                parts.append(f"[binary resource {item.get('mimeType') or 'unknown'}]")
+        return "\n".join(parts)[:80_000] or "MCP 资源没有返回文本内容"
+
+    def list_prompts(self) -> list[dict[str, Any]]:
+        result = self._request("prompts/list", {})
+        raw_prompts = result.get("prompts")
+        prompts: list[Any] = raw_prompts if isinstance(raw_prompts, list) else []
+        return [item for item in prompts if isinstance(item, dict)][:200]
+
+    def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> str:
+        result = self._request("prompts/get", {
+            "name": str(name),
+            "arguments": dict(arguments or {}),
+        })
+        parts: list[str] = []
+        for message in result.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, dict) and content.get("type") == "text":
+                parts.append(str(content.get("text") or ""))
+            elif isinstance(content, str):
+                parts.append(content)
+        return "\n".join(parts)[:80_000] or "MCP prompt 没有返回文本内容"
+
     def close(self) -> None:
         return
 
@@ -343,6 +386,49 @@ class MCPClient:
             return json.dumps(structured, ensure_ascii=False)[:80_000]
         return "MCP 工具没有返回文本内容"
 
+    def list_resources(self) -> list[dict[str, Any]]:
+        result = self._request("resources/list", {})
+        raw_resources = result.get("resources")
+        resources: list[Any] = raw_resources if isinstance(raw_resources, list) else []
+        return [item for item in resources if isinstance(item, dict)][:200]
+
+    def read_resource(self, uri: str) -> str:
+        result = self._request("resources/read", {"uri": str(uri)})
+        raw_contents = result.get("contents")
+        contents: list[Any] = raw_contents if isinstance(raw_contents, list) else []
+        parts: list[str] = []
+        for item in contents[:50]:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+            elif item.get("blob"):
+                parts.append(f"[binary resource {item.get('mimeType') or 'unknown'}]")
+        return "\n".join(parts)[:80_000] or "MCP 资源没有返回文本内容"
+
+    def list_prompts(self) -> list[dict[str, Any]]:
+        result = self._request("prompts/list", {})
+        raw_prompts = result.get("prompts")
+        prompts: list[Any] = raw_prompts if isinstance(raw_prompts, list) else []
+        return [item for item in prompts if isinstance(item, dict)][:200]
+
+    def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> str:
+        result = self._request("prompts/get", {
+            "name": str(name),
+            "arguments": dict(arguments or {}),
+        })
+        parts: list[str] = []
+        for message in result.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, dict) and content.get("type") == "text":
+                parts.append(str(content.get("text") or ""))
+            elif isinstance(content, str):
+                parts.append(content)
+        return "\n".join(parts)[:80_000] or "MCP prompt 没有返回文本内容"
+
     def close(self) -> None:
         process = self.process
         if process is None:
@@ -506,6 +592,42 @@ class MCPManager:
                     raise MCPError(f"MCP 服务未连接：{tool.server}")
                 return client.call_tool(tool.name, arguments)
         raise MCPError(f"未知 MCP 工具：{public_name}")
+
+    def list_resources(self) -> list[dict[str, Any]]:
+        self.start()
+        items: list[dict[str, Any]] = []
+        for name, client in self.clients.items():
+            try:
+                for resource in client.list_resources():
+                    items.append({**resource, "server": name})
+            except (MCPError, OSError, ValueError) as exc:
+                self.errors.append(f"{name}: resources/list: {exc}")
+        return items[:500]
+
+    def read_resource(self, server: str, uri: str) -> str:
+        self.start()
+        client = self.clients.get(str(server))
+        if client is None:
+            raise MCPError(f"MCP 服务未连接：{server}")
+        return client.read_resource(uri)
+
+    def list_prompts(self) -> list[dict[str, Any]]:
+        self.start()
+        items: list[dict[str, Any]] = []
+        for name, client in self.clients.items():
+            try:
+                for prompt in client.list_prompts():
+                    items.append({**prompt, "server": name})
+            except (MCPError, OSError, ValueError) as exc:
+                self.errors.append(f"{name}: prompts/list: {exc}")
+        return items[:500]
+
+    def get_prompt(self, server: str, name: str, arguments: dict[str, Any] | None = None) -> str:
+        self.start()
+        client = self.clients.get(str(server))
+        if client is None:
+            raise MCPError(f"MCP 服务未连接：{server}")
+        return client.get_prompt(name, arguments)
 
     def close(self) -> None:
         with self._lock:
