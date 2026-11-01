@@ -111,7 +111,7 @@ python scidev_cli.py migrate --workspace .
 - 补丁审核：聊天卡片逐块勾选；可打开“补丁 diff”编辑器标签，彩色显示增删行并在同一处勾选、应用或拒绝；拒绝或部分批准会停止当前任务
 - 终端：Windows 优先使用 ConPTY（`pywinpty`）运行命令，保留交互式 stdin；ConPTY 不可用时回退到隐藏窗口管道。终端输出做 ANSI 清理，命令结束显示退出码
 - 图片附件：聊天输入区“图片”可附加 PNG/JPEG/GIF/WebP（最多 4 张、单张 5 MB、总计 12 MB），随任务作为多模态 `image_url` 发送；CLI 用重复的 `--image` 传图。图片以 data URL 保存到会话，模型必须支持视觉输入
-- 真实仓库 eval：`python scidev_cli.py eval --suite evals/standard/suite.json --output .research/evals/report.json` 会在隔离副本里跑固定任务，用确定性 check 判断成败，报告完成率、平均轮数、token、耗时和相对上次的回归。`evals/smoke/` 是 3 个冒烟任务，`evals/standard/suite.json` 是 20 个固定任务；测试会确认每个任务在修复前确实失败。
+- 真实仓库 eval：`python scidev_cli.py eval --suite evals/standard/suite.json --output .research/evals/report.json --jobs 2` 会在隔离副本里跑固定任务，用确定性 check 判断成败，报告完成率、平均轮数、prompt/completion token、耗时、相对上次的回归和按定价估算的成本。`evals/smoke/` 是 3 个冒烟任务，`evals/standard/suite.json` 是 20 个固定任务；测试会确认每个任务在修复前确实失败。价格可在 suite 写 `"pricing": {"input_per_million": 1.0, "output_per_million": 2.0}`，或用 `SCIDEV_EVAL_INPUT_PRICE`/`SCIDEV_EVAL_OUTPUT_PRICE` 覆盖。
 - 项目上下文：按任务关键词（含有限中英软件术语映射）与当前文件自动定位相关代码，附带项目结构、依赖声明、Git 状态和适用目录指令；点击聊天输入区 `@` →“查看项目上下文”可预览、刷新
 - 任务规划：右侧计划面板提供自动规划、必须先规划、关闭三种模式；计划步骤随会话保存，重试可恢复，未完成计划不会被当作成功提交
 - 本地任务队列：最多 6 次尝试（含首次）；429/5xx 优先遵从服务端 `Retry-After`，否则指数退避，进程重启后可恢复。相同任务/请求体重试保持幂等键，任务或请求体改变则更换键；服务端可能不支持幂等键，不能保证网络中断时绝不重复计费

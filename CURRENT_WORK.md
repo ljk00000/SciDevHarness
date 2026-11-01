@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-11-01 09:15（Asia/Shanghai）· Eval 并行与成本
+- `EvalRunner` 新增 `jobs`（1–8），用线程池并行跑隔离任务；CLI `eval` 新增 `--jobs`。
+- 结果记录 prompt/completion token，按 suite `pricing` 或 `SCIDEV_EVAL_INPUT_PRICE`/`SCIDEV_EVAL_OUTPUT_PRICE` 估算美元成本。
+- 报告新增 `jobs`、`total_prompt_tokens`、`total_completion_tokens`、`estimated_cost_usd`、`pricing`。
+- 新增并行与成本测试；全量套件 669 项 0 失败、14 跳过、覆盖率 78%。
+
 ## 2026-11-01 08:55（Asia/Shanghai）· 20 项固定 eval 套件
 - 新增 `evals/standard/suite.json`：20 个固定任务，覆盖 bug 修复、文件创建/重命名、unittest/pytest、JSON/CSV/配置解析、dataclass、argparse、正则、排序/去重/二分、类型标注、async gather。
 - 每个任务有独立 setup 和确定性 check；新增 `tests/test_eval_suite.py` 验证 id 唯一、check 非空，并确认每个任务在修复前确实失败；全量套件 668 项 0 失败、14 跳过、覆盖率 78%。

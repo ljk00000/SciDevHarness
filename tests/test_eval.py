@@ -38,8 +38,8 @@ class EvalHarnessTests(unittest.TestCase):
             def fake_runner(work: Path, task):
                 if task.task_id == "write-answer":
                     (work / "answer.txt").write_text("ok\n", encoding="utf-8")
-                    return {"success": True, "turn_count": 2, "tokens": 100}
-                return {"success": True, "turn_count": 1, "tokens": 20}
+                    return {"success": True, "turn_count": 2, "tokens": 110, "prompt_tokens": 100, "completion_tokens": 10}
+                return {"success": True, "turn_count": 1, "tokens": 20, "prompt_tokens": 15, "completion_tokens": 5}
 
             runner = EvalRunner(root, suite, task_runner=fake_runner, output_path=root / "report.json")
             report = runner.run()
@@ -47,7 +47,9 @@ class EvalHarnessTests(unittest.TestCase):
             self.assertEqual(report["passed"], 1)
             self.assertEqual(report["failed"], 1)
             self.assertEqual(report["pass_rate"], 0.5)
-            self.assertEqual(report["total_tokens"], 120)
+            self.assertEqual(report["total_tokens"], 130)
+            self.assertEqual(report["total_prompt_tokens"], 115)
+            self.assertEqual(report["total_completion_tokens"], 15)
             self.assertTrue((root / "report.json").is_file())
             self.assertEqual(report["results"][1]["check_exit"], 1)
 
@@ -62,6 +64,46 @@ class EvalHarnessTests(unittest.TestCase):
             self.assertEqual(again["pass_rate"], 1.0)
             self.assertEqual(again["previous_pass_rate"], 0.5)
             self.assertEqual(again["regression"], 0.5)
+
+    def test_parallel_jobs_and_cost_reporting(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-eval-cost-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            suite = root / "suite.json"
+            suite.write_text(json.dumps({
+                "name": "cost-suite",
+                "pricing": {"input_per_million": 1.0, "output_per_million": 2.0},
+                "tasks": [
+                    {
+                        "id": "a",
+                        "prompt": "a",
+                        "check": [sys.executable, "-c", "pass"],
+                    },
+                    {
+                        "id": "b",
+                        "prompt": "b",
+                        "check": [sys.executable, "-c", "pass"],
+                    },
+                ],
+            }), encoding="utf-8")
+
+            def fake_runner(work: Path, task):
+                return {
+                    "success": True,
+                    "turn_count": 1,
+                    "tokens": 1_500_000,
+                    "prompt_tokens": 1_000_000,
+                    "completion_tokens": 500_000,
+                }
+
+            runner = EvalRunner(
+                root, suite, task_runner=fake_runner,
+                output_path=root / "report.json", jobs=2,
+            )
+            report = runner.run()
+            self.assertEqual(report["jobs"], 2)
+            self.assertEqual(report["total_prompt_tokens"], 2_000_000)
+            self.assertEqual(report["total_completion_tokens"], 1_000_000)
+            self.assertEqual(report["estimated_cost_usd"], 4.0)
 
     def test_unsafe_setup_path_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-eval-path-") as temp:

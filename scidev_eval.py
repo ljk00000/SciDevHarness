@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import concurrent.futures
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,8 @@ class EvalResult:
     elapsed_seconds: float
     turn_count: int = 0
     tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     exit_code: int | None = None
     check_exit: int | None = None
     error: str = ""
@@ -193,6 +196,8 @@ def _default_task_runner(work: Path, task: EvalTask) -> dict[str, Any]:
         "exit_code": completed.returncode,
         "turn_count": int(payload.get("turn_count", 0) or 0),
         "tokens": int(usage.get("total_tokens", 0) or 0),
+        "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+        "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
         "output": (completed.stdout or completed.stderr)[-MAX_CHECK_OUTPUT:],
         "error": str(payload.get("error") or ""),
     }
@@ -206,6 +211,7 @@ class EvalRunner:
         *,
         task_runner: TaskRunner | None = None,
         output_path: Path | None = None,
+        jobs: int = 1,
     ):
         self.project_root = Path(project_root).resolve()
         self.suite_path = Path(suite_path).resolve()
@@ -215,6 +221,27 @@ class EvalRunner:
             else self.project_root / ".research" / "evals" / f"eval-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
         )
         self.suite_name, self.workspace_template, self.tasks = _parse_suite(self.suite_path)
+        self.jobs = max(1, min(8, int(jobs)))
+        self.pricing = self._load_pricing()
+
+    def _load_pricing(self) -> dict[str, float]:
+        try:
+            data = json.loads(self.suite_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        raw = data.get("pricing") if isinstance(data, dict) else None
+        raw = raw if isinstance(raw, dict) else {}
+        result: dict[str, float] = {}
+        for key, env_name in (
+            ("input_per_million", "SCIDEV_EVAL_INPUT_PRICE"),
+            ("output_per_million", "SCIDEV_EVAL_OUTPUT_PRICE"),
+        ):
+            value = os.getenv(env_name) or raw.get(key) or 0
+            try:
+                result[key] = max(0.0, float(value))
+            except (TypeError, ValueError, OverflowError):
+                result[key] = 0.0
+        return result
 
     def _prepare(self, work: Path, task: EvalTask) -> None:
         if self.workspace_template is not None:
@@ -262,6 +289,8 @@ class EvalRunner:
                 elapsed_seconds=elapsed,
                 turn_count=int(outcome.get("turn_count", 0) or 0),
                 tokens=int(outcome.get("tokens", 0) or 0),
+                prompt_tokens=int(outcome.get("prompt_tokens", 0) or 0),
+                completion_tokens=int(outcome.get("completion_tokens", 0) or 0),
                 exit_code=outcome.get("exit_code"),
                 check_exit=check_exit,
                 error=str(outcome.get("error") or ""),
@@ -271,21 +300,36 @@ class EvalRunner:
 
     def run(self) -> dict[str, Any]:
         started = time.monotonic()
-        results = [self.run_task(task) for task in self.tasks]
+        if self.jobs <= 1:
+            results = [self.run_task(task) for task in self.tasks]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.jobs) as pool:
+                results = list(pool.map(self.run_task, self.tasks))
         total = len(results)
         passed = sum(1 for result in results if result.success)
         total_tokens = sum(result.tokens for result in results)
+        total_prompt = sum(result.prompt_tokens for result in results)
+        total_completion = sum(result.completion_tokens for result in results)
         total_turns = sum(result.turn_count for result in results)
+        estimated_cost = (
+            total_prompt * self.pricing["input_per_million"]
+            + total_completion * self.pricing["output_per_million"]
+        ) / 1_000_000
         summary = {
             "suite": self.suite_name,
             "started_at": datetime.now(timezone.utc).isoformat(),
+            "jobs": self.jobs,
             "total": total,
             "passed": passed,
             "failed": total - passed,
             "pass_rate": round(passed / total, 4) if total else 0.0,
             "average_turns": round(total_turns / total, 2) if total else 0.0,
             "total_tokens": total_tokens,
+            "total_prompt_tokens": total_prompt,
+            "total_completion_tokens": total_completion,
             "average_tokens": round(total_tokens / total, 1) if total else 0.0,
+            "estimated_cost_usd": round(estimated_cost, 6),
+            "pricing": dict(self.pricing),
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "previous_pass_rate": None,
             "regression": None,

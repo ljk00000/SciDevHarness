@@ -96,6 +96,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     eval_parser.add_argument("--suite", required=True, help="eval suite JSON path")
     eval_parser.add_argument("--output", default="", help="report JSON path (default: timestamped under .research/evals)")
+    eval_parser.add_argument("--jobs", type=int, default=1, help="parallel tasks (1-8, default: 1)")
     eval_parser.add_argument("--json", action="store_true", help="print the report as JSON")
     pr_parser = subparsers.add_parser(
         "pr",
@@ -222,7 +223,7 @@ def _eval_command(args: argparse.Namespace) -> int:
         return 2
     output_path = Path(args.output).expanduser().resolve() if args.output else None
     try:
-        runner = EvalRunner(Path.cwd(), suite_path, output_path=output_path)
+        runner = EvalRunner(Path.cwd(), suite_path, output_path=output_path, jobs=args.jobs)
         report = runner.run()
     except EvalError as exc:
         print(f"eval suite rejected: {exc}", file=sys.stderr)
@@ -235,6 +236,8 @@ def _eval_command(args: argparse.Namespace) -> int:
             f"({report['pass_rate']:.1%}), avg turns {report['average_turns']}, "
             f"tokens {report['total_tokens']}, {report['elapsed_seconds']:.1f}s"
         )
+        if report.get("estimated_cost_usd"):
+            print(f"estimated cost: ${report['estimated_cost_usd']:.4f}")
         if report.get("regression") is not None:
             print(f"regression vs previous: {report['regression']:+.1%}")
         print(f"report: {runner.output_path}")
