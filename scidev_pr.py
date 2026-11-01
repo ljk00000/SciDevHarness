@@ -185,6 +185,39 @@ def view_pull_request(
     return data
 
 
+def pull_request_diff(
+    workspace: Path,
+    number: object,
+    *,
+    runner: Runner | None = None,
+    allow_network: bool = False,
+    max_chars: int = 300_000,
+) -> dict[str, Any]:
+    workspace = Path(workspace).resolve()
+    if _network_denied(workspace) and not allow_network:
+        raise PullRequestError("网络策略为 deny；使用 --allow-network 显式放行 PR diff")
+    pr_number = _validate_number(number)
+    limit = max(10_000, min(int(max_chars), 1_000_000))
+    completed = _run(
+        workspace,
+        ["gh", "pr", "diff", str(pr_number), "--color=never"],
+        timeout=60,
+        runner=runner,
+    )
+    if completed.returncode != 0:
+        raise PullRequestError((completed.stderr or completed.stdout or "gh pr diff 失败").strip()[-800:])
+    raw = completed.stdout or ""
+    if not raw.strip():
+        raise PullRequestError("该 PR 没有可显示的 diff")
+    truncated = len(raw) > limit
+    return {
+        "number": pr_number,
+        "diff": raw[:limit],
+        "truncated": truncated,
+        "url": f"https://github.com/{_repo_slug(workspace, runner=runner)}/pull/{pr_number}",
+    }
+
+
 def review_pull_request(
     workspace: Path,
     number: object,

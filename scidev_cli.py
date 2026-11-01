@@ -22,6 +22,7 @@ from scidev_pr import (
     PullRequestError,
     build_plan,
     create_pull_request,
+    pull_request_diff,
     review_pull_request,
     view_pull_request,
 )
@@ -134,6 +135,16 @@ def _parser() -> argparse.ArgumentParser:
     pr_view_parser.add_argument("--number", required=True, help="pull request number")
     pr_view_parser.add_argument("--allow-network", action="store_true")
     pr_view_parser.add_argument("--json", action="store_true")
+    pr_diff_parser = subparsers.add_parser(
+        "pr-diff",
+        help="show a bounded GitHub pull request diff",
+        description="Read a pull request diff with the authenticated gh CLI.",
+    )
+    pr_diff_parser.add_argument("--workspace", required=True)
+    pr_diff_parser.add_argument("--number", required=True, help="pull request number")
+    pr_diff_parser.add_argument("--max-chars", type=int, default=300_000)
+    pr_diff_parser.add_argument("--allow-network", action="store_true")
+    pr_diff_parser.add_argument("--json", action="store_true")
     pr_review_parser = subparsers.add_parser(
         "pr-review",
         help="approve, comment on, or request changes on a GitHub PR",
@@ -399,6 +410,26 @@ def _pr_view_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pr_diff_command(args: argparse.Namespace) -> int:
+    try:
+        payload = pull_request_diff(
+            Path(args.workspace),
+            args.number,
+            allow_network=args.allow_network,
+            max_chars=args.max_chars,
+        )
+    except (PullRequestError, ValueError) as exc:
+        print(f"pr-diff failed: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(payload["diff"])
+        if payload["truncated"]:
+            print("[diff truncated]", file=sys.stderr)
+    return 0
+
+
 def _pr_review_command(args: argparse.Namespace) -> int:
     try:
         payload = review_pull_request(
@@ -495,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
         return _pr_command(args)
     if args.command == "pr-view":
         return _pr_view_command(args)
+    if args.command == "pr-diff":
+        return _pr_diff_command(args)
     if args.command == "pr-review":
         return _pr_review_command(args)
     if args.command == "migrate":

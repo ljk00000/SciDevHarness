@@ -120,6 +120,7 @@ from scidev_pty import PTYSession, PTYUnavailable
 from scidev_attachments import AttachmentError, load_image_file
 from scidev_crash import install_crash_reporter
 from scidev_analytics_ui import ErrorTrendDialog
+from scidev_pr_ui import PullRequestDialog
 from scidev_mcp import MCPManager
 from scidev_mcp_ui import MCPBrowserDialog
 from scidev_intel import IntelUnavailable, PythonIntel
@@ -3085,6 +3086,7 @@ class ClientWindow(QMainWindow):
                     "> worktrees",
                     "> mcp",
                     "> errors",
+                    "> pr",
                     "> terminal",
                     "> problems",
                     "> search",
@@ -3407,6 +3409,9 @@ class ClientWindow(QMainWindow):
 
     def _show_error_trends(self) -> None:
         ErrorTrendDialog(self.project_root, self).exec()
+
+    def _show_pull_request(self) -> None:
+        PullRequestDialog(self.project_root, self).exec()
 
     def _create_isolated_worktree(self) -> "ClientWindow | None":
         counter = getattr(self, "_gui_worktree_counter", 0) + 1
@@ -7762,6 +7767,10 @@ class ClientWindow(QMainWindow):
             if command == "errors" or "错误趋势" in command:
                 self.command_search.clear()
                 self._show_error_trends()
+                return
+            if command == "pr" or "pull request" in command:
+                self.command_search.clear()
+                self._show_pull_request()
                 return
             if "open folder" in command or "打开文件夹" in command or "workspace" in command:
                 self.command_search.clear()

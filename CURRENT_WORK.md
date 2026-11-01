@@ -1,5 +1,11 @@
 # 当前工作
 
+## 2026-11-01 21:00（Asia/Shanghai）· PR diff 与 review 桌面联动
+- `scidev_pr.py` 新增 `pull_request_diff()`：有界 `gh pr diff`（默认 30 万字符、最多 100 万）、网络策略门控。
+- CLI 新增 `pr-diff`；桌面 `> pr` 打开 PR 对话框，可加载元数据/diff、填写备注并提交 approve/comment/request-changes。
+- 新增 1 项 PR diff 核心测试、2 项 PR UI 测试、1 项 CLI 测试；全量套件 704 项 0 失败、14 跳过、覆盖率 78%。
+- 标准 20 项本地模型基线在后台运行。
+
 ## 2026-11-01 20:00（Asia/Shanghai）· 发布签名与安装包校验
 - 新增 `scripts/sign_release.ps1`：显式 40 位证书指纹、HTTPS RFC 3161 时间戳、SHA-256 Authenticode 签名、`/pa` 复验；不接受密码/pfx。
 - `scidev_update` 只报告 HTTPS 安装包，并返回名称/大小/`digest`；新增 `verify_downloaded_asset()` 按 SHA-256 和大小上限校验。

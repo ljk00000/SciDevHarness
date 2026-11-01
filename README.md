@@ -91,7 +91,7 @@ python scidev_cli.py pr-review --workspace . --number 12 --action comment --body
 python scidev_cli.py pr-review --workspace . --number 12 --action approve
 ```
 
-`pr-view` 读取编号、标题、状态、作者、head/base、review decision 和 mergeable；`pr-review` 支持 `approve`、`comment`、`request-changes`，comment/request-changes 必须提供 body。两者都受网络 deny 约束，需要 `--allow-network` 才放行。
+`pr-view` 读取编号、标题、状态、作者、head/base、review decision 和 mergeable；`pr-diff` 读取有界 diff（默认 30 万字符，最多 100 万）；`pr-review` 支持 `approve`、`comment`、`request-changes`，comment/request-changes 必须提供 body。三者都受网络 deny 约束，需要 `--allow-network` 才放行。桌面命令面板 `> pr` 可加载 PR 元数据和 diff、查看 review 状态并提交 review。
 
 ### 崩溃报告
 

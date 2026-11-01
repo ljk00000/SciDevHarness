@@ -102,6 +102,7 @@ class ReleaseStagingTests(unittest.TestCase):
             "scidev_mcp_ui.py",
             "scidev_analytics.py",
             "scidev_analytics_ui.py",
+            "scidev_pr_ui.py",
             "scidev_pr.py",
             "scidev_migrations.py",
             "scidev_update.py",

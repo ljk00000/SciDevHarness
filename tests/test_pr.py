@@ -11,6 +11,7 @@ from scidev_pr import (
     build_plan,
     create_pull_request,
     parse_github_remote,
+    pull_request_diff,
     review_pull_request,
     view_pull_request,
 )
@@ -88,6 +89,30 @@ class PullRequestTests(unittest.TestCase):
             self.assertIn("--draft", calls[1])
             self.assertIn("--fill", calls[1])
 
+
+    def test_pr_diff_is_bounded_and_network_gated(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-pr-diff-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            _repo(root)
+            calls: list[list[str]] = []
+
+            def runner(args, **kwargs):
+                calls.append(list(args))
+                return subprocess.CompletedProcess(args, 0, stdout="diff --git a/x b/x\n+hello\n", stderr="")
+
+            result = pull_request_diff(root, "7", runner=runner, max_chars=1000)
+            self.assertEqual(result["number"], 7)
+            self.assertIn("diff --git", result["diff"])
+            self.assertFalse(result["truncated"])
+            self.assertEqual(calls[0][:4], ["gh", "pr", "diff", "7"])
+            self.assertIn("--color=never", calls[0])
+
+            (root / ".research").mkdir()
+            (root / ".research" / "settings.json").write_text('{"network_policy": "deny"}', encoding="utf-8")
+            with self.assertRaises(PullRequestError):
+                pull_request_diff(root, 7, runner=runner)
+            with self.assertRaises(PullRequestError):
+                pull_request_diff(root, 0, runner=runner, allow_network=True)
 
     def test_view_and_review_pull_request(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-pr-review-", ignore_cleanup_errors=True) as temp:

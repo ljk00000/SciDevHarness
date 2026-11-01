@@ -100,6 +100,28 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertTrue(json.loads(output)["success"])
 
+    def test_pr_diff_json_and_human_output(self) -> None:
+        fake = {
+            "number": 7,
+            "diff": "diff --git a/x b/x\n+hello\n",
+            "truncated": False,
+            "url": "https://github.com/example/project/pull/7",
+        }
+        with patch("scidev_cli.pull_request_diff", return_value=fake) as diff:
+            code, output, _root = self._run([
+                "pr-diff", "--workspace", "{root}", "--number", "7", "--json",
+            ])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["number"], 7)
+        diff.assert_called_once()
+
+        with patch("scidev_cli.pull_request_diff", return_value=fake):
+            code, output, _root = self._run([
+                "pr-diff", "--workspace", "{root}", "--number", "7",
+            ])
+        self.assertEqual(code, 0)
+        self.assertIn("+hello", output)
+
     def test_pr_dry_run_prints_a_plan_without_network_calls(self) -> None:
         output = io.StringIO()
         with tempfile.TemporaryDirectory(prefix="scidev-cli-pr-", ignore_cleanup_errors=True) as temp:
