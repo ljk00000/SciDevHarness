@@ -2263,6 +2263,35 @@ class OpenAICompatibleProvider:
             )
             consumed_spans.append((match.start(), match.end()))
 
+        if not tool_calls and "apply_patch" in allowed:
+            # Weak local models often print the exact apply_patch envelope instead
+            # of making a native tool call. Recover only a complete, explicitly
+            # delimited patch that names at least one file; the normal patch
+            # parser, path checks and human review still decide whether it runs.
+            patch_match = re.search(
+                r"(?ms)^[ \t]*\*\*\* Begin Patch[ \t]*\r?\n"
+                r".*?^[ \t]*\*\*\* (?:Update|Add|Delete) File:.*?"
+                r"^[ \t]*\*\*\* End Patch[ \t]*$",
+                parse_content,
+            )
+            if patch_match:
+                patch_text = patch_match.group(0)
+                call, name, reason, detail = build_call({
+                    "name": "apply_patch",
+                    "arguments": {"patch": patch_text},
+                })
+                if call is not None:
+                    tool_calls.append(call)
+                    consumed_spans.append((patch_match.start(), patch_match.end()))
+                else:
+                    rejected_tool_name = name or "apply_patch"
+                    rejected_reason = reason or "invalid_patch_envelope"
+                    rejected_detail = detail or "patch_envelope_failed_schema_validation"
+            elif re.search(r"(?ms)^[ \t]*\*\*\* Begin Patch[ \t]*$", parse_content):
+                rejected_tool_name = "apply_patch"
+                rejected_reason = "incomplete_or_invalid_tool_envelope"
+                rejected_detail = "patch_block_missing_end_or_file_header"
+
         if not tool_calls:
             tool_markup_rejected = False
             if not rejected_tool_name:
@@ -4808,17 +4837,22 @@ class CodingAgent:
         self._emit("verification_recorded", {"session_id": session_id, **record, "report": report})
         return record
 
-    def _auto_verification_candidate(self, prompt: str) -> tuple[str, str]:
-        """Return the first safe discovered check, preferring tests over lint."""
+    def _auto_verification_candidates(self, prompt: str) -> list[tuple[str, str, str]]:
+        """Return at most one safe discovered check per category.
+
+        Tests come first because they catch behavior errors; lint and typecheck
+        then add diagnostics a failing test may not show.  Only commands the
+        execution policy can auto-approve are returned.
+        """
         try:
             context = self.toolbox.project_context.build(prompt[:4000])
         except (OSError, RuntimeError, ValueError):
-            return "", ""
+            return []
         discovery = context.get("test_discovery")
         if not isinstance(discovery, dict):
-            return "", ""
+            return []
         priority = {"test": 0, "lint": 1, "typecheck": 2}
-        best: tuple[int, str, str] | None = None
+        best: dict[str, tuple[int, str, str]] = {}
         for candidate in discovery.get("candidates") or []:
             if not isinstance(candidate, dict):
                 continue
@@ -4829,11 +4863,20 @@ class CodingAgent:
             rank = priority.get(assessment.category)
             if rank is None or not assessment.auto_approvable:
                 continue
-            if best is None or rank < best[0]:
-                best = (rank, command, str(candidate.get("name") or ""))
-        if best is None:
+            current = best.get(assessment.category)
+            if current is None or rank < current[0]:
+                best[assessment.category] = (rank, command, str(candidate.get("name") or ""))
+        return [
+            (category, value[1], value[2])
+            for category, value in sorted(best.items(), key=lambda item: item[1][0])
+        ]
+
+    def _auto_verification_candidate(self, prompt: str) -> tuple[str, str]:
+        """Return the first safe discovered check, preferring tests over lint."""
+        candidates = self._auto_verification_candidates(prompt)
+        if not candidates:
             return "", ""
-        return best[1], best[2]
+        return candidates[0][1], candidates[0][2]
 
     def _run_auto_verification(
         self,
@@ -4842,72 +4885,95 @@ class CodingAgent:
         turn: int,
         prompt: str,
     ) -> tuple[bool, str, dict[str, Any]]:
-        """Run one Harness-selected verification command under the current policy."""
-        command, label = self._auto_verification_candidate(prompt)
-        if not command:
-            return False, "", {}
-        assessment = assess_command(command)
-        if not self.toolbox.execution_policy.auto_approves(assessment, command):
+        """Run up to one Harness-selected check per category under the policy.
+
+        The model gets structured diagnostics from every check, not just the
+        raw tail of one command.  A failed test does not stop lint/typecheck:
+        those often name the exact line the test failure only implies.
+        """
+        candidates = self._auto_verification_candidates(prompt)
+        if not candidates:
             return False, "", {}
         revision = int(session.get("verification_edit_revision", 0) or 0)
         auto_runs = session.get("verification_auto_runs")
         if not isinstance(auto_runs, list):
             auto_runs = []
-        if len(auto_runs) >= 3 or any(
-            isinstance(item, dict)
-            and item.get("command") == command
-            and int(item.get("edit_revision", -1) or -1) == revision
-            for item in auto_runs
-        ):
+        if len(auto_runs) >= 3:
             return False, "", {}
-        before = self._verification_snapshot(session)
-        self._emit("verification_auto_started", {
-            "session_id": session_id,
-            "turn": turn,
-            "command": command,
-            "label": label,
-            "edit_revision": revision,
-        })
-        try:
-            output = self.toolbox.run_command(command, timeout_seconds=240)
-        except PermanentError as exc:
-            note = f"Harness 自动验证未能启动 `{command}`：{exc}"
-            self._emit("verification_auto_failed", {
-                "session_id": session_id, "turn": turn, "command": command, "error": str(exc),
+        ran_any = False
+        notes: list[str] = []
+        for category, command, label in candidates:
+            if len(auto_runs) >= 3:
+                break
+            assessment = assess_command(command)
+            if assessment.category != category:
+                continue
+            if not self.toolbox.execution_policy.auto_approves(assessment, command):
+                continue
+            if any(
+                isinstance(item, dict)
+                and item.get("command") == command
+                and int(item.get("edit_revision", -1) or -1) == revision
+                for item in auto_runs
+            ):
+                continue
+            before = self._verification_snapshot(session)
+            self._emit("verification_auto_started", {
+                "session_id": session_id,
+                "turn": turn,
+                "command": command,
+                "label": label,
+                "category": category,
+                "edit_revision": revision,
             })
-            return False, note, {}
-        after = self._verification_snapshot(session)
-        execution = dict(self.toolbox.last_command_execution or {})
-        if not execution:
-            return False, "", {}
-        self._record_command_verification(
-            session, session_id, turn, execution, before, after, revision,
-        )
-        auto_runs.append({
-            "command": command,
-            "label": label,
-            "edit_revision": revision,
-            "turn": turn,
-            "status": execution.get("status"),
-            "exit_code": execution.get("exit_code"),
-        })
+            try:
+                output = self.toolbox.run_command(command, timeout_seconds=240)
+            except PermanentError as exc:
+                notes.append(f"Harness 自动验证未能启动 `{command}`：{exc}")
+                self._emit("verification_auto_failed", {
+                    "session_id": session_id, "turn": turn, "command": command, "error": str(exc),
+                })
+                continue
+            after = self._verification_snapshot(session)
+            execution = dict(self.toolbox.last_command_execution or {})
+            if not execution:
+                continue
+            self._record_command_verification(
+                session, session_id, turn, execution, before, after, revision,
+            )
+            auto_runs.append({
+                "command": command,
+                "label": label,
+                "category": category,
+                "edit_revision": revision,
+                "turn": turn,
+                "status": execution.get("status"),
+                "exit_code": execution.get("exit_code"),
+            })
+            ran_any = True
+            diagnostics = format_verification_diagnostics(category, output)
+            detail = output[-3000:]
+            if diagnostics:
+                detail = f"{diagnostics}\n\n原始输出（末尾）：\n{detail[-2000:]}"
+            notes.append(
+                f"Harness 已自动运行{category}验证 `{command}`（{label or 'discovered check'}）："
+                f"状态 {execution.get('status')}，退出码 {execution.get('exit_code')}。\n{detail}"
+            )
+            self._emit("verification_auto_completed", {
+                "session_id": session_id,
+                "turn": turn,
+                "command": command,
+                "category": category,
+                "status": execution.get("status"),
+                "exit_code": execution.get("exit_code"),
+                "report": session.get("verification_report") or {},
+            })
+        if not ran_any:
+            return False, "\n\n".join(notes), {}
         session["verification_auto_runs"] = auto_runs[-20:]
         session["updated_at"] = now_iso()
         self._save_session(session)
-        note = (
-            f"Harness 已自动运行验证命令 `{command}`（{label or 'discovered check'}）："
-            f"状态 {execution.get('status')}，退出码 {execution.get('exit_code')}。\n"
-            f"{output[-4000:]}"
-        )
-        self._emit("verification_auto_completed", {
-            "session_id": session_id,
-            "turn": turn,
-            "command": command,
-            "status": execution.get("status"),
-            "exit_code": execution.get("exit_code"),
-            "report": session.get("verification_report") or {},
-        })
-        return True, note, session.get("verification_report") or {}
+        return True, "\n\n".join(notes), session.get("verification_report") or {}
 
     def _semantic_acceptance_review(
         self,

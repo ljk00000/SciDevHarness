@@ -60,6 +60,15 @@ def _parser() -> argparse.ArgumentParser:
         help="do not require a passing current-code check before completion",
     )
     exec_parser.add_argument(
+        "--patch-approval",
+        choices=["auto", "reject"],
+        default="auto",
+        help=(
+            "auto applies every patch hunk headlessly (still limited to the workspace); "
+            "reject leaves existing files untouched (default: auto)"
+        ),
+    )
+    exec_parser.add_argument(
         "--restore-on-failure",
         action="store_true",
         help="restore files changed by the task when it fails",
@@ -589,6 +598,19 @@ def main(argv: list[str] | None = None) -> int:
         settings.execution_mode = ExecutionMode.parse(args.execution_mode).value
         ledger = EventLedger(workspace_effective)
         git = GitManager(workspace_effective)
+        patch_review = None
+        if args.patch_approval == "auto":
+            def approve_all_hunks(preview: dict) -> set[int]:
+                """Headless runs have no hunk UI; apply the validated hunks."""
+                selected: set[int] = set()
+                for hunk in preview.get("hunks") or []:
+                    if isinstance(hunk, dict):
+                        try:
+                            selected.add(int(hunk["id"]))
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                return selected
+            patch_review = approve_all_hunks
         agent = CodingAgent(
             workspace_effective,
             ledger,
@@ -596,6 +618,7 @@ def main(argv: list[str] | None = None) -> int:
             summary_settings=settings,
             require_verification=not args.no_verify,
             command_approval=None,
+            patch_review=patch_review,
             prefer_environment_provider=bool(args.api_base or args.api_key or args.model),
         )
         result = with_worktree(_execute(agent, payload))

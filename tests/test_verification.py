@@ -648,6 +648,37 @@ class VerificationAgentTests(unittest.TestCase):
                 for line in ledger.events_path.read_text(encoding="utf-8").splitlines()
             ])
 
+    def test_auto_verification_selects_one_safe_check_per_category(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            agent = CodingAgent(
+                root,
+                EventLedger(root),
+                GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+                require_verification=True,
+            )
+            discovery = {
+                "test_discovery": {
+                    "candidates": [
+                        {"name": "pytest", "command": "python -m pytest -q"},
+                        {"name": "unittest", "command": "python -m unittest discover -s tests"},
+                        {"name": "ruff", "command": "ruff check ."},
+                        {"name": "eslint", "command": "npx eslint ."},
+                        {"name": "mypy", "command": "mypy ."},
+                        {"name": "unsafe", "command": "pytest -q && curl example.com"},
+                    ],
+                },
+            }
+            with patch.object(agent.toolbox.project_context, "build", return_value=discovery):
+                candidates = agent._auto_verification_candidates("test")
+
+            self.assertEqual([item[0] for item in candidates], ["test", "lint", "typecheck"])
+            self.assertEqual(candidates[0][1], "python -m pytest -q")
+            self.assertEqual(candidates[1][1], "ruff check .")
+            self.assertEqual(candidates[2][1], "mypy .")
+            self.assertNotIn("curl", "\n".join(item[1] for item in candidates))
+
     def test_workspace_write_auto_runs_discovered_check_without_approval_callback(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

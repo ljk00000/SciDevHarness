@@ -1,5 +1,12 @@
 # 历史与结果
 
+## 2026-11-01 13:30（Asia/Shanghai）· 无头补丁与多类验证闭环
+- CLI `exec` 新增 `--patch-approval auto|reject`，默认在无审核界面时应用全部已校验补丁块；修复 eval/CI 对已有文件只能写新文件的问题。
+- 自动验证按 test/lint/typecheck 各选一个安全候选，输出结构化诊断后进入修复轮次；仍受执行策略、网络策略、命令白名单和当前代码指纹约束。
+- 标准 20 项本地 Qwen2.5-Coder-7B 基线 1/20 → 2/20（自动补丁开启后），平均 4.0 轮、464.5 秒；摘要基线 `evals/baselines/standard-20-qwen2.5-coder-7b.json`，完整报告 `.research/evals/standard-20-auto-patch.json`。这是弱模型基线，不代表强模型或 Harness 上限。
+- 验证：全量 707 项 0 失败、14 跳过、覆盖率 78%；ruff/mypy 通过。新增文本补丁恢复：弱模型只打印完整 `*** Begin Patch` 时转为 `apply_patch` 工具调用，仍走原有路径校验与审核；不完整补丁返回可修复错误。
+- 边界：CLI 无逐块人工审核，`auto` 是显式无头策略而非交互审批；20 项任务仍受本地 7B 模型能力限制。
+
 ## 2026-11-01 21:00（Asia/Shanghai）· PR diff 与 review 桌面联动
 - `scidev_pr.py` 新增 `pull_request_diff()`：有界 `gh pr diff`（默认 30 万字符、最多 100 万）、网络策略门控。
 - CLI 新增 `pr-diff`；桌面 `> pr` 打开 PR 对话框，可加载元数据/diff、填写备注并提交 approve/comment/request-changes。
@@ -46,7 +53,7 @@
 - 用本机 Ollama `scidev-qwen2.5-coder-7b:q4_k_m` 跑 3 项 smoke：无 fallback 0/3，开启 `SCIDEV_TEXT_TOOL_CALL_FALLBACK=1` 后 1/3（`create-notes` 通过），平均 4.33 轮。
 - eval suite 新增受限 `environment`（只允许 `SCIDEV_*`），任务子进程会继承；新增 `evals/local/suite.json`（fallback + 8 轮）和 `evals/baselines/local-qwen2.5-coder-7b.json`。
 - 新增 1 项 suite 环境测试；全量套件 687 项 0 失败、14 跳过、覆盖率 78%。
-- 边界：本地 7B 基线不代表强模型；Ollama 不返回 usage，token/成本为 0；标准 20 项尚未用真实模型跑完；基线是合成小任务，不是完整仓库。
+- 边界：本地 7B 基线不代表强模型；Ollama 不返回 usage，token/成本为 0；标准 20 项已在 13:30 节补跑（1/20 → 2/20）；基线是合成小任务，不是完整仓库。
 
 ## 2026-11-01 13:00（Asia/Shanghai）· 结构化错误分类
 - 新增 `scidev_errors.py`：把失败分为 auth/rate_limit/timeout/network/tool/verification/workspace/internal，附用户消息、是否可重试和有界 detail。

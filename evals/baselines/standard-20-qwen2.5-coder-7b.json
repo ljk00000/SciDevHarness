@@ -1,0 +1,154 @@
+{
+  "generated_at": "2026-11-01T05:18:19.290281+00:00",
+  "provider": {
+    "api_base": "http://127.0.0.1:11434/v1",
+    "model": "scidev-qwen2.5-coder-7b:q4_k_m"
+  },
+  "suite": "evals/standard/suite.json",
+  "environment": {
+    "SCIDEV_TEXT_TOOL_CALL_FALLBACK": "1",
+    "SCIDEV_MAX_AGENT_TURNS": "8",
+    "patch_approval": "auto"
+  },
+  "total": 20,
+  "passed": 2,
+  "failed": 18,
+  "pass_rate": 0.1,
+  "average_turns": 4.0,
+  "elapsed_seconds": 464.528,
+  "without_headless_patch": {
+    "total": 20,
+    "passed": 1,
+    "failed": 19,
+    "pass_rate": 0.05,
+    "average_turns": 3.45,
+    "elapsed_seconds": 173.758
+  },
+  "tasks": {
+    "fix-add": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 31.679,
+      "check_exit": 1
+    },
+    "create-notes": {
+      "passed": true,
+      "turns": 3,
+      "elapsed_seconds": 15.32,
+      "check_exit": 0
+    },
+    "fix-unittest": {
+      "passed": true,
+      "turns": 4,
+      "elapsed_seconds": 41.205,
+      "check_exit": 0
+    },
+    "fix-fizzbuzz": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 29.533,
+      "check_exit": 1
+    },
+    "json-load": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 36.064,
+      "check_exit": 1
+    },
+    "csv-sum": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 42.572,
+      "check_exit": 1
+    },
+    "path-stem": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 43.287,
+      "check_exit": 1
+    },
+    "safe-int": {
+      "passed": false,
+      "turns": 4,
+      "elapsed_seconds": 29.212,
+      "check_exit": 1
+    },
+    "dataclass": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 21.995,
+      "check_exit": 1
+    },
+    "argparse-cli": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 25.273,
+      "check_exit": 1
+    },
+    "regex-email": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 36.755,
+      "check_exit": 1
+    },
+    "sort-dict": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 38.484,
+      "check_exit": 1
+    },
+    "dedupe": {
+      "passed": false,
+      "turns": 2,
+      "elapsed_seconds": 30.255,
+      "check_exit": 1
+    },
+    "binary-search": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 35.721,
+      "check_exit": 1
+    },
+    "rename-function": {
+      "passed": false,
+      "turns": 7,
+      "elapsed_seconds": 53.913,
+      "check_exit": 1
+    },
+    "type-hints": {
+      "passed": false,
+      "turns": 2,
+      "elapsed_seconds": 17.278,
+      "check_exit": 1
+    },
+    "parse-config": {
+      "passed": false,
+      "turns": 5,
+      "elapsed_seconds": 28.803,
+      "check_exit": 1
+    },
+    "rename-file": {
+      "passed": false,
+      "turns": 2,
+      "elapsed_seconds": 7.851,
+      "check_exit": 1
+    },
+    "pytest-fixture": {
+      "passed": false,
+      "turns": 1,
+      "elapsed_seconds": 13.26,
+      "check_exit": 1
+    },
+    "async-gather": {
+      "passed": false,
+      "turns": 0,
+      "elapsed_seconds": 180.272,
+      "check_exit": 1
+    }
+  },
+  "notes": [
+    "本地 7B 弱模型基线；不代表强模型或 Harness 上限。",
+    "Ollama 未返回 usage，token/成本为 0，不能用于成本对比。",
+    "开启 --patch-approval auto 后仍只有 2/20，主要失败原因是模型打印补丁文本而未形成有效工具调用或补丁上下文不精确。"
+  ]
+}

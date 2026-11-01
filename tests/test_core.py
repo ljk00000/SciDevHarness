@@ -3405,6 +3405,37 @@ class CoreTests(unittest.TestCase):
             ]
             self.assertEqual([row["status"] for row in recorded], ["timed_out", "start_failed"])
 
+    def test_text_patch_envelope_becomes_apply_patch_only_when_complete(self) -> None:
+        provider = OpenAICompatibleProvider(
+            "http://localhost:11434/v1",
+            "ollama",
+            "qwen-test",
+            text_tool_call_fallback=True,
+        )
+        patch_tool = next(
+            tool for tool in CodingToolbox.definitions()
+            if tool["function"]["name"] == "apply_patch"
+        )
+        patch = (
+            "请审核：\n*** Begin Patch\n*** Update File: math_utils.py\n@@\n"
+            "-    return a - b\n+    return a + b\n*** End Patch\n"
+        )
+        normalized = provider._coerce_text_tool_calls(
+            {"role": "assistant", "content": patch}, [patch_tool],
+        )
+        call = normalized["tool_calls"][0]["function"]
+        self.assertEqual(call["name"], "apply_patch")
+        self.assertIn("*** Begin Patch", json.loads(call["arguments"])["patch"])
+        self.assertEqual(normalized["content"], "请审核：")
+
+        incomplete = provider._coerce_text_tool_calls(
+            {"role": "assistant", "content": "*** Begin Patch\n*** Update File: math_utils.py\n@@\n-x\n+y\n"},
+            [patch_tool],
+        )
+        self.assertNotIn("tool_calls", incomplete)
+        self.assertEqual(incomplete["tool_parse_error"]["name"], "apply_patch")
+        self.assertIn("missing_end", incomplete["tool_parse_error"]["detail"])
+
     def test_text_tool_call_fallback_only_accepts_declared_tools(self) -> None:
         provider = OpenAICompatibleProvider(
             "http://localhost:11434/v1",

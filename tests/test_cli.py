@@ -82,6 +82,23 @@ class CliTests(unittest.TestCase):
         self.assertFalse(agent.kwargs["prefer_environment_provider"])
         self.assertEqual(agent.payload["payload"]["prompt"], "fix it")
 
+    def test_exec_auto_approves_patch_hunks_headlessly(self) -> None:
+        code, output, _root = self._run([
+            "exec", "--workspace", "{root}", "--task", "fix it", "--json",
+        ])
+        self.assertEqual(code, 0, output)
+        agent = _FakeAgent.instances[-1]
+        review = agent.kwargs["patch_review"]
+        self.assertIsNotNone(review)
+        self.assertEqual(review({"hunks": [{"id": 1}, {"id": "2"}, {"other": 3}]}), {1, 2})
+
+        code, output, _root = self._run([
+            "exec", "--workspace", "{root}", "--task", "fix it", "--json",
+            "--patch-approval", "reject",
+        ])
+        self.assertEqual(code, 0, output)
+        self.assertIsNone(_FakeAgent.instances[-1].kwargs["patch_review"])
+
     def test_no_changes_is_failure_unless_explicitly_allowed(self) -> None:
         code, output, _root = self._run([
             "exec", "--workspace", "{root}", "--task", "fix it", "--json",
