@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-01 19:00（Asia/Shanghai）· 错误趋势面板
+- 新增 `scidev_analytics.py`：只读 `.research/runs.db`，统计 1–90 天任务开始/完成/失败、成功率、按 `error_kind` 分布、可重试标记和每日失败。
+- 新增 `scidev_analytics_ui.py`；命令面板 `> errors` 打开面板，含 sparkline 与表格。
+- 新增 4 项 analytics/UI 测试；mypy 扩到 19 个文件；全量套件 696 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：只统计本地事件；旧事件无分类时按文本重分类；无导出/告警/远程遥测；成功率按“完成/(完成+失败)”计算，不含仍在运行的任务。
+
 ## 2026-11-01 18:00（Asia/Shanghai）· 无 usage 模型的 token 预算
 - 服务端不返回 usage 时（Ollama 等），按任务内请求/响应字节数 `/4` 估算 token，并让 `max_task_tokens` 继续生效。
 - `task_token_budget_exhausted` 事件新增 `estimated` 标记；新增 1 项估算测试；全量套件 692 项 0 失败、14 跳过、覆盖率 78%。

@@ -68,6 +68,8 @@ files = [
     "scidev_errors.py",
     "scidev_lsp.py",
     "scidev_mcp_ui.py",
+    "scidev_analytics.py",
+    "scidev_analytics_ui.py",
 ]
 
 [tool.coverage.run]
