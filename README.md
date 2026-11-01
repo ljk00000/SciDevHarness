@@ -46,7 +46,7 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
   --json
 ```
 
-`--execution-mode` 支持 `read-only`、`manual`、`workspace-write`、`full-access`；`--patch-approval auto|reject` 控制无审核界面时如何处理已有文件补丁：默认 `auto` 应用全部已校验块（仍受工作区路径限制），`reject` 保持文件不变；`--no-verify` 关闭提交前验证门；`--restore-on-failure` 在任务失败时自动回滚本次任务写过的文件；`--allow-no-changes` 允许问答/分析类任务不产生文件改动。默认“完成但没有修改文件”返回失败（`status=no_changes`），避免弱模型只回复计划却被当成成功。`--api-base`/`--api-key`/`--model` 可临时覆盖环境变量。成功退出码为 0，任务失败为 1，参数错误为 2，取消为 130。CLI 与桌面端共用 Agent、执行策略、Git 自动提交和 `.research` 审计记录。
+`--execution-mode` 支持 `read-only`、`manual`、`workspace-write`、`full-access`；`--sandbox docker --sandbox-image <镜像>` 可把命令放进容器执行（不传则用 `SCIDEV_SANDBOX_BACKEND`，默认 local）；`--patch-approval auto|reject` 控制无审核界面时如何处理已有文件补丁：默认 `auto` 应用全部已校验块（仍受工作区路径限制），`reject` 保持文件不变；`--no-verify` 关闭提交前验证门；`--restore-on-failure` 在任务失败时自动回滚本次任务写过的文件；`--allow-no-changes` 允许问答/分析类任务不产生文件改动。默认“完成但没有修改文件”返回失败（`status=no_changes`），避免弱模型只回复计划却被当成成功。`--api-base`/`--api-key`/`--model` 可临时覆盖环境变量。成功退出码为 0，任务失败为 1，参数错误为 2，取消为 130。CLI 与桌面端共用 Agent、执行策略、Git 自动提交和 `.research` 审计记录。
 
 `--worktree` 会把任务放进 `.research/worktrees/<id>` 的独立 Git worktree，分支为 `scidev/agent-<id>`；返回 JSON 包含 `worktree`/`worktree_branch`/`worktree_base_sha`。任务结束后 worktree 默认保留，便于检查、合并或丢弃；需要清理时用 `git worktree remove` 和 `git branch -D`。`--worktree-id` 可指定稳定 id，避免重复创建。
 
@@ -176,7 +176,7 @@ python scidev_cli.py migrate --workspace .
 
 任务检查点：Agent 在每次写文件前把原始内容保存到 `.research/checkpoints/<id>/`；任务结束后可在 Agent 设置里点“回滚上次任务改动的文件”，只恢复本次任务实际写过的文件，并删除任务开始前不存在的新文件。CLI 可用 `--restore-on-failure` 在任务失败时自动回滚。回滚会覆盖你在任务开始后对这些文件做的修改；检查点只保留最近 10 个，不替代 Git。
 
-其他安全边界：文件工具会阻止项目根目录之外的路径和常见凭据文件（例如 `.env`、`.ssh`、`.npmrc`）。文本编辑只接受有效 UTF-8，不会把含 NUL/非法编码的文件当文本覆盖；完整重写会拒绝超大既有文件，文本替换会校验结果大小和 NUL 字节。应用不是操作系统级沙箱：批准后的命令仍以当前 Windows 用户权限执行。
+其他安全边界：文件工具会阻止项目根目录之外的路径和常见凭据文件（例如 `.env`、`.ssh`、`.npmrc`）。文本编辑只接受有效 UTF-8，不会把含 NUL/非法编码的文件当文本覆盖；完整重写会拒绝超大既有文件，文本替换会校验结果大小和 NUL 字节。默认 `local` 执行后端不是操作系统级沙箱：批准后的命令仍以当前用户权限执行；需要更强边界时可选 Docker 后端。
 
 执行策略在 Agent 设置中选择，默认“工作区可写”：
 
@@ -192,6 +192,8 @@ Agent 设置里另有“网络策略”，只对 `curl`/`wget`/`ssh`/`scp` 等�
 - **允许**：工作区可写/完全访问自动执行。
 
 默认是“询问”，可用 `SCIDEV_NETWORK_POLICY=deny|ask|allow` 覆盖。Agent 设置中的“命令白名单”可填精确前缀（`;` 分隔，例如 `pytest -q; ruff check .`）；匹配的命令在工作区可写/完全访问下自动执行，仍受破坏性命令、网络策略和路径检查约束。也可用 `SCIDEV_ALLOWED_COMMANDS` 覆盖。自动批准只接受单条、无 shell 链接/管道/重定向、无绝对路径或上级目录、无网络下载的验证命令。测试和 lint 输出会解析成文件/行号/错误码的结构化诊断，附加在 `run_command` 结果后供模型继续修复。策略层不是网络或文件系统沙箱，不能保证已批准命令无法访问项目外资源。
+
+可选 Docker 执行后端：`--sandbox docker --sandbox-image <含项目工具链的镜像>`（或 `SCIDEV_SANDBOX_BACKEND=docker`、`SCIDEV_SANDBOX_IMAGE`）。命令改为 `docker run --rm --init`，只挂载当前工作区到 `/workspace`，默认 `--network none`、`--cap-drop ALL`、`no-new-privileges`，并限制 pids/内存/CPU；容器内以 `sh -lc` 执行。Docker CLI/daemon/镜像不可用或后端名非法时直接拒绝执行，不会静默回退到本机。镜像必须自带项目所需解释器/依赖；默认 `local` 后端行为不变。该后端未在本机 Docker daemon 上做真实项目 E2E；需要网络时必须显式设 `SCIDEV_SANDBOX_NETWORK=bridge` 且宿主网络策略为 `allow`，否则直接拒绝，不能靠容器绕过策略。
 
 ## 项目上下文
 

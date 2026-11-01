@@ -66,6 +66,15 @@ class CliTests(unittest.TestCase):
                 code = scidev_cli.main(argv)
             return code, output.getvalue(), root
 
+    def test_exec_passes_optional_docker_sandbox_to_agent(self) -> None:
+        code, output, _root = self._run([
+            "exec", "--workspace", "{root}", "--task", "fix it", "--json",
+            "--sandbox", "docker", "--sandbox-image", "scidev-tools:1",
+        ])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(_FakeAgent.instances[-1].kwargs["sandbox_backend"], "docker")
+        self.assertEqual(_FakeAgent.instances[-1].kwargs["sandbox_image"], "scidev-tools:1")
+
     def test_exec_json_uses_policy_and_reports_result(self) -> None:
         code, output, _root = self._run([
             "exec", "--workspace", "{root}", "--task", "fix it", "--json",

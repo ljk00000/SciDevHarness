@@ -36,6 +36,7 @@ from urllib.request import ProxyHandler, Request, build_opener, getproxies, prox
 from scidev_acceptance import SemanticAcceptance
 from scidev_browser import BrowserAgent, BrowserApprovalDenied
 from scidev_checkpoint import WorkspaceCheckpoint
+from scidev_sandbox import DockerSandbox, SandboxError
 from scidev_visual import VisualArtifactReviewer
 from scidev_context import ProjectContext
 from scidev_memory import ProjectMemory
@@ -2674,6 +2675,8 @@ class CodingToolbox:
         execution_mode: str | ExecutionMode = ExecutionMode.WORKSPACE_WRITE,
         network_policy: str | NetworkPolicy | None = None,
         allowed_commands: object = None,
+        sandbox_backend: str = "",
+        sandbox_image: str = "",
     ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
@@ -2692,6 +2695,10 @@ class CodingToolbox:
             tuple(normalize_command_prefixes(allowed_commands)),
         )
         self.checkpoint: WorkspaceCheckpoint | None = None
+        self.sandbox = DockerSandbox.from_environment(
+            backend=sandbox_backend,
+            image=sandbox_image,
+        )
         self._task_created_file_hashes: dict[str, str] = {}
         self.last_command_execution: dict[str, Any] | None = None
         self._active_command_lock = threading.Lock()
@@ -3878,7 +3885,36 @@ class CodingToolbox:
         child_environment = dict(os.environ)
         child_environment["PYTHONIOENCODING"] = "utf-8"
         child_environment["PYTHONUTF8"] = "1"
-        if os.name == "nt":
+        if self.sandbox is not None:
+            if (
+                self.sandbox.network != "none"
+                and self.execution_policy.network_policy is not NetworkPolicy.ALLOW
+            ):
+                execution["approval_status"] = "rejected"
+                self._finish_command_execution(execution, "rejected")
+                self.ledger.append(
+                    "command_blocked_sandbox_network",
+                    {
+                        "command": command[:1000],
+                        "sandbox_network": self.sandbox.network,
+                        "policy": self.execution_policy.network_policy.value,
+                    },
+                )
+                raise PermanentError(
+                    "Docker 沙箱请求了 bridge 网络，但宿主网络策略不是 allow；拒绝执行。"
+                )
+            try:
+                launch_command = self.sandbox.wrap(command, self.project_root)
+            except SandboxError as exc:
+                execution["approval_status"] = "rejected"
+                self._finish_command_execution(execution, "rejected")
+                self.ledger.append(
+                    "command_blocked_sandbox",
+                    {"command": command[:1000], "sandbox": self.sandbox.name, "error": str(exc)},
+                )
+                raise PermanentError(f"沙箱不可用，拒绝执行：{exc}") from exc
+            launch_extra = {}
+        elif os.name == "nt":
             # cmd.exe needs an explicit UTF-8 code page for native tools.
             launch_command: Any = shell_command_arguments(command)
             launch_extra: dict[str, Any] = {}
@@ -4459,6 +4495,8 @@ class CodingAgent:
         patch_review: Callable[[dict[str, Any]], set[int] | None] | None = None,
         browser_approval: Callable[[str, str], bool] | None = None,
         prefer_environment_provider: bool = False,
+        sandbox_backend: str = "",
+        sandbox_image: str = "",
     ):
         self.project_root = Path(project_root).resolve()
         self.ledger = ledger
@@ -4488,6 +4526,8 @@ class CodingAgent:
             execution_mode=self.summary_settings.execution_mode,
             network_policy=self.summary_settings.network_policy,
             allowed_commands=self.summary_settings.allowed_commands,
+            sandbox_backend=sandbox_backend,
+            sandbox_image=sandbox_image,
         )
         self.toolbox.cancel_event = self._cancel
         self.last_checkpoint: WorkspaceCheckpoint | None = None

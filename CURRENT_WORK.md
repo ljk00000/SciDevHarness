@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-01 15:10（Asia/Shanghai）· 可选 Docker 命令沙箱
+- 新增 `scidev_sandbox.py`：`DockerSandbox` 只挂载工作区到 `/workspace`，默认 `--network none`、`--cap-drop ALL`、`no-new-privileges`、pids/内存/CPU/tmpfs 限制；Docker CLI/daemon 不可用时抛 `SandboxError`，不静默回退。
+- `CodingToolbox.run_command` 在 `SCIDEV_SANDBOX_BACKEND=docker` 或 CLI `--sandbox docker --sandbox-image ...` 时改用容器 argv；默认 local 行为不变。CLI 参数已贯通到 `CodingAgent`。
+- 新增 8 项测试（7 项 sandbox + CLI 贯通）；全量 723 项 0 失败、14 跳过、覆盖率 78%；未在本机 Docker daemon 上做真实项目 E2E，镜像需自带项目工具链。
+
 ## 2026-11-01 14:50（Asia/Shanghai）· 下载后显式启动安装器
 - `scidev_update.launch_installer()`：只接受 `.exe/.msi` 和 Windows；启动前重新校验 SHA-256；不静默安装、不提权，MSI 用 `msiexec /i`。
 - CLI `update --install` 必须与 `--download` 同用；启动成功返回 `installer_pid`，失败保留已下载文件并返回 1。

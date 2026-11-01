@@ -55,6 +55,17 @@ def _parser() -> argparse.ArgumentParser:
         help="command policy for this run (default: workspace-write)",
     )
     exec_parser.add_argument(
+        "--sandbox",
+        choices=["local", "docker"],
+        default=os.getenv("SCIDEV_SANDBOX_BACKEND", "local"),
+        help="command isolation backend (default: SCIDEV_SANDBOX_BACKEND or local)",
+    )
+    exec_parser.add_argument(
+        "--sandbox-image",
+        default=os.getenv("SCIDEV_SANDBOX_IMAGE", ""),
+        help="Docker image with the project toolchain (required for docker)",
+    )
+    exec_parser.add_argument(
         "--no-verify",
         action="store_true",
         help="do not require a passing current-code check before completion",
@@ -664,6 +675,8 @@ def main(argv: list[str] | None = None) -> int:
             command_approval=None,
             patch_review=patch_review,
             prefer_environment_provider=bool(args.api_base or args.api_key or args.model),
+            sandbox_backend=args.sandbox,
+            sandbox_image=args.sandbox_image,
         )
         result = with_worktree(_execute(agent, payload))
         if not result.get("session_id"):

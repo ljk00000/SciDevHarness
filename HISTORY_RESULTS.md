@@ -1,5 +1,10 @@
 # 历史与结果
 
+## 2026-11-01 15:10（Asia/Shanghai）· 可选 Docker 命令沙箱
+- 新增 Docker 后端：工作区唯一 bind mount、默认无网络、cap-drop/no-new-privileges、pids/内存/CPU/tmpfs 限制；daemon/镜像不可用时 fail closed，不回退本机。
+- CLI `exec --sandbox docker --sandbox-image ...` 与 `SCIDEV_SANDBOX_BACKEND`/`SCIDEV_SANDBOX_IMAGE` 已贯通；默认 local 不变。
+- 验证：7 项 sandbox 测试 + 1 项 CLI 贯通测试通过；全量 723 项 0 失败、14 跳过、覆盖率 78%。边界：未在本机 Docker daemon 上做真实项目 E2E；镜像需自备工具链；容器超时只终止 Docker CLI，容器清理依赖 `--rm`。
+
 ## 2026-11-01 14:50（Asia/Shanghai）· 下载后显式启动安装器
 - 新增 `launch_installer()` 与 CLI `update --install`：启动前重新验证 SHA-256，只启动 `.exe/.msi` 安装器 UI，不静默安装、不提权；MSI 通过 `msiexec /i`。
 - 验证：新增启动前校验测试与 CLI `--install` 测试。边界：仍需用户走安装器 UI；非 Windows 拒绝；签名/证书仍是发布前步骤。
