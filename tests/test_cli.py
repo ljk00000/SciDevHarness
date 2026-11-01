@@ -66,6 +66,16 @@ class CliTests(unittest.TestCase):
                 code = scidev_cli.main(argv)
             return code, output.getvalue(), root
 
+    def test_exec_applies_cli_turn_and_token_budgets(self) -> None:
+        code, output, _root = self._run([
+            "exec", "--workspace", "{root}", "--task", "fix it", "--json",
+            "--max-turns", "3", "--max-tokens", "900",
+        ])
+        self.assertEqual(code, 0, output)
+        settings = _FakeAgent.instances[-1].kwargs["summary_settings"]
+        self.assertEqual(settings.max_agent_turns, 3)
+        self.assertEqual(settings.max_task_tokens, 900)
+
     def test_exec_passes_optional_docker_sandbox_to_agent(self) -> None:
         code, output, _root = self._run([
             "exec", "--workspace", "{root}", "--task", "fix it", "--json",

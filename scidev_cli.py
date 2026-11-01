@@ -80,6 +80,18 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     exec_parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=0,
+        help="per-task model turn cap (0 uses the project setting, max 64)",
+    )
+    exec_parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=0,
+        help="per-task token cap (0 uses the project setting or no cap)",
+    )
+    exec_parser.add_argument(
         "--restore-on-failure",
         action="store_true",
         help="restore files changed by the task when it fails",
@@ -651,6 +663,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = SummarySettings.load(workspace_effective)
         settings.execution_mode = ExecutionMode.parse(args.execution_mode).value
+        if args.max_turns:
+            settings.max_agent_turns = max(1, min(64, int(args.max_turns)))
+        if args.max_tokens:
+            settings.max_task_tokens = max(1, int(args.max_tokens))
         ledger = EventLedger(workspace_effective)
         git = GitManager(workspace_effective)
         patch_review = None

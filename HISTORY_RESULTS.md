@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-01 15:25（Asia/Shanghai）· CLI 任务预算参数
+- 新增 `exec --max-turns`/`--max-tokens`，直接覆盖 `SummarySettings` 的本次任务上限，不持久化。
+- 验证：CLI 预算贯通测试通过。边界：仍是 token 估算/轮次硬限，不是货币计费。
+
 ## 2026-11-01 15:10（Asia/Shanghai）· 可选 Docker 命令沙箱
 - 新增 Docker 后端：工作区唯一 bind mount、默认无网络、cap-drop/no-new-privileges、pids/内存/CPU/tmpfs 限制；daemon/镜像不可用时 fail closed，不回退本机。
 - CLI `exec --sandbox docker --sandbox-image ...` 与 `SCIDEV_SANDBOX_BACKEND`/`SCIDEV_SANDBOX_IMAGE` 已贯通；默认 local 不变。

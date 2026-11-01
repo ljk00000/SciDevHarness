@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-01 15:25（Asia/Shanghai）· CLI 任务预算参数
+- `exec --max-turns N`（1–64）和 `--max-tokens N` 覆盖本次任务的轮次/token 上限，不写回项目设置。
+- 新增 1 项 CLI 预算贯通测试。
+
 ## 2026-11-01 15:10（Asia/Shanghai）· 可选 Docker 命令沙箱
 - 新增 `scidev_sandbox.py`：`DockerSandbox` 只挂载工作区到 `/workspace`，默认 `--network none`、`--cap-drop ALL`、`no-new-privileges`、pids/内存/CPU/tmpfs 限制；Docker CLI/daemon 不可用时抛 `SandboxError`，不静默回退。
 - `CodingToolbox.run_command` 在 `SCIDEV_SANDBOX_BACKEND=docker` 或 CLI `--sandbox docker --sandbox-image ...` 时改用容器 argv；默认 local 行为不变。CLI 参数已贯通到 `CodingAgent`。
