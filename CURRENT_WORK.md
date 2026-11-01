@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-01 10:45（Asia/Shanghai）· GUI 隔离 worktree
+- 命令面板新增 `> new worktree` / `新建 worktree` / `隔离工作区`：从当前 Git 仓库创建 `scidev/agent-gui-*` 分支，并自动打开独立窗口。
+- 多窗口可并行跑任务；每个窗口有自己的仓库副本、编辑器、Git 面板和 Agent；worktree 默认保留。
+- 新增 GUI 测试：创建 worktree、打开非原窗口的子窗口、清理测试 worktree；全量套件 677 项 0 失败、14 跳过、覆盖率 78%。
+
 ## 2026-11-01 10:20（Asia/Shanghai）· 更新检查
 - 新增 `scidev_update.py`：从 `origin` 或 `--repo`/`SCIDEV_UPDATE_REPO` 推断仓库，读取 GitHub latest Release 的 tag、页面、说明、安装包 URL；只提示，不下载/安装。
 - 语义版本比较、`--json`、`--fail-if-available`；CLI `--version` 改用统一 `APP_VERSION`。

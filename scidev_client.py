@@ -114,6 +114,7 @@ from scidev_core import (
 from scidev_icons import activity_icon
 from scidev_highlighting import LanguageHighlighter, PythonHighlighter
 from scidev_lsp import collect_diagnostics as collect_lsp_diagnostics
+from scidev_worktree import WorktreeError, WorktreeManager
 from scidev_pty import PTYSession, PTYUnavailable
 from scidev_attachments import AttachmentError, load_image_file
 from scidev_intel import IntelUnavailable, PythonIntel
@@ -3055,6 +3056,7 @@ class ClientWindow(QMainWindow):
             QStringListModel(
                 [
                     "> open folder",
+                    "> new worktree",
                     "> terminal",
                     "> problems",
                     "> search",
@@ -3355,6 +3357,23 @@ class ClientWindow(QMainWindow):
         selected = _choose_workspace_directory(self.project_root, self)
         if selected is not None:
             self._open_workspace_root(selected)
+
+    def _create_isolated_worktree(self) -> "ClientWindow | None":
+        counter = getattr(self, "_gui_worktree_counter", 0) + 1
+        self._gui_worktree_counter = counter
+        task_id = f"gui-{time.strftime('%Y%m%d-%H%M%S')}-{counter}"
+        try:
+            worktree = WorktreeManager(self.project_root).create(task_id)
+        except WorktreeError as exc:
+            self._show_message("无法创建隔离工作区", str(exc))
+            return None
+        window = self._open_workspace_root(worktree.path)
+        if window is None:
+            self._append_log(f"隔离 worktree 已创建但无法打开：{worktree.path}")
+            return None
+        window._append_log(f"隔离 worktree：{worktree.branch}")
+        self.statusBar().showMessage(f"已创建 {worktree.branch}", 5000)
+        return window
 
     def _open_workspace_root(self, workspace: str | Path) -> "ClientWindow | None":
         target = Path(workspace).expanduser().resolve()
@@ -7675,6 +7694,10 @@ class ClientWindow(QMainWindow):
             return
         if term.startswith(">"):
             command = term[1:].strip().casefold()
+            if "new worktree" in command or "隔离工作区" in command or "新建 worktree" in command:
+                self.command_search.clear()
+                self._create_isolated_worktree()
+                return
             if "open folder" in command or "打开文件夹" in command or "workspace" in command:
                 self.command_search.clear()
                 self._choose_workspace()
