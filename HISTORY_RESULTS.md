@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-01 17:00（Asia/Shanghai）· MCP 图形浏览器
+- 新增 `scidev_mcp_ui.py`：树形显示工具/资源/提示词，读取资源、渲染 prompt、预览并显式插入输入框。
+- 命令面板新增 `> mcp`；管理器随对话框启动，关闭时释放；资源/prompt 不自动进入模型上下文。
+- 新增 2 项 fake-manager UI 测试；mypy 扩到 17 个文件；全量套件 691 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：提示词参数用 JSON 输入框；二进制资源只显示标记；不自动注入模型；无 MCP 配置编辑。
+
 ## 2026-11-01 16:00（Asia/Shanghai）· 常驻 Python LSP
 - `scidev_lsp.py` 新增 `ResidentLSP`：每个窗口复用一个 Ruff 进程，合并连续输入，首次 didOpen、后续 didChange，回调可携带 generation。
 - 桌面端用 `ResidentLSPBridge` 把后台诊断转成 Qt 信号；关闭窗口时停止 worker 和 Ruff 进程。

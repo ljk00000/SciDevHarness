@@ -140,7 +140,7 @@ python scidev_cli.py migrate --workspace .
 - 版本树：专注画布、可折叠节点详情和 Agent 面板，2.5D 卡片与动态连线；尝试分支可自由拖动并记住位置
 - 工具调用：`search_code`、`get_project_context`、`list_files`、`read_file`、`write_file`、`replace_in_file`、`update_plan`、`run_command`、`git_diff`；执行策略可选只读、手动审批、工作区可写或完全访问
 - MCP 工具：在 `.research/mcp.json` 中显式设置 `"enabled": true` 并配置 stdio server；启动后把 server 的 tools 以 `mcp__<server>__<tool>` 暴露给模型。每次调用仍走命令审批；只读模式禁用；单个 server 启动失败只记录错误，不影响内置工具。HTTP 服务把 `command`/`args` 换成 `"url": "http://127.0.0.1:3000/mcp"`（可选 `"transport": "http"`），支持 JSON/SSE 响应；网络策略为 `deny` 时拒绝 HTTP 服务。示例：
-- 查看 MCP 能力：`python scidev_cli.py mcp --workspace . --json` 启动服务并列出 tools/resources/prompts；`--read SERVER URI` 读取资源，`--prompt SERVER NAME --arg key=value` 渲染 prompt。资源/prompt 目前用于 CLI 检查和后续 UI，不自动注入模型。
+- 查看 MCP 能力：`python scidev_cli.py mcp --workspace . --json` 启动服务并列出 tools/resources/prompts；`--read SERVER URI` 读取资源，`--prompt SERVER NAME --arg key=value` 渲染 prompt。桌面命令面板输入 `> mcp` 打开图形浏览器，可查看工具/资源/提示词、读取内容并显式插入输入框；不会自动注入模型。
 
 
 ```json

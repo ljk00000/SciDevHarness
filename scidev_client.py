@@ -119,6 +119,8 @@ from scidev_worktree_ui import WorktreeDialog
 from scidev_pty import PTYSession, PTYUnavailable
 from scidev_attachments import AttachmentError, load_image_file
 from scidev_crash import install_crash_reporter
+from scidev_mcp import MCPManager
+from scidev_mcp_ui import MCPBrowserDialog
 from scidev_intel import IntelUnavailable, PythonIntel
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
@@ -3080,6 +3082,7 @@ class ClientWindow(QMainWindow):
                     "> open folder",
                     "> new worktree",
                     "> worktrees",
+                    "> mcp",
                     "> terminal",
                     "> problems",
                     "> search",
@@ -3385,6 +3388,20 @@ class ClientWindow(QMainWindow):
         dialog = WorktreeDialog(WorktreeManager(self.project_root), self.project_root, self)
         dialog.open_requested.connect(lambda path: self._open_workspace_root(path))
         dialog.exec()
+
+    def _show_mcp_browser(self) -> None:
+        manager = MCPManager(self.project_root, ledger=getattr(self.agent, "ledger", None))
+        dialog = MCPBrowserDialog(manager, self)
+        dialog.insert_requested.connect(self._insert_mcp_text)
+        dialog.finished.connect(lambda _result: manager.close())
+        dialog.exec()
+
+    def _insert_mcp_text(self, text: str) -> None:
+        value = str(text).strip()
+        if not value:
+            return
+        self.chat_input.insertPlainText(value)
+        self.chat_input.setFocus()
 
     def _create_isolated_worktree(self) -> "ClientWindow | None":
         counter = getattr(self, "_gui_worktree_counter", 0) + 1
@@ -7732,6 +7749,10 @@ class ClientWindow(QMainWindow):
             if command == "worktrees" or "worktree list" in command or "工作树" in command:
                 self.command_search.clear()
                 self._show_worktree_dialog()
+                return
+            if command == "mcp" or "mcp 能力" in command:
+                self.command_search.clear()
+                self._show_mcp_browser()
                 return
             if "open folder" in command or "打开文件夹" in command or "workspace" in command:
                 self.command_search.clear()

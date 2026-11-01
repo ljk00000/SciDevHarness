@@ -67,6 +67,7 @@ files = [
     "scidev_worktree_ui.py",
     "scidev_errors.py",
     "scidev_lsp.py",
+    "scidev_mcp_ui.py",
 ]
 
 [tool.coverage.run]
