@@ -38,6 +38,17 @@ class _FakeAgent:
         return {"restored": ["app.py"], "deleted": [], "failed": {}}
 
 
+class _NoChangeAgent(_FakeAgent):
+    def run(self, payload):
+        self.payload = payload
+        return {
+            "session_id": payload["payload"]["session_id"],
+            "text": "I only read the file",
+            "no_changes_detected": True,
+            "verification_report": {"status": "not_run"},
+        }
+
+
 class CliTests(unittest.TestCase):
     def setUp(self) -> None:
         _FakeAgent.instances.clear()
@@ -70,6 +81,24 @@ class CliTests(unittest.TestCase):
         self.assertIsNone(agent.kwargs["command_approval"])
         self.assertFalse(agent.kwargs["prefer_environment_provider"])
         self.assertEqual(agent.payload["payload"]["prompt"], "fix it")
+
+    def test_no_changes_is_failure_unless_explicitly_allowed(self) -> None:
+        code, output, _root = self._run([
+            "exec", "--workspace", "{root}", "--task", "fix it", "--json",
+        ], fake=_NoChangeAgent)
+        self.assertEqual(code, 1)
+        payload = json.loads(output)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["status"], "no_changes")
+        self.assertEqual(payload["error_kind"], "no_changes")
+        self.assertFalse(payload["retryable"])
+
+        code, output, _root = self._run([
+            "exec", "--workspace", "{root}", "--task", "explain it", "--json",
+            "--allow-no-changes",
+        ], fake=_NoChangeAgent)
+        self.assertEqual(code, 0, output)
+        self.assertTrue(json.loads(output)["success"])
 
     def test_pr_dry_run_prints_a_plan_without_network_calls(self) -> None:
         output = io.StringIO()

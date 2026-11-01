@@ -63,6 +63,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="restore files changed by the task when it fails",
     )
+    exec_parser.add_argument(
+        "--allow-no-changes",
+        action="store_true",
+        help="treat a completed run with no file changes as success (for questions/analysis)",
+    )
     exec_parser.add_argument("--session-id", default="", help="stable session id for retries")
     exec_parser.add_argument("--api-base", default="", help="OpenAI-compatible base URL")
     exec_parser.add_argument("--api-key", default="", help="API key (prefer the environment variable)")
@@ -563,6 +568,17 @@ def main(argv: list[str] | None = None) -> int:
         result = with_worktree(_execute(agent, payload))
         if not result.get("session_id"):
             result["session_id"] = session_id
+        if (
+            result.get("success")
+            and result.get("no_changes_detected")
+            and not args.allow_no_changes
+        ):
+            result["success"] = False
+            result["status"] = "no_changes"
+            result["error_kind"] = "no_changes"
+            result["user_message"] = "任务结束但没有修改文件；如只是问答/分析请加 --allow-no-changes。"
+            result["retryable"] = False
+            result["detail"] = "no_changes_detected"
     except PermanentError as exc:
         payload = with_worktree(_failure_payload(str(exc), args, session_id, agent))
         if args.json:
@@ -588,7 +604,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False))
     else:
         _print_human(result)
-    return 0
+    return 0 if result.get("success") else 1
 
 
 if __name__ == "__main__":

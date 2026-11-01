@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-01 15:00（Asia/Shanghai）· CLI 无改动语义
+- CLI `exec` 默认把“完成但 `no_changes_detected`”判为失败：`success=false`、`status=no_changes`、`error_kind=no_changes`、退出码 1。
+- 新增 `--allow-no-changes`，供问答/分析类任务显式放行。
+- 新增 CLI 测试：默认失败与显式放行；修复弱模型只回复计划却被当成成功的问题。全量套件 688 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：只改 CLI 语义，桌面聊天仍可无改动完成；只依据 `no_changes_detected`，不判断任务是否真的要求改代码。
+
 ## 2026-11-01 14:00（Asia/Shanghai）· 真实本地模型基线
 - 用本机 Ollama `scidev-qwen2.5-coder-7b:q4_k_m` 跑 3 项 smoke：无 fallback 0/3，开启 `SCIDEV_TEXT_TOOL_CALL_FALLBACK=1` 后 1/3（`create-notes` 通过），平均 4.33 轮。
 - eval suite 新增受限 `environment`（只允许 `SCIDEV_*`），任务子进程会继承；新增 `evals/local/suite.json`（fallback + 8 轮）和 `evals/baselines/local-qwen2.5-coder-7b.json`。

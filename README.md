@@ -46,7 +46,7 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
   --json
 ```
 
-`--execution-mode` 支持 `read-only`、`manual`、`workspace-write`、`full-access`；`--no-verify` 关闭提交前验证门；`--restore-on-failure` 在任务失败时自动回滚本次任务写过的文件；`--api-base`/`--api-key`/`--model` 可临时覆盖环境变量。成功退出码为 0，任务失败为 1，参数错误为 2，取消为 130。CLI 与桌面端共用 Agent、执行策略、Git 自动提交和 `.research` 审计记录。
+`--execution-mode` 支持 `read-only`、`manual`、`workspace-write`、`full-access`；`--no-verify` 关闭提交前验证门；`--restore-on-failure` 在任务失败时自动回滚本次任务写过的文件；`--allow-no-changes` 允许问答/分析类任务不产生文件改动。默认“完成但没有修改文件”返回失败（`status=no_changes`），避免弱模型只回复计划却被当成成功。`--api-base`/`--api-key`/`--model` 可临时覆盖环境变量。成功退出码为 0，任务失败为 1，参数错误为 2，取消为 130。CLI 与桌面端共用 Agent、执行策略、Git 自动提交和 `.research` 审计记录。
 
 `--worktree` 会把任务放进 `.research/worktrees/<id>` 的独立 Git worktree，分支为 `scidev/agent-<id>`；返回 JSON 包含 `worktree`/`worktree_branch`/`worktree_base_sha`。任务结束后 worktree 默认保留，便于检查、合并或丢弃；需要清理时用 `git worktree remove` 和 `git branch -D`。`--worktree-id` 可指定稳定 id，避免重复创建。
 
