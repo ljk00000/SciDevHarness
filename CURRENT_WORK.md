@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-01 20:00（Asia/Shanghai）· 发布签名与安装包校验
+- 新增 `scripts/sign_release.ps1`：显式 40 位证书指纹、HTTPS RFC 3161 时间戳、SHA-256 Authenticode 签名、`/pa` 复验；不接受密码/pfx。
+- `scidev_update` 只报告 HTTPS 安装包，并返回名称/大小/`digest`；新增 `verify_downloaded_asset()` 按 SHA-256 和大小上限校验。
+- 新增 2 项签名脚本测试与 6 项更新/校验测试；全量套件 700 项 0 失败、14 跳过、覆盖率 78%。
+
 ## 2026-11-01 19:00（Asia/Shanghai）· 错误趋势面板
 - 新增 `scidev_analytics.py`：只读 `.research/runs.db`，统计 1–90 天任务开始/完成/失败、成功率、按 `error_kind` 分布、可重试标记和每日失败。
 - 新增 `scidev_analytics_ui.py`；命令面板 `> errors` 打开面板，含 sparkline 与表格。

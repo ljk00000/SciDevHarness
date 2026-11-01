@@ -72,7 +72,16 @@ python scidev_cli.py update --workspace . --json
 python scidev_cli.py update --fail-if-available
 ```
 
-从 `origin` 推断 GitHub 仓库（可用 `--repo owner/repo` 或 `SCIDEV_UPDATE_REPO` 覆盖），读取 latest GitHub Release 的 tag、页面、说明和安装包地址，只提示、不下载、不安装。`--fail-if-available` 在发现新版本时返回 1，便于脚本检查。
+从 `origin` 推断 GitHub 仓库（可用 `--repo owner/repo` 或 `SCIDEV_UPDATE_REPO` 覆盖），读取 latest GitHub Release 的 tag、页面、说明和 HTTPS 安装包地址，并报告名称、大小和 `digest`；只提示、不下载、不安装。`--fail-if-available` 在发现新版本时返回 1，便于脚本检查。下载后可调用 `scidev_update.verify_downloaded_asset(path, sha256)` 按摘要和大小上限校验。
+
+发布签名：
+
+```powershell
+powershell -File scripts/sign_release.ps1 -Path dist -Thumbprint <40位证书指纹>
+powershell -File scripts/sign_release.ps1 -Path dist -Thumbprint <40位证书指纹> -VerifyOnly
+```
+
+脚本对 `.exe/.dll/.msi` 做 SHA-256 Authenticode 签名和 RFC 3161 时间戳，随后用 `/pa` 验证。证书需事先装入当前用户证书存储；脚本不接受密码或 pfx 文件，也不在 CI 中自动签名。
 
 查看和审查：
 

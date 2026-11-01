@@ -11,6 +11,7 @@ from scidev_update import (
     compare_versions,
     detect_repo,
     parse_version,
+    verify_downloaded_asset,
 )
 
 
@@ -34,7 +35,8 @@ class UpdateTests(unittest.TestCase):
                 "body": "notes",
                 "assets": [
                     {"name": "source.zip", "browser_download_url": "https://example/source.zip"},
-                    {"name": "SciDevHarness-Setup.exe", "browser_download_url": "https://example/setup.exe"},
+                    {"name": "SciDevHarness-Setup.exe", "browser_download_url": "https://example/setup.exe",
+                     "size": 12345, "digest": "sha256:" + "a" * 64},
                 ],
             }
 
@@ -42,6 +44,9 @@ class UpdateTests(unittest.TestCase):
         self.assertTrue(info.available)
         self.assertEqual(info.latest, "0.2.0")
         self.assertEqual(info.asset_url, "https://example/setup.exe")
+        self.assertEqual(info.asset_name, "SciDevHarness-Setup.exe")
+        self.assertEqual(info.asset_size, 12345)
+        self.assertEqual(info.asset_digest, "sha256:" + "a" * 64)
         self.assertEqual(calls[0][0], "https://api.github.com/repos/example/repo/releases/latest")
         self.assertEqual(info.as_dict()["available"], True)
 
@@ -52,6 +57,33 @@ class UpdateTests(unittest.TestCase):
             fetch=lambda _url, _timeout: {"tag_name": f"v{APP_VERSION}", "html_url": "u"},
         )
         self.assertFalse(info.available)
+
+    def test_insecure_asset_url_is_not_reported(self) -> None:
+        info = check_for_update(
+            current="0.1.0",
+            repo="example/repo",
+            fetch=lambda _url, _timeout: {
+                "tag_name": "v0.2.0",
+                "html_url": "u",
+                "assets": [{"name": "setup.exe", "browser_download_url": "http://example/setup.exe"}],
+            },
+        )
+        self.assertEqual(info.asset_url, "")
+
+    def test_downloaded_asset_digest_is_verified(self) -> None:
+        import hashlib
+
+        with tempfile.TemporaryDirectory(prefix="scidev-update-", ignore_cleanup_errors=True) as temp:
+            path = Path(temp) / "setup.exe"
+            path.write_bytes(b"installer")
+            digest = hashlib.sha256(b"installer").hexdigest()
+            self.assertEqual(verify_downloaded_asset(path, digest), digest)
+            with self.assertRaises(UpdateError):
+                verify_downloaded_asset(path, "0" * 64)
+            with self.assertRaises(UpdateError):
+                verify_downloaded_asset(path, "not-a-digest")
+            with self.assertRaises(UpdateError):
+                verify_downloaded_asset(path, digest, max_bytes=3)
 
     def test_invalid_repository_and_bad_tag_are_rejected(self) -> None:
         with self.assertRaises(UpdateError):

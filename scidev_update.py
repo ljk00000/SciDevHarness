@@ -6,6 +6,7 @@ installing remains an explicit user action.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -31,6 +32,9 @@ class UpdateInfo:
     published_at: str
     notes: str
     asset_url: str = ""
+    asset_name: str = ""
+    asset_size: int = 0
+    asset_digest: str = ""
 
     @property
     def available(self) -> bool:
@@ -45,7 +49,36 @@ class UpdateInfo:
             "published_at": self.published_at,
             "notes": self.notes,
             "asset_url": self.asset_url,
+            "asset_name": self.asset_name,
+            "asset_size": self.asset_size,
+            "asset_digest": self.asset_digest,
         }
+
+
+def verify_downloaded_asset(
+    path: Path,
+    expected_sha256: str,
+    *,
+    max_bytes: int = 1_500_000_000,
+) -> str:
+    """Verify a locally downloaded installer without executing it."""
+    target = Path(path)
+    if not target.is_file():
+        raise UpdateError(f"安装包不存在：{target}")
+    expected = str(expected_sha256 or "").strip().lower().removeprefix("sha256:")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise UpdateError("安装包摘要必须是 64 位 SHA-256")
+    size = target.stat().st_size
+    if size <= 0 or size > max_bytes:
+        raise UpdateError(f"安装包大小异常：{size} 字节")
+    digest = hashlib.sha256()
+    with target.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected:
+        raise UpdateError("安装包 SHA-256 不匹配，拒绝更新")
+    return actual
 
 
 def parse_version(value: str) -> tuple[int, int, int] | None:
@@ -139,14 +172,27 @@ def check_for_update(
     assets_raw = data.get("assets")
     assets: list[Any] = assets_raw if isinstance(assets_raw, list) else []
     asset_url = ""
+    asset_name = ""
+    asset_size = 0
+    asset_digest = ""
     for suffix in (".exe", ".msi", ".zip"):
         for asset in assets:
             if not isinstance(asset, dict):
                 continue
             name = str(asset.get("name") or "").lower()
-            if name.endswith(suffix):
-                asset_url = str(asset.get("browser_download_url") or "")
-                break
+            if not name.endswith(suffix):
+                continue
+            candidate = str(asset.get("browser_download_url") or "")
+            if not candidate.startswith("https://"):
+                continue
+            asset_url = candidate
+            asset_name = str(asset.get("name") or "")
+            try:
+                asset_size = max(0, int(asset.get("size") or 0))
+            except (TypeError, ValueError):
+                asset_size = 0
+            asset_digest = str(asset.get("digest") or "").strip()
+            break
         if asset_url:
             break
     return UpdateInfo(
@@ -156,4 +202,7 @@ def check_for_update(
         published_at=str(data.get("published_at") or ""),
         notes=str(data.get("body") or "")[:MAX_BODY],
         asset_url=asset_url,
+        asset_name=asset_name,
+        asset_size=asset_size,
+        asset_digest=asset_digest,
     )
