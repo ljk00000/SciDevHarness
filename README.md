@@ -72,7 +72,7 @@ python scidev_cli.py update --workspace . --json
 python scidev_cli.py update --fail-if-available
 ```
 
-从 `origin` 推断 GitHub 仓库（可用 `--repo owner/repo` 或 `SCIDEV_UPDATE_REPO` 覆盖），读取 latest GitHub Release 的 tag、页面、说明和 HTTPS 安装包地址，并报告名称、大小和 `digest`；只提示、不安装。`--download PATH` 会把安装包下载到 PATH（或已存在目录）并以 `digest` 或显式 `--sha256` 校验，声明大小、重定向到 HTTP、超限、摘要不符或空文件都会拒绝；下载成功后只报告路径和摘要，不执行安装包。`--fail-if-available` 在发现新版本时返回 1，便于脚本检查。也可调用 `scidev_update.verify_downloaded_asset(path, sha256)` 校验已有文件。
+从 `origin` 推断 GitHub 仓库（可用 `--repo owner/repo` 或 `SCIDEV_UPDATE_REPO` 覆盖），读取 latest GitHub Release 的 tag、页面、说明和 HTTPS 安装包地址，并报告名称、大小和 `digest`；只提示、不安装。`--download PATH` 会把安装包下载到 PATH（或已存在目录）并以 `digest` 或显式 `--sha256` 校验，声明大小、重定向到 HTTP、超限、摘要不符或空文件都会拒绝；`--install` 必须与 `--download` 一起用，下载校验后再校验一次摘要并启动安装器 UI（不静默安装、不提权）；不传 `--install` 时只报告路径和摘要，不执行安装包。`--fail-if-available` 在发现新版本时返回 1，便于脚本检查。也可调用 `scidev_update.verify_downloaded_asset(path, sha256)` 校验已有文件。
 
 发布签名：
 

@@ -27,7 +27,7 @@ from scidev_pr import (
     view_pull_request,
 )
 from scidev_migrations import migrate_project
-from scidev_update import APP_VERSION, UpdateError, check_for_update, detect_repo, download_asset
+from scidev_update import APP_VERSION, UpdateError, check_for_update, detect_repo, download_asset, launch_installer
 from scidev_errors import classify_message
 from scidev_mcp import MCPError, MCPManager
 
@@ -191,6 +191,10 @@ def _parser() -> argparse.ArgumentParser:
     update_parser.add_argument(
         "--sha256", default="",
         help="expected SHA-256 when the Release does not expose a digest",
+    )
+    update_parser.add_argument(
+        "--install", action="store_true",
+        help="after a verified --download, launch the installer UI (never silent)",
     )
     update_parser.add_argument(
         "--fail-if-available", action="store_true",
@@ -392,12 +396,16 @@ def _mcp_command(args: argparse.Namespace) -> int:
 def _update_command(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     repo = args.repo or detect_repo(workspace if workspace.is_dir() else None)
+    if args.install and not args.download:
+        print("--install requires --download", file=sys.stderr)
+        return 2
     try:
         info = check_for_update(repo=repo)
     except UpdateError as exc:
         print(f"update check failed: {exc}", file=sys.stderr)
         return 1
     downloaded = None
+    installer_pid = 0
     if args.download:
         if not info.available:
             print("no newer release; nothing was downloaded", file=sys.stderr)
@@ -408,6 +416,8 @@ def _update_command(args: argparse.Namespace) -> int:
                 Path(args.download).expanduser(),
                 expected_sha256=args.sha256,
             )
+            if args.install:
+                installer_pid = launch_installer(downloaded.path, expected_sha256=downloaded.sha256)
         except UpdateError as exc:
             print(f"update download failed: {exc}", file=sys.stderr)
             return 1
@@ -415,6 +425,8 @@ def _update_command(args: argparse.Namespace) -> int:
         payload = info.as_dict()
         if downloaded is not None:
             payload["downloaded"] = downloaded.as_dict()
+        if installer_pid:
+            payload["installer_pid"] = installer_pid
         print(json.dumps(payload, ensure_ascii=False))
     elif info.available:
         print(f"update available: {info.current} -> {info.latest}")
@@ -424,7 +436,10 @@ def _update_command(args: argparse.Namespace) -> int:
         if downloaded is not None:
             print(f"downloaded and verified: {downloaded.path}")
             print(f"sha256: {downloaded.sha256}")
-            print("not installed or executed")
+            if installer_pid:
+                print(f"installer launched (pid {installer_pid}); follow its UI to install")
+            else:
+                print("not installed or executed")
     else:
         print(f"up to date: {info.current}")
     if args.fail_if_available and info.available:

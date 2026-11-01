@@ -1,8 +1,12 @@
 # 历史与结果
 
+## 2026-11-01 14:50（Asia/Shanghai）· 下载后显式启动安装器
+- 新增 `launch_installer()` 与 CLI `update --install`：启动前重新验证 SHA-256，只启动 `.exe/.msi` 安装器 UI，不静默安装、不提权；MSI 通过 `msiexec /i`。
+- 验证：新增启动前校验测试与 CLI `--install` 测试。边界：仍需用户走安装器 UI；非 Windows 拒绝；签名/证书仍是发布前步骤。
+
 ## 2026-11-01 14:25（Asia/Shanghai）· Inno Setup 安装器脚本
 - 新增 per-user Inno Setup 配置与构建脚本：完整 deployment、开始菜单/可选桌面快捷方式、卸载信息、安装日志、可选 Authenticode 签名和 SHA-256 输出。
-- 验证：3 项静态测试通过，PowerShell 语法解析 0 错误；全量 714 项 0 失败、14 跳过、覆盖率 78%。本机 Inno Setup 6.7.1 以 notepad fixture 实际构建出 2,182,836 字节安装器（SHA-256 `0b1f39a0…bb838`，未签名）；只证明脚本链路，fixture 不代表正式程序。Windows Package Verification workflow 已加入安装器构建/上传，尚未在远端触发。
+- 验证：3 项静态测试通过，PowerShell 语法解析 0 错误；全量 715 项 0 失败、14 跳过、覆盖率 78%。本机 Inno Setup 6.7.1 以 notepad fixture 实际构建出 2,182,836 字节安装器（SHA-256 `0b1f39a0…bb838`，未签名）；只证明脚本链路，fixture 不代表正式程序。Windows Package Verification workflow 已加入安装器构建/上传，尚未在远端触发。
 
 ## 2026-11-01 14:10（Asia/Shanghai）· 可校验的更新包下载
 - 新增 `download_asset()` 与 CLI `update --download`：HTTPS、大小上限、Release 声明值、SHA-256 和空文件检查全部通过后才原子落盘；下载后只报告摘要，不执行安装包。

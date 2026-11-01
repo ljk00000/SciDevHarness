@@ -208,6 +208,35 @@ def download_asset(
                 pass
 
 
+def launch_installer(
+    path: Path,
+    *,
+    expected_sha256: str,
+    open_process: Callable[[list[str]], Any] | None = None,
+) -> int:
+    """Launch a verified installer without silently installing it.
+
+    The user explicitly asked for this flag; the installer's own UI remains in
+    control. The digest is checked again immediately before launch to close the
+    window between download and execution.
+    """
+    target = Path(path)
+    verify_downloaded_asset(target, expected_sha256)
+    suffix = target.suffix.lower()
+    if suffix not in {".exe", ".msi"}:
+        raise UpdateError("只支持启动 .exe 或 .msi 安装包")
+    if os.name != "nt":
+        raise UpdateError("安装器启动仅支持 Windows")
+    command = [str(target)]
+    if suffix == ".msi":
+        command = ["msiexec.exe", "/i", str(target)]
+    try:
+        process = (open_process or (lambda argv: subprocess.Popen(argv)))(command)
+    except OSError as exc:
+        raise UpdateError(f"无法启动安装器：{exc}") from exc
+    return int(getattr(process, "pid", 0) or 0)
+
+
 def parse_version(value: str) -> tuple[int, int, int] | None:
     match = _VERSION.match(str(value or "").strip())
     if not match:

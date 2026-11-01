@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import tempfile
 from pathlib import Path
 import unittest
@@ -15,6 +16,7 @@ from scidev_update import (
     compare_versions,
     detect_repo,
     download_asset,
+    launch_installer,
     parse_version,
     verify_downloaded_asset,
 )
@@ -162,14 +164,38 @@ class UpdateTests(unittest.TestCase):
         with (
             patch.object(scidev_cli, "check_for_update", return_value=info),
             patch.object(scidev_cli, "download_asset", return_value=downloaded),
+            patch.object(scidev_cli, "launch_installer", return_value=4321) as launch,
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(output),
         ):
-            code = scidev_cli.main(["update", "--workspace", ".", "--json", "--download", "setup.exe"])
+            code = scidev_cli.main([
+                "update", "--workspace", ".", "--json", "--download", "setup.exe", "--install",
+            ])
         self.assertEqual(code, 0, output.getvalue())
         payload = json.loads(output.getvalue())
         self.assertEqual(payload["downloaded"]["sha256"], "a" * 64)
         self.assertEqual(payload["downloaded"]["path"], "setup.exe")
+        self.assertEqual(payload["installer_pid"], 4321)
+        launch.assert_called_once()
+
+    @unittest.skipUnless(os.name == "nt", "installer launch is Windows-only")
+    def test_launch_installer_verifies_before_spawning(self) -> None:
+        payload = b"installer"
+        digest = hashlib.sha256(payload).hexdigest()
+        calls: list[list[str]] = []
+
+        class Process:
+            pid = 99
+
+        with tempfile.TemporaryDirectory(prefix="scidev-launch-", ignore_cleanup_errors=True) as temp:
+            path = Path(temp) / "setup.exe"
+            path.write_bytes(payload)
+            pid = launch_installer(path, expected_sha256=digest, open_process=lambda argv: calls.append(argv) or Process())
+            self.assertEqual(pid, 99)
+            self.assertEqual(calls, [[str(path)]])
+            with self.assertRaises(UpdateError):
+                launch_installer(path, expected_sha256="0" * 64, open_process=lambda argv: calls.append(argv) or Process())
+            self.assertEqual(len(calls), 1)
 
     def test_invalid_repository_and_bad_tag_are_rejected(self) -> None:
         with self.assertRaises(UpdateError):
