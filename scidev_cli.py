@@ -27,6 +27,7 @@ from scidev_pr import (
 )
 from scidev_migrations import migrate_project
 from scidev_update import APP_VERSION, UpdateError, check_for_update, detect_repo
+from scidev_errors import classify_message
 from scidev_mcp import MCPError, MCPManager
 
 
@@ -233,6 +234,7 @@ def _failure_payload(error: str, args: argparse.Namespace, session_id: str, agen
         "success": False,
         "session_id": session_id,
         "error": error,
+        **classify_message(error).as_dict(),
     }
     restore = _restore_if_requested(agent, args)
     if restore is not None:

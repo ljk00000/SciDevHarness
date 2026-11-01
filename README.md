@@ -88,6 +88,21 @@ python scidev_cli.py pr-review --workspace . --number 12 --action approve
 
 桌面端启动后安装本地异常钩子。未捕获异常写入 `.research/crashes/crash-*.json`，包含版本、Python、平台、线程、异常类型和有界 traceback；API key/token/password 和用户主目录会先脱敏。保留最近 20 份，不上传网络。
 
+### 错误分类
+
+工作线程和 CLI 失败会附带稳定分类：
+
+- `auth`：认证/权限
+- `rate_limit`：限流/额度
+- `timeout`：超时
+- `network`：网络
+- `tool`：工具参数/补丁
+- `verification`：测试/lint/typecheck
+- `workspace`：路径/文件/Git
+- `internal`：未知内部错误
+
+事件和 CLI JSON 含 `error_kind`、`user_message`、`retryable`、`detail`；桌面失败气泡会显示非 internal 分类前缀。
+
 ### 版本迁移
 
 ```powershell

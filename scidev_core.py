@@ -41,6 +41,7 @@ from scidev_context import ProjectContext
 from scidev_memory import ProjectMemory
 from scidev_mcp import MCPError, MCPManager
 from scidev_hooks import HookError, HookRunner
+from scidev_errors import classify_exception
 from scidev_attachments import AttachmentError, image_content_parts, normalize_images
 from scidev_multi_agent import (
     DELEGATE_PARALLEL_RESEARCH_TOOL,
@@ -885,11 +886,22 @@ class RetryQueue:
                 self._notify("task_completed", {**task, "result": result})
             except PermanentError as exc:
                 error = str(exc)
+                classification = classify_exception(exc, retryable=False)
                 self.ledger.retry_or_fail(task_id, error, retryable=False)
-                self.ledger.append("task_failed", {"task_id": task_id, "error": error})
-                self._notify("task_failed", {**task, "error": error, "retryable": False})
+                self.ledger.append("task_failed", {
+                    "task_id": task_id,
+                    "error": error,
+                    **classification.as_dict(),
+                })
+                self._notify("task_failed", {
+                    **task,
+                    "error": error,
+                    "retryable": False,
+                    **classification.as_dict(),
+                })
             except Exception as exc:  # noqa: BLE001 - worker must keep running
                 error = f"{type(exc).__name__}: {exc}"
+                classification = classify_exception(exc)
                 status = self.ledger.retry_or_fail(
                     task_id,
                     error,
@@ -899,11 +911,22 @@ class RetryQueue:
                 )
                 self.ledger.append(
                     "task_retry_scheduled" if status == "retry_wait" else "task_failed",
-                    {"task_id": task_id, "error": error, "status": status},
+                    {
+                        "task_id": task_id,
+                        "error": error,
+                        "status": status,
+                        **classification.as_dict(),
+                    },
                 )
                 self._notify(
                     "task_retry" if status == "retry_wait" else "task_failed",
-                    {**task, "error": error, "status": status, "retryable": True},
+                    {
+                        **task,
+                        "error": error,
+                        "status": status,
+                        "retryable": True,
+                        **classification.as_dict(),
+                    },
                 )
 
 

@@ -6151,6 +6151,9 @@ class ClientWindow(QMainWindow):
                 self._set_state(self.workspace_state, "● 出错", "StateError")
                 self.problems_output.setPlainText(error_message)
                 visible_error = error_message if len(error_message) <= 2400 else error_message[:2400].rstrip() + "…"
+                error_kind = str(payload.get("error_kind") or "")
+                if error_kind and error_kind != "internal":
+                    visible_error = f"[{error_kind}] {visible_error}"
                 self._append_chat("Harness · 任务失败", visible_error, "system")
             self._refresh_open_file_after_task()
         self._append_log(self._worker_message(event, payload))

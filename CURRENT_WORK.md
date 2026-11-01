@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-01 13:00（Asia/Shanghai）· 结构化错误分类
+- 新增 `scidev_errors.py`：把失败分为 auth/rate_limit/timeout/network/tool/verification/workspace/internal，附用户消息、是否可重试和有界 detail。
+- RetryQueue 的 `task_failed`/`task_retry` 事件、CLI 失败 JSON 都带 `error_kind`、`user_message`、`retryable`、`detail`；桌面失败气泡显示分类前缀。
+- 新增 3 项分类测试；mypy 扩到 15 个文件；全量套件 686 项 0 失败、14 跳过、覆盖率 78%。
+
 ## 2026-11-01 12:00（Asia/Shanghai）· MCP 资源与提示
 - `MCPClient`/`MCPHTTPClient` 新增 `resources/list`、`resources/read`、`prompts/list`、`prompts/get`。
 - `MCPManager` 聚合多 server 的 resources/prompts，按 server 读取资源、渲染 prompt；结果有界。
