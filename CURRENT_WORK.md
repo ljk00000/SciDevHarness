@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-01 08:55（Asia/Shanghai）· 20 项固定 eval 套件
+- 新增 `evals/standard/suite.json`：20 个固定任务，覆盖 bug 修复、文件创建/重命名、unittest/pytest、JSON/CSV/配置解析、dataclass、argparse、正则、排序/去重/二分、类型标注、async gather。
+- 每个任务有独立 setup 和确定性 check；新增 `tests/test_eval_suite.py` 验证 id 唯一、check 非空，并确认每个任务在修复前确实失败；全量套件 668 项 0 失败、14 跳过、覆盖率 78%。
+
 ## 2026-11-01 08:30（Asia/Shanghai）· MCP HTTP 传输
 - `scidev_mcp.py` 新增 Streamable HTTP 客户端：POST JSON-RPC，支持 JSON/SSE 响应、`Mcp-Session-Id`、超时和 4 MB 响应上限。
 - `.research/mcp.json` 可用 `url`/`transport=http` 配置 HTTP 服务；网络策略 deny 时拒绝 HTTP 服务；stdio 行为不变。
