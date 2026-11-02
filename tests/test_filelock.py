@@ -59,6 +59,17 @@ class FileLockTests(unittest.TestCase):
         self.assertFalse(GitManager._is_mutating(["status", "--short"]))
         self.assertFalse(GitManager._is_mutating([]))
 
+    def test_mutation_session_is_reentrant(self) -> None:
+        from scidev_core import GitManager
+
+        with tempfile.TemporaryDirectory(prefix="scidev-lock-reentrant-") as temp:
+            manager = GitManager(Path(temp))
+            with manager._mutation_session():
+                with manager._mutation_session():
+                    self.assertEqual(manager._mutation_depth(), 2)
+                self.assertEqual(manager._mutation_depth(), 1)
+            self.assertEqual(manager._mutation_depth(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

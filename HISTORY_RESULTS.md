@@ -1,8 +1,8 @@
 # 历史与结果
 
 ## 2026-11-02 14:30（Asia/Shanghai）· 跨进程 Git 写锁
-- 写命令通过 `.git/scidev-git.lock`（worktree fallback `.research/locks`）串行化，防止两个客户端进程同时操作同一仓库索引；读命令保持并发。
-- 验证：子进程持锁超时与命令分类测试通过；全量 742 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `41401974331` 三个 Python 版本全部 success。边界：一次 add+commit 序列不是跨进程原子操作；未在双进程真实任务中 E2E。
+- 写命令通过 `.git/scidev-git.lock`（worktree fallback `.research/locks`）串行化，防止两个客户端进程同时操作同一仓库索引；读命令保持并发；`commit_paths` 用可重入 session 覆盖整段 add+commit。
+- 验证：子进程持锁超时、命令分类和 session 可重入测试通过；全量 743 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `41401974331` 三个 Python 版本全部 success。边界：其他多命令 Git 序列不保证原子；未在双进程真实任务中 E2E。
 
 ## 2026-11-02 14:10（Asia/Shanghai）· 修复 Windows CI 发布暂存失败
 - 根据 GitHub check-run 注解定位：stage_release 漏拷 `scidev_sandbox.py`，导致 staged UI/本地模型/部署 dry-run 失败；改为自动收集所有 `scidev_*.py`，release staging 期望同步动态化。

@@ -941,7 +941,7 @@ class GitManager:
     MUTATION_TIMEOUT_SECONDS = GIT_MUTATION_TIMEOUT_SECONDS
     MUTATING_COMMANDS = frozenset({
         "add", "am", "apply", "checkout", "cherry-pick", "clean", "commit",
-        "merge", "mv", "rebase", "reset", "restore", "revert", "rm", "stash",
+        "init", "merge", "mv", "rebase", "reset", "restore", "revert", "rm", "stash",
         "switch", "update-index",
     })
 
@@ -955,6 +955,7 @@ class GitManager:
         # on .git/index.lock.
         self._run_lock = shared_thread_lock("git", self.project_root)
         self._repo_lock = threading.RLock()
+        self._mutation_state = threading.local()
         # Set when rename detection had to fail closed; exposed for diagnostics.
         self.last_rename_detection_degraded: list[str] = []
 
@@ -966,6 +967,34 @@ class GitManager:
             return arg in GitManager.MUTATING_COMMANDS
         return False
 
+    def _git_lock_path(self) -> Path:
+        lock_dir = self.project_root / ".git"
+        if not lock_dir.is_dir():
+            lock_dir = self.project_root / ".research" / "locks"
+        return lock_dir / "scidev-git.lock"
+
+    def _mutation_depth(self) -> int:
+        return int(getattr(self._mutation_state, "depth", 0))
+
+    @contextmanager
+    def _mutation_session(self):
+        """Hold one file lock across a multi-command commit sequence."""
+        depth = self._mutation_depth()
+        if depth == 0:
+            lock = FileLock(self._git_lock_path(), timeout=10.0)
+            lock.__enter__()
+            self._mutation_state.lock = lock
+        self._mutation_state.depth = depth + 1
+        try:
+            yield
+        finally:
+            self._mutation_state.depth = depth
+            if depth == 0:
+                lock = getattr(self._mutation_state, "lock", None)
+                self._mutation_state.lock = None
+                if lock is not None:
+                    lock.__exit__(None, None, None)
+
     def _run(
         self,
         args: list[str],
@@ -976,11 +1005,8 @@ class GitManager:
         command = ["git", *args]
         limit = self.COMMAND_TIMEOUT_SECONDS if timeout is None else timeout
         lock = None
-        if self._is_mutating(args):
-            lock_dir = self.project_root / ".git"
-            if not lock_dir.is_dir():
-                lock_dir = self.project_root / ".research" / "locks"
-            lock = FileLock(lock_dir / "scidev-git.lock", timeout=10.0)
+        if self._is_mutating(args) and self._mutation_depth() == 0:
+            lock = FileLock(self._git_lock_path(), timeout=10.0)
         for attempt in range(4):
             try:
                 with self._run_lock:
@@ -1497,7 +1523,10 @@ class GitManager:
         relative_paths = sorted({self._relative_path(self.project_root / Path(path)) for path in paths})
         if not relative_paths:
             return ""
+        with self._mutation_session():
+            return self._commit_paths_locked(message, relative_paths)
 
+    def _commit_paths_locked(self, message: str, relative_paths: list[str]) -> str:
         self.init()
         base_sha = self.head_sha()
         with tempfile.TemporaryDirectory(prefix="scidev-git-index-") as temp_dir:
