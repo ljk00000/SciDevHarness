@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from scidev_update import DownloadedAsset, UpdateError, UpdateInfo
-from scidev_update_ui import UpdateDialog, _DownloadWorker
+from scidev_update_ui import UpdateDialog, _CheckWorker, _DownloadWorker
 
 
 def _info(available: bool = True) -> UpdateInfo:
@@ -115,6 +115,37 @@ class UpdateDialogTests(unittest.TestCase):
             with patch("scidev_update_ui.download_asset", side_effect=UpdateError("offline")):
                 worker.run()
             self.assertEqual(completed, [])
+            self.assertEqual(failed, ["offline"])
+
+
+    def test_check_worker_emits_release_info(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-check-worker-", ignore_cleanup_errors=True) as temp:
+            with patch("scidev_update_ui.detect_repo", return_value="owner/repo"), patch(
+                "scidev_update_ui.check_for_update",
+                return_value=_info(),
+            ):
+                worker = _CheckWorker(Path(temp))
+                checked: list[UpdateInfo] = []
+                failed: list[str] = []
+                worker.checked.connect(checked.append)
+                worker.failed.connect(failed.append)
+                worker.run()
+            self.assertEqual(checked, [_info()])
+            self.assertEqual(failed, [])
+
+    def test_check_worker_reports_check_failure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-check-worker-", ignore_cleanup_errors=True) as temp:
+            with patch("scidev_update_ui.detect_repo", return_value="owner/repo"), patch(
+                "scidev_update_ui.check_for_update",
+                side_effect=UpdateError("offline"),
+            ):
+                worker = _CheckWorker(Path(temp))
+                checked: list[UpdateInfo] = []
+                failed: list[str] = []
+                worker.checked.connect(checked.append)
+                worker.failed.connect(failed.append)
+                worker.run()
+            self.assertEqual(checked, [])
             self.assertEqual(failed, ["offline"])
 
 

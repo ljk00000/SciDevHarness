@@ -3423,7 +3423,7 @@ class ClientWindow(QMainWindow):
         PullRequestDialog(self.project_root, self).exec()
 
     def _show_update_dialog(self) -> None:
-        UpdateDialog.show_for_workspace(self.project_root, self)
+        UpdateDialog.show_for_workspace_async(self.project_root, self)
 
     def _create_isolated_worktree(self) -> "ClientWindow | None":
         counter = getattr(self, "_gui_worktree_counter", 0) + 1

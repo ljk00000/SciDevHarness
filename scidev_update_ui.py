@@ -5,14 +5,16 @@ from pathlib import Path
 import threading
 from typing import Callable
 
-from PySide6.QtCore import QStandardPaths, QThread, QUrl, Signal
+from PySide6.QtCore import QStandardPaths, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QLabel,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -48,6 +50,30 @@ class _DownloadWorker(QThread):
             self.failed.emit(str(exc))
         else:
             self.completed.emit(str(result.path))
+
+
+class _CheckWorker(QThread):
+    checked = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        workspace: Path,
+        checker: Callable[..., UpdateInfo] | None = None,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.workspace = Path(workspace)
+        self.checker = checker or check_for_update
+
+    def run(self) -> None:
+        try:
+            repo = detect_repo(self.workspace)
+            info = self.checker(repo=repo)
+        except Exception as exc:  # noqa: BLE001 - surface any check failure to the dialog
+            self.failed.emit(str(exc))
+        else:
+            self.checked.emit(info)
 
 
 class UpdateDialog(QDialog):
@@ -179,6 +205,61 @@ class UpdateDialog(QDialog):
             QMessageBox.information(self, "正在下载", "下载和校验完成前不能关闭这个窗口。")
             return
         super().reject()
+
+    @classmethod
+    def show_for_workspace_async(
+        cls,
+        workspace: Path,
+        parent: QWidget | None = None,
+        *,
+        checker: Callable[..., UpdateInfo] | None = None,
+    ) -> _CheckWorker | None:
+        """Check in the background so the GUI thread keeps repainting."""
+        app = QApplication.instance()
+        if app is None:
+            return None
+        progress = QProgressDialog("正在检查 GitHub Release…", "取消", 0, 0, parent)
+        progress.setWindowTitle("检查更新")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.show()
+        worker = _CheckWorker(Path(workspace), checker, app)
+        state = {"cancelled": False}
+
+        def finish(info: UpdateInfo) -> None:
+            if state["cancelled"]:
+                return
+            progress.close()
+            dialog = cls(info, parent)
+            dialog.exec()
+
+        def fail(message: str) -> None:
+            if state["cancelled"]:
+                return
+            progress.close()
+            QMessageBox.warning(parent, "检查更新失败", message)
+
+        def cancelled() -> None:
+            state["cancelled"] = True
+            progress.close()
+
+        def finished() -> None:
+            if getattr(app, "_scidev_update_check_worker", None) is worker:
+                delattr(app, "_scidev_update_check_worker")
+            if getattr(app, "_scidev_update_check_progress", None) is progress:
+                delattr(app, "_scidev_update_check_progress")
+            worker.deleteLater()
+
+        progress.canceled.connect(cancelled)
+        worker.checked.connect(finish)
+        worker.failed.connect(fail)
+        worker.finished.connect(finished)
+        app._scidev_update_check_worker = worker  # type: ignore[attr-defined]
+        app._scidev_update_check_progress = progress  # type: ignore[attr-defined]
+        worker.start()
+        return worker
 
     @classmethod
     def show_for_workspace(
