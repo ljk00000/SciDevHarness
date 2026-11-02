@@ -164,6 +164,7 @@ python scidev_cli.py migrate --workspace .
 - 终端：Windows 优先使用 ConPTY（`pywinpty`）运行命令，保留交互式 stdin；ConPTY 不可用时回退到隐藏窗口管道。终端输出做 ANSI 清理，命令结束显示退出码
 - 图片附件：聊天输入区“图片”可附加 PNG/JPEG/GIF/WebP（最多 4 张、单张 5 MB、总计 12 MB），随任务作为多模态 `image_url` 发送；CLI 用重复的 `--image` 传图。图片以 data URL 保存到会话，模型必须支持视觉输入
 - 隔离 worktree：命令面板输入 `> new worktree`（或“新建 worktree”/“隔离工作区”），在当前 Git 仓库创建 `scidev/agent-gui-*` 分支，并打开一个独立窗口。两个窗口可以并行跑任务，文件和提交互相隔离；worktree 默认保留，需要手动清理。
+- 任务锁：同一项目同时只允许一个编码任务（进程内线程锁 + `.git/scidev-task.lock` 跨进程锁）；第二个进程直接失败并提示改用独立 worktree，避免两个窗口互相覆盖或一起提交。
 - 管理 worktree：`> worktrees` 打开列表，可查看分支、路径、HEAD，打开或删除；删除有未提交改动时会失败，勾选“强制删除”才忽略改动并删除分支。
 - 真实仓库 eval：`python scidev_cli.py eval --suite evals/standard/suite.json --output .research/evals/report.json --jobs 2` 会在隔离副本里跑固定任务，用确定性 check 判断成败，报告完成率、平均轮数、prompt/completion token、耗时、相对上次的回归和按定价估算的成本。`evals/smoke/` 是 3 个冒烟任务，`evals/standard/suite.json` 是 20 个固定任务；测试会确认每个任务在修复前确实失败。价格可在 suite 写 `"pricing": {"input_per_million": 1.0, "output_per_million": 2.0}`，或用 `SCIDEV_EVAL_INPUT_PRICE`/`SCIDEV_EVAL_OUTPUT_PRICE` 覆盖。
 - 本地弱模型基线：`evals/local/suite.json` 自动打开 `SCIDEV_TEXT_TOOL_CALL_FALLBACK=1` 并把轮次限制为 8；本机 Qwen2.5-Coder-7B 的 3 项冒烟结果为 **1/3**（无 fallback 时 0/3），记录在 `evals/baselines/local-qwen2.5-coder-7b.json`。这是弱模型基线，不代表强模型效果；Ollama 不返回 usage，token/成本为 0。

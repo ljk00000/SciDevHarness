@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 import time
 import unittest
+from unittest.mock import patch
 
 from scidev_filelock import FileLock, FileLockTimeout
 
@@ -69,6 +70,65 @@ class FileLockTests(unittest.TestCase):
                     self.assertEqual(manager._mutation_depth(), 2)
                 self.assertEqual(manager._mutation_depth(), 1)
             self.assertEqual(manager._mutation_depth(), 0)
+
+    def test_coding_task_lock_path_is_shared_and_hidden(self) -> None:
+        from scidev_core import coding_task_lock_path
+
+        with tempfile.TemporaryDirectory(prefix="scidev-task-lock-path-") as temp:
+            root = Path(temp)
+            self.assertEqual(coding_task_lock_path(root), root / ".research" / "locks" / "task.lock")
+            (root / ".git").mkdir()
+            self.assertEqual(coding_task_lock_path(root), root / ".git" / "scidev-task.lock")
+
+    def test_agent_run_rejects_a_task_when_another_process_holds_the_lock(self) -> None:
+        from scidev_core import CodingAgent, PermanentError, coding_task_lock_path
+
+        with tempfile.TemporaryDirectory(prefix="scidev-task-lock-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            (root / ".git").mkdir()
+            path = coding_task_lock_path(root)
+            script = (
+                "import sys, time\n"
+                "from pathlib import Path\n"
+                "from scidev_filelock import FileLock\n"
+                "with FileLock(Path(sys.argv[1])):\n"
+                "    print('locked', flush=True)\n"
+                "    time.sleep(10)\n"
+            )
+            holder = subprocess.Popen(
+                [sys.executable, "-c", script, str(path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                assert holder.stdout is not None
+                self.assertEqual(holder.stdout.readline().strip(), "locked")
+                agent = object.__new__(CodingAgent)
+                agent.project_root = root
+                with patch.object(CodingAgent, "_run_locked", return_value={"ok": True}):
+                    with self.assertRaises(PermanentError):
+                        agent.run({"payload": {}})
+            finally:
+                holder.terminate()
+                try:
+                    holder.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    holder.kill()
+                    holder.wait(timeout=5)
+
+    def test_agent_run_releases_the_process_lock_after_success(self) -> None:
+        from scidev_core import CodingAgent, coding_task_lock_path
+
+        with tempfile.TemporaryDirectory(prefix="scidev-task-lock-") as temp:
+            root = Path(temp)
+            (root / ".git").mkdir()
+            agent = object.__new__(CodingAgent)
+            agent.project_root = root
+            with patch.object(CodingAgent, "_run_locked", return_value={"ok": True}):
+                self.assertEqual(agent.run({"payload": {}}), {"ok": True})
+            with FileLock(coding_task_lock_path(root), timeout=0.2):
+                pass
 
 
 if __name__ == "__main__":

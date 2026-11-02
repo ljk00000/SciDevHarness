@@ -337,6 +337,15 @@ def shared_thread_lock(kind: str, path: Path) -> threading.RLock:
         return lock
 
 
+def coding_task_lock_path(project_root: Path) -> Path:
+    """Lock file shared by every SciDevHarness process for one project."""
+    root = Path(project_root)
+    git_dir = root / ".git"
+    if git_dir.is_dir():
+        return git_dir / "scidev-task.lock"
+    return root / ".research" / "locks" / "task.lock"
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -6316,7 +6325,17 @@ class CodingAgent:
                 "同一项目已有编码任务在运行；请等待其完成后再提交新任务，避免并发改动互相覆盖或被一起提交。"
             )
         try:
-            return self._run_locked(task, payload)
+            process_lock = FileLock(coding_task_lock_path(self.project_root), timeout=0.0)
+            try:
+                process_lock.__enter__()
+            except FileLockTimeout as exc:
+                raise PermanentError(
+                    "另一个 SciDevHarness 进程正在此项目运行编码任务；请等待其完成，或改用独立 worktree。"
+                ) from exc
+            try:
+                return self._run_locked(task, payload)
+            finally:
+                process_lock.__exit__(None, None, None)
         finally:
             task_lock.release()
 
