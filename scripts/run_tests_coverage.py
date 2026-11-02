@@ -20,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 RESULT = ROOT / ".research" / "test_result.json"
 PARTS = ROOT / ".research" / "test_parts"
 CHILD_FLAG = "--coverage-child"
+try:
+    TARGET_TIMEOUT_SECONDS = max(30.0, float(os.getenv("SCIDEV_TEST_TARGET_TIMEOUT", "300")))
+except ValueError:
+    TARGET_TIMEOUT_SECONDS = 300.0
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -142,10 +146,27 @@ def _targets() -> list[str]:
 
 
 def _run_target(target: str, part: Path) -> dict | None:
-    completed = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), CHILD_FLAG, target, str(part)],
-        cwd=str(ROOT),
-    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), CHILD_FLAG, target, str(part)],
+            cwd=str(ROOT),
+            timeout=TARGET_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        payload: dict[str, object] = {
+            "success": False,
+            "complete": False,
+            "last_test": "",
+            "exit": -1,
+            "timed_out": True,
+        }
+        if part.exists():
+            try:
+                partial = json.loads(part.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                partial = {}
+            payload["last_test"] = str(partial.get("last_test") or "")
+        return payload
     if not part.exists():
         return {"success": False, "complete": False, "last_test": "", "exit": completed.returncode}
     payload = json.loads(part.read_text(encoding="utf-8"))
@@ -189,10 +210,14 @@ def _parent() -> int:
         if not payload.get("complete"):
             crashed.append(target)
             totals["success"] = False
-            details.append({
-                "test": target,
-                "detail": f"aborted after {payload.get('last_test')} (exit {payload.get('exit')})",
-            })
+            if payload.get("timed_out"):
+                detail = (
+                    f"timed out after {TARGET_TIMEOUT_SECONDS:.0f}s"
+                    f" after {payload.get('last_test') or 'unknown test'}"
+                )
+            else:
+                detail = f"aborted after {payload.get('last_test')} (exit {payload.get('exit')})"
+            details.append({"test": target, "detail": detail})
         elif not payload.get("success"):
             totals["success"] = False
             details.extend(payload.get("failure_details") or [])

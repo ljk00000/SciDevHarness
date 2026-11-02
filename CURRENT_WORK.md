@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-03 00:45（Asia/Shanghai）· 测试运行器单目标超时
+- `scripts/run_tests_coverage.py` 为每个目标设置默认 300 秒超时（`SCIDEV_TEST_TARGET_TIMEOUT` 可覆盖）；超时返回 `timed_out` 不完整结果，父进程按既有重试/崩溃逻辑处理，不再无限等待。
+- 新增 1 项超时逻辑测试；全量 761 项 0 失败、14 跳过（`test_ui_polish` 命中 300 秒超时，重试通过；`WorkspaceSearchTests` 也自动重试通过）。
+
 ## 2026-11-02 23:50（Asia/Shanghai）· 修复命令取消竞态
 - 远端 3.14 CI 失败定位：`tool_called` 已写入、但 `Popen` 尚未启动时用户取消，`_command_cancel` 虽已置位仍会 spawn 子进程。
 - `run_command` 在 spawn 前再次检查取消；`Popen` 后立即检查并终止进程树。取消测试改为等待 `tool_called` 事件后取消；连续 5 轮通过。全量测试 760 项 0 失败、14 跳过、无重试目标。远端 CI `41478009195` 三版本成功。
