@@ -2,7 +2,7 @@
 
 ## 2026-11-02 22:10（Asia/Shanghai）· 拆分 EventLedger 与 runtime helpers
 - `EventLedger`（约 422 行）移到 `scidev_ledger.py`；共享锁/`now_iso`/`new_id`/任务锁路径/重试常量移到 `scidev_runtime.py`。`scidev_core.py` 由 8491 行降到约 8023 行，`scidev_core` 继续 re-export 旧名字。
-- `pyproject.toml` 的两个模块列表已加入新文件；core/context/cli 190 项测试通过，全量 757 项 0 失败、14 跳过、无重试目标。
+- `pyproject.toml` 的两个模块列表已加入新文件；core/context/cli 190 项测试通过，全量 757 项 0 失败、14 跳过、无重试目标。远端 CI `41459680128` 三版本成功。
 
 ## 2026-11-02 21:40（Asia/Shanghai）· 更细的下载分块
 - `download_asset` 从 1 MiB 改为 64 KiB 分块读取：进度更新更及时，取消检查间隔更短；大小/摘要校验不变。更新/下载测试与 lint 通过；全量 757 项 0 失败、14 跳过、无重试目标。远端 CI `41455453012` 三版本成功。
