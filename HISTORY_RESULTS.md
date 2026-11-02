@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 13:00（Asia/Shanghai）· CI 可选 PFX 签名
+- workflow 支持 secrets 提供的 PFX：导入证书、签名安装器、输出 `signed=true`，并在 job 结束前删除证书；没有 secrets 时继续 unsigned 构建。
+- 验证：静态 workflow 断言通过。边界：未用真实证书/远端 runner 跑过；PFX 密码只通过 step env 传给 PowerShell。
+
 ## 2026-11-02 12:45（Asia/Shanghai）· Pdb 光标行断点
 - F5 启动 pdb 后自动向终端写入 `b <file>:<cursor line>` 和 `c`，直接停在当前行；空路径/非法行号拒绝。
 - 验证：断点命令单元测试通过。边界：延迟写入依赖 pdb 已启动；没有图形断点/变量/调用栈；未做 GUI 端到端停点验证。

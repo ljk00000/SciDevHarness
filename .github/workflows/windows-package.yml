@@ -84,6 +84,35 @@ jobs:
         shell: pwsh
         run: choco install innosetup --no-progress -y
 
+      - name: Import optional signing certificate
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_SIGNING_PFX_BASE64) {
+            Write-Output "No WINDOWS_SIGNING_PFX_BASE64 secret; the installer will be unsigned."
+            exit 0
+          }
+          if (-not $env:WINDOWS_SIGNING_PFX_PASSWORD) {
+            throw "WINDOWS_SIGNING_PFX_BASE64 is set but WINDOWS_SIGNING_PFX_PASSWORD is empty."
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "scidev-signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes(
+              $pfxPath,
+              [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX_BASE64)
+            )
+            $password = ConvertTo-SecureString $env:WINDOWS_SIGNING_PFX_PASSWORD -AsPlainText -Force
+            $imported = @(Import-PfxCertificate -FilePath $pfxPath -Password $password -CertStoreLocation "Cert:\CurrentUser\My")
+            if ($imported.Count -lt 1) { throw "No certificate was imported from the PFX." }
+            "SCIDEV_SIGN_THUMBPRINT=$($imported[0].Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+            Write-Output "Imported signing certificate $($imported[0].Thumbprint)."
+          }
+          finally {
+            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Build per-user installer
         shell: pwsh
         run: |
@@ -95,8 +124,14 @@ jobs:
           if (-not $versionLine) { throw "APP_VERSION was not found in scidev_update.py" }
           $version = $versionLine.Matches[0].Groups[1].Value
           $installerDir = Join-Path $env:RUNNER_TEMP "scidev-installer"
-          & "$env:GITHUB_WORKSPACE\scripts\build_installer.ps1" `
-            -Deployment $deployment -Version $version -OutputDirectory $installerDir
+          $buildArgs = @{
+            Deployment = $deployment
+            Version = $version
+            OutputDirectory = $installerDir
+          }
+          $signThumbprint = $env:SCIDEV_SIGN_THUMBPRINT
+          if ($signThumbprint) { $buildArgs.SignThumbprint = $signThumbprint }
+          & "$env:GITHUB_WORKSPACE\scripts\build_installer.ps1" @buildArgs
           if ($LASTEXITCODE -ne 0) { throw "Installer build failed (exit $LASTEXITCODE)" }
           $installer = Join-Path $installerDir "SciDevHarness-Setup-$version.exe"
           if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
@@ -107,11 +142,19 @@ jobs:
             path = $installer
             bytes = (Get-Item -LiteralPath $installer).Length
             sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-            signed = $false
+            signed = [bool]$signThumbprint
           }
           $manifestPath = Join-Path $env:RUNNER_TEMP "SciDevHarness-Windows-x64-installer.json"
           $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
           $manifest | ConvertTo-Json -Compress
+
+      - name: Remove signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          $thumbprint = $env:SCIDEV_SIGN_THUMBPRINT
+          if (-not $thumbprint) { exit 0 }
+          Remove-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint" -Force -ErrorAction SilentlyContinue
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:

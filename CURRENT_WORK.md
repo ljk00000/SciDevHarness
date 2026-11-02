@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-02 13:00（Asia/Shanghai）· CI 可选 PFX 签名
+- Windows Package Verification 新增可选签名：读取 `WINDOWS_SIGNING_PFX_BASE64`/`WINDOWS_SIGNING_PFX_PASSWORD`，导入 CurrentUser\My，传给 `build_installer.ps1 -SignThumbprint`，结束时删除证书；无 secret 时保持 unsigned。
+- manifest `signed` 变为按实际签名状态输出；新增静态断言，未在真实 PFX/远端 runner 上执行。
+
 ## 2026-11-02 12:45（Asia/Shanghai）· Pdb 光标行断点
 - `breakpoint_commands()` 生成 `b <相对路径>:<行>\nc`；F5 启动 pdb 后延迟写入终端，自动停在当前光标行并继续运行。
 - 新增 1 项断点命令测试；GUI 端到端仍只做启动逻辑，未自动化验证 pdb 实际停点。

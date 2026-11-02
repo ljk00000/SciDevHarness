@@ -38,6 +38,9 @@ class InstallerBuildTests(unittest.TestCase):
         self.assertIn("build_installer.ps1", workflow)
         self.assertIn("SciDevHarness-Windows-x64-installer", workflow)
         self.assertIn("Get-FileHash", workflow)
+        self.assertIn("WINDOWS_SIGNING_PFX_BASE64", workflow)
+        self.assertIn("SCIDEV_SIGN_THUMBPRINT", workflow)
+        self.assertIn("Remove signing certificate", workflow)
 
 
 if __name__ == "__main__":
