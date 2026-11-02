@@ -1,5 +1,16 @@
 # 当前工作
 
+## 2026-11-02 14:10（Asia/Shanghai）· 修复 Windows CI 发布暂存失败
+- `896ce5c` 的 Windows CI 三版本均失败：`scripts/stage_release.ps1` 硬编码模块清单漏掉 `scidev_sandbox.py`，导致 staged client/deploy dry-run `ModuleNotFoundError`。
+- 暂存脚本改为自动收集 `scidev_*.py`；release staging 测试的期望集合也改为动态，避免新增模块后再次漏测。
+- `test_debug` 在 CI 短路径/解析路径下比较原始字符串失败，改为比较 `Path.resolve()`，只断言 `-m pdb <relative>` 尾部。
+- CI 编译步骤改为动态收集根目录/tests/scripts 的 Python 文件，新模块不会再漏编译。
+
+## 2026-11-02 14:00（Asia/Shanghai）· 工具注册表
+- 新增 `scidev_tool_registry.ToolRegistry`：集中 name → handler 绑定和只读元数据；`CodingToolbox.execute_tool` 通过注册表取 handler。
+- MCP 服务端复用 `READ_ONLY_TOOL_NAMES`；新增 1 项注册表测试。
+- 执行逻辑仍在 `CodingToolbox`，这是绑定表而不是插件系统。
+
 ## 2026-11-02 13:45（Asia/Shanghai）· Docker 超时清理与 Windows-only 声明
 - Docker 容器加 `--name scidev-<随机>`；超时/取消时调用 `docker rm -f` 清理，正常结束仍依赖 `--rm`。
 - 新增 1 项 cleanup 测试；`pyproject.toml` 明确 Windows classifier，README 改为“仅支持 Windows 桌面”。

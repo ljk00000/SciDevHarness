@@ -38,6 +38,7 @@ from scidev_browser import BrowserAgent, BrowserApprovalDenied
 from scidev_checkpoint import WorkspaceCheckpoint
 from scidev_sandbox import DockerSandbox, SandboxError
 from scidev_tool_schema import tool_definitions
+from scidev_tool_registry import ToolRegistry
 from scidev_visual import VisualArtifactReviewer
 from scidev_context import ProjectContext
 from scidev_memory import ProjectMemory
@@ -2734,6 +2735,7 @@ class CodingToolbox:
             max_file_bytes=self.MAX_WRITE_BYTES,
             validate_content=self._validate_svg_document,
         )
+        self.tool_registry = ToolRegistry.from_toolbox(self)
 
     def set_execution_mode(self, mode: str | ExecutionMode) -> None:
         """Apply a new mode to the next tool call without restarting the session."""
@@ -3897,25 +3899,10 @@ class CodingToolbox:
                 return self.mcp.call(name, arguments)
             except MCPError as exc:
                 raise PermanentError(str(exc)) from exc
-        handlers = {
-            "search_code": self.search_code,
-            "get_project_context": self.get_project_context,
-            "list_files": self.list_files,
-            "read_file": self.read_file,
-            "write_file": self.write_file,
-            "apply_patch": self.apply_patch,
-            "replace_in_file": self.replace_in_file,
-            "run_command": self.run_command,
-            "browser_search": self.browser_agent.search,
-            "browser_open": self.browser_agent.open,
-            "browser_click": self.browser_agent.click,
-            "browser_screenshot": self.browser_agent.screenshot,
-            "git_diff": self.git_diff,
-            "inspect_visual_artifact": self.inspect_visual_artifact,
-        }
-        handler = handlers.get(name)
-        if handler is None:
+        binding = self.tool_registry.get(name)
+        if binding is None:
             raise PermanentError(f"未知工具：{name}")
+        handler = binding.handler
         if not isinstance(arguments, dict):
             raise PermanentError(f"工具 {name} 的参数必须是 JSON 对象")
         try:

@@ -18,7 +18,8 @@ class DebugLauncherTests(unittest.TestCase):
             script = root / "app.py"
             script.write_text("print('hello')\n", encoding="utf-8")
             argv = build_debug_argv(root, script)
-            self.assertEqual(argv, [str(venv_python), "-m", "pdb", "app.py"])
+            self.assertEqual(Path(argv[0]).resolve(), venv_python.resolve())
+            self.assertEqual(argv[1:], ["-m", "pdb", "app.py"])
             rendered = command_line(argv)
             self.assertIn("-m", rendered)
             self.assertIn("pdb", rendered)

@@ -11,16 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from scidev_core import CodingToolbox, EventLedger, PermanentError
+from scidev_tool_registry import READ_ONLY_TOOL_NAMES
 from scidev_tool_schema import tool_definitions
 from scidev_update import APP_VERSION
 
-READ_ONLY_TOOLS = frozenset({
-    "search_code",
-    "get_project_context",
-    "list_files",
-    "read_file",
-    "git_diff",
-})
+READ_ONLY_TOOLS = READ_ONLY_TOOL_NAMES
 PROTOCOL_VERSION = "2024-11-05"
 
 

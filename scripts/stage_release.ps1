@@ -17,48 +17,6 @@ if (Test-Path -LiteralPath $stageRoot) {
 
 New-Item -ItemType Directory -Path $stageRoot | Out-Null
 $releaseFiles = @(
-    "scidev_client.py",
-    "scidev_cli.py",
-    "scidev_checkpoint.py",
-    "scidev_core.py",
-    "scidev_credentials.py",
-    "scidev_provider.py",
-    "scidev_lsp.py",
-    "scidev_mcp.py",
-    "scidev_hooks.py",
-    "scidev_pty.py",
-    "scidev_attachments.py",
-    "scidev_eval.py",
-    "scidev_intel.py",
-    "scidev_worktree.py",
-    "scidev_worktree_ui.py",
-    "scidev_mcp_ui.py",
-    "scidev_analytics.py",
-    "scidev_analytics_ui.py",
-    "scidev_pr_ui.py",
-    "scidev_pr.py",
-    "scidev_migrations.py",
-    "scidev_update.py",
-    "scidev_crash.py",
-    "scidev_errors.py",
-    "scidev_process.py",
-    "scidev_acceptance.py",
-    "scidev_usage.py",
-    "scidev_context.py",
-    "scidev_environment.py",
-    "scidev_patching.py",
-    "scidev_memory.py",
-    "scidev_multi_agent.py",
-    "scidev_planning.py",
-    "scidev_policy.py",
-    "scidev_verification.py",
-    "scidev_browser.py",
-    "scidev_icons.py",
-    "scidev_ui.py",
-    "scidev_preferences.py",
-    "scidev_settings.py",
-    "scidev_highlighting.py",
-    "scidev_visual.py",
     "README.md",
     "LICENSE",
     "pyproject.toml",
@@ -72,6 +30,9 @@ $releaseFiles = @(
     "ui\qml\DevelopmentTree.qml",
     "ui\icons\chevron-down.svg",
     "ui\icons\chevron-up.svg"
+) + @(
+    Get-ChildItem -LiteralPath $repoRoot -Filter "scidev_*.py" -File |
+        ForEach-Object { $_.Name }
 )
 
 foreach ($relativePath in $releaseFiles) {

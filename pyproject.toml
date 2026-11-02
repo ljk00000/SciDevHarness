@@ -39,6 +39,7 @@ files = [
     "scidev_debug.py",
     "scidev_update_ui.py",
     "scidev_tool_schema.py",
+    "scidev_tool_registry.py",
     "scidev_mcp_server.py",
     "ui/qml/DevelopmentTree.qml",
     "ui/icons/chevron-down.svg",
@@ -87,6 +88,7 @@ files = [
     "scidev_debug.py",
     "scidev_update_ui.py",
     "scidev_tool_schema.py",
+    "scidev_tool_registry.py",
     "scidev_mcp_server.py",
 ]
 
