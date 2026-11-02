@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 19:20（Asia/Shanghai）· Pdb 控制命令测试
+- 新增 2 项测试覆盖控制命令的 PTY 写入和无 pdb 提示。
+- 验证：全量 750 项 0 失败、14 跳过、覆盖率 78%；首次全量在 `test_settings` 触发 Qt 原生崩溃（exit 3221225477），单测与全量重跑通过。边界：未启动真实 pdb 进程。
+
 ## 2026-11-02 18:45（Asia/Shanghai）· 本机 fixture 安装器重建
 - 当前暂存脚本产出 63 个文件，包含 `scidev_sandbox/debug/tool_schema/tool_registry/mcp_server/update_ui/filelock`；用 dummy exe 构建 Inno Setup 安装器成功。
 - 产物 2,381,679 字节，SHA-256 `99b76372d423744a188f8fe555b2a37c049491e5880f280d224a860a5c3f7fb0`，unsigned。边界：dummy exe，不是实际 Nuitka 可执行文件，未安装/未运行。

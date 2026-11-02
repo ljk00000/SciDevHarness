@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-02 19:20（Asia/Shanghai）· Pdb 控制命令测试
+- 新增 `tests/test_debug_ui.py`：验证控制命令写入活动 PTY、无 pdb 时只提示；全量 750 项 0 失败、14 跳过、无重试目标。
+- 首次全量在 `test_settings` 出现 Qt 原生崩溃，单测与重跑均通过。
+
 ## 2026-11-02 18:45（Asia/Shanghai）· 本机 fixture 安装器重建
 - 用当前 stage_release.ps1 暂存 63 个文件（含全部新模块），加一个 dummy `scidev_client.exe` 后用 Inno Setup 构建 fixture 安装器。
 - 产物 2,381,679 字节，SHA-256 `99b76372...7fb0`，unsigned；验证的是暂存/安装器脚本，不是真实 Nuitka 应用。
