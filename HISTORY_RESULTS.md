@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 13:12（Asia/Shanghai）· 内置工具 schema 拆分
+- 工具 schema 从 `scidev_core.py` 移到 `scidev_tool_schema.py`，`CodingToolbox.definitions` 只做委托；浏览器/视觉工具仍按显式参数追加。
+- 验证：新增 schema 完整性、去重和条件开关测试；全量 735 项 0 失败、14 跳过、覆盖率 78%。边界：参数校验/执行仍耦合在 `CodingToolbox`。
+
 ## 2026-11-02 13:20（Asia/Shanghai）· 桌面端检查更新对话框
 - 新增只读 Release 检查对话框和命令面板入口；只打开 Release 页面，不下载或执行安装包；检查失败显示警告。
 - 验证：4 项 Qt 测试通过。边界：同步网络检查可能阻塞 UI；未做真实 GitHub 网络 E2E。

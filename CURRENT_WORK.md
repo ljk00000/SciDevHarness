@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-02 13:12（Asia/Shanghai）· 内置工具 schema 拆分
+- 将 `CodingToolbox.definitions` 的 9 个内置工具 schema 提取到 `scidev_tool_schema.py`，core 减少约 180 行；browser/visual 条件工具仍由参数控制。
+- 新增 1 项 schema 完整性/条件开关测试；执行逻辑仍在 `CodingToolbox`，这不是完整工具注册表。
+
 ## 2026-11-02 13:20（Asia/Shanghai）· 桌面端检查更新对话框
 - 新增 `scidev_update_ui.UpdateDialog`：显示当前/最新版本、Release 日期、URL、资产名/大小和说明；只提供“打开 Release 页面”，不下载/执行。
 - 命令面板 `> update`/`> 检查更新` 打开对话框；检查失败弹警告。

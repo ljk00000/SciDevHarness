@@ -31,6 +31,7 @@ files = [
     "scidev_sandbox.py",
     "scidev_debug.py",
     "scidev_update_ui.py",
+    "scidev_tool_schema.py",
     "ui/qml/DevelopmentTree.qml",
     "ui/icons/chevron-down.svg",
     "ui/icons/chevron-up.svg",
@@ -77,6 +78,7 @@ files = [
     "scidev_sandbox.py",
     "scidev_debug.py",
     "scidev_update_ui.py",
+    "scidev_tool_schema.py",
 ]
 
 [tool.coverage.run]
