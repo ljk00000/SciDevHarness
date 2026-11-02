@@ -2,7 +2,7 @@
 
 ## 2026-11-03 01:20（Asia/Shanghai）· 修复 Authenticode 时间戳端点
 - 用自签代码签名证书实际调用 `sign_release.ps1`，发现本机 signtool 对 `https://timestamp.digicert.com` 报 `Invalid Timestamp URL`；改为默认 HTTP，接受 HTTP/HTTPS 覆盖。
-- 签名本身成功；`/pa` 对未信任自签证书按预期失败，真实受信证书路径未验证。新增脚本静态断言。全量 761 项 0 失败、14 跳过、无重试目标。
+- 签名本身成功；`/pa` 对未信任自签证书按预期失败，真实受信证书路径未验证。新增脚本静态断言。全量 761 项 0 失败、14 跳过、无重试目标。远端 CI `41490858500` 三版本成功。
 
 ## 2026-11-03 01:10（Asia/Shanghai）· 测试超时清理进程树
 - 超时目标改用 `Popen` + `terminate_process_tree`，同时清理测试子进程启动的孙进程；等待 10 秒后仍不退则 `kill()`。
