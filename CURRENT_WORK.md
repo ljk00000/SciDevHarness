@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-02 16:35（Asia/Shanghai）· 稳定关闭确认测试
+- `UnsavedCloseTests` 的 `QTimer` 轮询在“继续编辑”取消关闭后仍会继续，可能点击下一次确认框；增加 `active` 停止标志。
+- 连续 3 轮 5 项关闭测试通过；全量 745 项 0 失败（1 个无关 GUI 目标自动重试后通过）。
+
 ## 2026-11-02 15:50（Asia/Shanghai）· 可取消的更新下载
 - `download_asset` 新增 `cancel` 回调，每个 1 MiB chunk 前检查；取消抛 `UpdateError` 并清理 `.part` 临时文件。
 - `UpdateDialog` 增加“取消下载”按钮，取消后下载线程正常结束并恢复按钮；新增 1 项取消测试。首次全量在 `UnsavedCloseTests` 出现 Qt 原生崩溃，单独与重跑均通过；全量 745 项。远端 CI `41410933383` 三版本成功。

@@ -2965,8 +2965,11 @@ class UnsavedCloseTests(unittest.TestCase):
     def _close_with_choice(self, window: ClientWindow, label: str) -> bool:
         clicked: list[str] = []
         deadline = time.monotonic() + 3
+        active = True
 
         def choose_button() -> None:
+            if not active:
+                return
             for widget in self.app.topLevelWidgets():
                 if isinstance(widget, QMessageBox) and widget.isVisible():
                     button = next((item for item in widget.buttons() if item.text() == label), None)
@@ -2979,6 +2982,7 @@ class UnsavedCloseTests(unittest.TestCase):
 
         QTimer.singleShot(0, choose_button)
         closed = window.close()
+        active = False
         self.app.processEvents()
         self.assertEqual(clicked, [label], f"close confirmation did not offer {label!r}")
         return closed
