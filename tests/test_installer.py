@@ -42,6 +42,16 @@ class InstallerBuildTests(unittest.TestCase):
         self.assertIn("SCIDEV_SIGN_THUMBPRINT", workflow)
         self.assertIn("Remove signing certificate", workflow)
 
+    def test_release_workflow_is_tag_triggered_and_publishes_the_installer(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        package = (ROOT / ".github" / "workflows" / "windows-package.yml").read_text(encoding="utf-8")
+        self.assertIn("tags:", workflow)
+        self.assertIn("gh run download", workflow)
+        self.assertIn("gh release create", workflow)
+        self.assertIn("secrets: inherit", workflow)
+        self.assertIn("contents: write", workflow)
+        self.assertIn("workflow_call:", package)
+
 
 if __name__ == "__main__":
     unittest.main()

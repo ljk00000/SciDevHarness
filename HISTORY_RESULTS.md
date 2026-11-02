@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 18:00（Asia/Shanghai）· Tag 触发的 Release workflow
+- 新增 tag 发布的 Release workflow，复用打包 job 并上传 installer/manifest；没有 tag 时不触发。
+- 验证：静态 workflow 断言通过；全量 748 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）；未在真实 tag/远端仓库上发布。边界：无签名证书时 Release 仍是 unsigned；`gh run download`/`gh release create` 未实际执行。
+
 ## 2026-11-02 17:20（Asia/Shanghai）· Pdb 控制菜单
 - 编辑器菜单增加 pdb 控制项，复用 PTY 写入；没有 pdb 时提示先按 F5。
 - 验证：全量 747 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）；未新增自动化测试；远端 Windows CI run `41422215761` 三版本成功。边界：仍无图形断点/变量/调用栈，不解析 pdb 输出。

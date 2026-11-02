@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  package:
+    uses: ./.github/workflows/windows-package.yml
+    secrets: inherit
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download the verified installer artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release-assets
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name SciDevHarness-Windows-x64-installer \
+            --dir release-assets
+          test -n "$(find release-assets -name 'SciDevHarness-Setup-*.exe' -print -quit)"
+          test -f release-assets/SciDevHarness-Windows-x64-installer.json
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release-assets/SciDevHarness-Setup-*.exe \
+            release-assets/SciDevHarness-Windows-x64-installer.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "SciDevHarness $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag

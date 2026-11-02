@@ -2,6 +2,7 @@ name: Windows Package Verification
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

@@ -68,7 +68,7 @@ class BootstrapTests(unittest.TestCase):
     def test_github_actions_are_sha_pinned_and_dependabot_tracks_updates(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         workflows_dir = project_root / ".github" / "workflows"
-        expected_action_counts = {"ci.yml": 3, "windows-package.yml": 4}
+        expected_action_counts = {"ci.yml": 3, "windows-package.yml": 4, "release.yml": 1}
         self.assertEqual(
             {path.name for path in workflows_dir.glob("*.yml")},
             set(expected_action_counts),
@@ -81,6 +81,8 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(len(action_refs), expected_count, "update action pin checks when changing a workflow")
             for reference in action_refs:
                 with self.subTest(workflow=workflow_name, reference=reference):
+                    if reference.startswith("./"):
+                        continue
                     self.assertRegex(reference, r"^[^@\s]+@[0-9a-f]{40}$")
 
         dependabot = (project_root / ".github" / "dependabot.yml").read_text(encoding="utf-8")
