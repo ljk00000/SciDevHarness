@@ -2,7 +2,7 @@
 
 ## 2026-11-02 15:50（Asia/Shanghai）· 可取消的更新下载
 - `download_asset` 新增 `cancel` 回调，每个 1 MiB chunk 前检查；取消抛 `UpdateError` 并清理 `.part` 临时文件。
-- `UpdateDialog` 增加“取消下载”按钮，取消后下载线程正常结束并恢复按钮；新增 1 项取消测试。首次全量在 `UnsavedCloseTests` 出现 Qt 原生崩溃，单独与重跑均通过；全量 745 项。
+- `UpdateDialog` 增加“取消下载”按钮，取消后下载线程正常结束并恢复按钮；新增 1 项取消测试。首次全量在 `UnsavedCloseTests` 出现 Qt 原生崩溃，单独与重跑均通过；全量 745 项。远端 CI `41410933383` 三版本成功。
 
 ## 2026-11-02 15:30（Asia/Shanghai）· 桌面端后台下载更新包
 - `UpdateDialog` 新增“下载并校验安装包”：选择保存路径后由 `QThread` 调用 `download_asset`，校验 SHA-256；完成只显示路径，不执行。
