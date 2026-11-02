@@ -2,7 +2,7 @@
 
 ## 2026-11-02 19:45（Asia/Shanghai）· 后台检查更新
 - 新增 `_CheckWorker` 与 `UpdateDialog.show_for_workspace_async`：命令面板 `> update` 不再在 UI 线程阻塞网络检查，显示可取消进度；结果/失败回到主线程。
-- 新增 2 项 worker 测试；取消只忽略结果，不中断阻塞中的 HTTP。全量 752 项 0 失败、14 跳过、无重试目标。远端 CI 已触发但 GitHub API 暂不可达，未确认结果。
+- 新增 2 项 worker 测试；取消只忽略结果，不中断阻塞中的 HTTP。全量 752 项 0 失败、14 跳过、无重试目标。远端 CI `41439594662` 三版本成功。
 
 ## 2026-11-02 19:20（Asia/Shanghai）· Pdb 控制命令测试
 - 新增 `tests/test_debug_ui.py`：验证控制命令写入活动 PTY、无 pdb 时只提示；全量 750 项 0 失败、14 跳过、无重试目标。远端 CI `41435693025` 三版本成功。
