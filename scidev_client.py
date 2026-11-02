@@ -126,6 +126,7 @@ from scidev_mcp_ui import MCPBrowserDialog
 from scidev_intel import IntelUnavailable, PythonIntel
 from scidev_sandbox import SandboxError
 from scidev_debug import DebugError, breakpoint_commands, build_debug_argv, command_line as debug_command_line
+from scidev_update_ui import UpdateDialog
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
 from scidev_verification import VerificationTracker
@@ -3420,6 +3421,9 @@ class ClientWindow(QMainWindow):
 
     def _show_pull_request(self) -> None:
         PullRequestDialog(self.project_root, self).exec()
+
+    def _show_update_dialog(self) -> None:
+        UpdateDialog.show_for_workspace(self.project_root, self)
 
     def _create_isolated_worktree(self) -> "ClientWindow | None":
         counter = getattr(self, "_gui_worktree_counter", 0) + 1
@@ -7824,6 +7828,10 @@ class ClientWindow(QMainWindow):
             if command == "errors" or "错误趋势" in command:
                 self.command_search.clear()
                 self._show_error_trends()
+                return
+            if command in {"update", "check update"} or "检查更新" in command:
+                self.command_search.clear()
+                self._show_update_dialog()
                 return
             if command == "pr" or "pull request" in command:
                 self.command_search.clear()

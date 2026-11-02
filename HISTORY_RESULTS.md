@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 13:20（Asia/Shanghai）· 桌面端检查更新对话框
+- 新增只读 Release 检查对话框和命令面板入口；只打开 Release 页面，不下载或执行安装包；检查失败显示警告。
+- 验证：4 项 Qt 测试通过。边界：同步网络检查可能阻塞 UI；未做真实 GitHub 网络 E2E。
+
 ## 2026-11-02 13:00（Asia/Shanghai）· CI 可选 PFX 签名
 - workflow 支持 secrets 提供的 PFX：导入证书、签名安装器、输出 `signed=true`，并在 job 结束前删除证书；没有 secrets 时继续 unsigned 构建。
 - 验证：静态 workflow 断言通过。边界：未用真实证书/远端 runner 跑过；PFX 密码只通过 step env 传给 PowerShell。
