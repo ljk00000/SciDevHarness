@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -147,6 +148,29 @@ class UpdateDialogTests(unittest.TestCase):
                 worker.run()
             self.assertEqual(checked, [])
             self.assertEqual(failed, ["offline"])
+
+
+    def test_async_check_opens_the_result_after_the_lookup(self) -> None:
+        opened: list[UpdateDialog] = []
+
+        def fake_exec(dialog: UpdateDialog) -> int:
+            opened.append(dialog)
+            return 0
+
+        with tempfile.TemporaryDirectory(prefix="scidev-check-async-", ignore_cleanup_errors=True) as temp:
+            with patch("scidev_update_ui.detect_repo", return_value="owner/repo"), patch(
+                "scidev_update_ui.check_for_update",
+                return_value=_info(),
+            ), patch.object(UpdateDialog, "exec", fake_exec):
+                worker = UpdateDialog.show_for_workspace_async(Path(temp))
+                self.assertIsNotNone(worker)
+                assert worker is not None
+                deadline = time.monotonic() + 5
+                while not opened and time.monotonic() < deadline:
+                    self.app.processEvents()
+                    time.sleep(0.01)
+                self.assertTrue(opened)
+                self.assertIn("0.2.0", opened[0].summary_label.text())
 
 
 if __name__ == "__main__":
