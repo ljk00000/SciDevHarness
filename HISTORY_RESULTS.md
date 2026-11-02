@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 13:30（Asia/Shanghai）· 只读 MCP stdio 服务端
+- 新增 MCP 服务端：只读暴露项目检索/读取工具，写文件和命令调用返回 `isError`；支持 initialize/tools/list/tools/call/ping/shutdown。
+- 验证：3 项 MCP 服务端测试通过；CLI `mcp-serve` 管道实测 initialize。边界：只读、无认证、仅 stdio；未接入 GUI。
+
 ## 2026-11-02 13:12（Asia/Shanghai）· 内置工具 schema 拆分
 - 工具 schema 从 `scidev_core.py` 移到 `scidev_tool_schema.py`，`CodingToolbox.definitions` 只做委托；浏览器/视觉工具仍按显式参数追加。
 - 验证：新增 schema 完整性、去重和条件开关测试；全量 735 项 0 失败、14 跳过、覆盖率 78%。边界：参数校验/执行仍耦合在 `CodingToolbox`。

@@ -28,6 +28,7 @@ from scidev_pr import (
 )
 from scidev_migrations import migrate_project
 from scidev_update import APP_VERSION, UpdateError, check_for_update, detect_repo, download_asset, launch_installer
+from scidev_mcp_server import MCPServer, serve_stdio
 from scidev_errors import classify_message
 from scidev_mcp import MCPError, MCPManager
 
@@ -238,6 +239,12 @@ def _parser() -> argparse.ArgumentParser:
     mcp_parser.add_argument("--prompt", nargs=2, metavar=("SERVER", "NAME"), help="render one prompt")
     mcp_parser.add_argument("--arg", action="append", default=[], metavar="KEY=VALUE", help="prompt argument")
     mcp_parser.add_argument("--json", action="store_true")
+    mcp_serve_parser = subparsers.add_parser(
+        "mcp-serve",
+        help="serve read-only project tools over MCP stdio",
+        description="Expose search/read/list/context/git-diff tools to another MCP client.",
+    )
+    mcp_serve_parser.add_argument("--workspace", default=".", help="project directory")
     return parser
 
 
@@ -412,6 +419,20 @@ def _eval_command(args: argparse.Namespace) -> int:
             if not item["success"]:
                 print(f"FAIL {item['task_id']}: {item['error'] or item['check_output'][:200]}")
     return 0 if report["failed"] == 0 else 1
+
+
+def _mcp_serve_command(args: argparse.Namespace) -> int:
+    workspace = Path(args.workspace).expanduser().resolve()
+    if not workspace.is_dir():
+        print(f"workspace is not a directory: {workspace}", file=sys.stderr)
+        return 2
+    try:
+        server = MCPServer(workspace)
+    except (OSError, ValueError) as exc:
+        print(f"cannot start MCP server: {exc}", file=sys.stderr)
+        return 1
+    serve_stdio(server, sys.stdin, sys.stdout)
+    return 0
 
 
 def _mcp_command(args: argparse.Namespace) -> int:
@@ -664,6 +685,8 @@ def main(argv: list[str] | None = None) -> int:
         return _update_command(args)
     if args.command == "mcp":
         return _mcp_command(args)
+    if args.command == "mcp-serve":
+        return _mcp_serve_command(args)
     if args.command != "exec":
         parser.print_help()
         return 2

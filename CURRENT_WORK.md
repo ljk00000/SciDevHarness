@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-02 13:30（Asia/Shanghai）· 只读 MCP stdio 服务端
+- 新增 `scidev_mcp_server.MCPServer` 和 CLI `mcp-serve --workspace`：JSON-RPC initialize/tools/list/tools/call/ping/shutdown。
+- 只暴露 search_code/read_file/list_files/get_project_context/git_diff；write_file/apply_patch/run_command 等直接拒绝。
+- 新增 3 项服务端测试；已用 CLI 管道实测 initialize 返回。
+
 ## 2026-11-02 13:12（Asia/Shanghai）· 内置工具 schema 拆分
 - 将 `CodingToolbox.definitions` 的 9 个内置工具 schema 提取到 `scidev_tool_schema.py`，core 减少约 180 行；browser/visual 条件工具仍由参数控制。
 - 新增 1 项 schema 完整性/条件开关测试；执行逻辑仍在 `CodingToolbox`，这不是完整工具注册表。
