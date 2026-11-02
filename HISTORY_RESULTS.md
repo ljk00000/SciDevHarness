@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 22:10（Asia/Shanghai）· 拆分 EventLedger 与 runtime helpers
+- 审计日志/会话索引与进程级辅助函数从核心单体拆出，核心保留同名导入以兼容 CLI/客户端。
+- 验证：`scidev_core`、`scidev_ledger`、`scidev_runtime` 可导入；core/context/cli 190 项测试通过；全量 757 项 0 失败、14 跳过、覆盖率 78%、无重试目标；mypy 覆盖 29 个源文件。边界：`scidev_client.py` 仍是 7k 行级单体；只在 Windows CI 验证。
+
 ## 2026-11-02 21:40（Asia/Shanghai）· 更细的下载分块
 - 下载读取块从 1 MiB 降到 64 KiB，提升进度刷新和取消检查的响应速度。
 - 验证：更新/下载 22 项测试通过；全量 757 项 0 失败、14 跳过、覆盖率 78%、无重试目标；远端 Windows CI run `41455453012` 三版本成功。边界：阻塞中的单次 `read()` 仍不可取消。
