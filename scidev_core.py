@@ -1525,6 +1525,8 @@ class SummarySettings:
     max_task_tokens: int = 0
     network_policy: str = "ask"
     allowed_commands: tuple[str, ...] = ()
+    sandbox_backend: str = "local"
+    sandbox_image: str = ""
 
     @classmethod
     def config_path(cls, project_root: Path) -> Path:
@@ -1621,11 +1623,19 @@ class SummarySettings:
             max_task_tokens = max(0, min(10_000_000, int(max_task_tokens)))
         except (TypeError, ValueError, OverflowError):
             max_task_tokens = cls.max_task_tokens
+        sandbox_backend = str(
+            os.getenv("SCIDEV_SANDBOX_BACKEND") or data.get("sandbox_backend", cls.sandbox_backend)
+        ).strip().lower()
+        if sandbox_backend not in {"local", "docker"}:
+            sandbox_backend = "local"
+        sandbox_image = str(
+            os.getenv("SCIDEV_SANDBOX_IMAGE") or data.get("sandbox_image", cls.sandbox_image)
+        ).strip()[:200]
         return cls(bool(enabled), model, max_tokens, context_chars, retries, interval_turns, instruction,
                    bool(memory_enabled), memory_results, memory_context_chars,
                    acceptance_mode, acceptance_model, bool(multi_agent_enabled), multi_agent_model,
                    context_window_tokens, execution_mode, max_agent_turns, max_task_tokens,
-                   network_policy, allowed_commands)
+                   network_policy, allowed_commands, sandbox_backend, sandbox_image)
 
     def save(self, project_root: Path) -> None:
         path = self.config_path(project_root)
@@ -1653,6 +1663,8 @@ class SummarySettings:
                     "allowed_commands": list(self.allowed_commands),
                     "max_agent_turns": max(1, min(64, int(self.max_agent_turns))),
                     "max_task_tokens": max(0, min(10_000_000, int(self.max_task_tokens))),
+                    "sandbox_backend": "docker" if self.sandbox_backend == "docker" else "local",
+                    "sandbox_image": self.sandbox_image.strip()[:200],
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -2737,6 +2749,10 @@ class CodingToolbox:
             NetworkPolicy.parse(policy, self.execution_policy.network_policy),
             self.execution_policy.allowed_commands,
         )
+
+    def set_sandbox(self, backend: str, image: str = "") -> None:
+        """Switch command isolation for the next call; invalid choices fail closed."""
+        self.sandbox = DockerSandbox.from_environment(backend=backend, image=image)
 
     def set_allowed_commands(self, commands: object) -> None:
         """Replace the explicit command allowlist without changing other policy."""
@@ -4526,8 +4542,8 @@ class CodingAgent:
             execution_mode=self.summary_settings.execution_mode,
             network_policy=self.summary_settings.network_policy,
             allowed_commands=self.summary_settings.allowed_commands,
-            sandbox_backend=sandbox_backend,
-            sandbox_image=sandbox_image,
+            sandbox_backend=sandbox_backend or self.summary_settings.sandbox_backend,
+            sandbox_image=sandbox_image or self.summary_settings.sandbox_image,
         )
         self.toolbox.cancel_event = self._cancel
         self.last_checkpoint: WorkspaceCheckpoint | None = None

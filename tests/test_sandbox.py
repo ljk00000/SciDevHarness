@@ -5,8 +5,26 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from scidev_core import CodingToolbox, EventLedger, PermanentError
+from scidev_core import CodingToolbox, EventLedger, PermanentError, SummarySettings
 from scidev_sandbox import DockerSandbox, SandboxError
+
+
+class SandboxSettingsTests(unittest.TestCase):
+    def test_settings_round_trip_and_unknown_backend_falls_back_to_local(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-sandbox-settings-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            settings = SummarySettings(enabled=False, sandbox_backend="docker", sandbox_image="tools:1")
+            settings.save(root)
+            with patch.dict(
+                "os.environ", {"SCIDEV_SANDBOX_BACKEND": "", "SCIDEV_SANDBOX_IMAGE": ""}, clear=False,
+            ):
+                loaded = SummarySettings.load(root)
+                self.assertEqual(loaded.sandbox_backend, "docker")
+                self.assertEqual(loaded.sandbox_image, "tools:1")
+                (root / ".research" / "settings.json").write_text(
+                    '{"sandbox_backend": "firecracker", "sandbox_image": "x"}', encoding="utf-8",
+                )
+                self.assertEqual(SummarySettings.load(root).sandbox_backend, "local")
 
 
 class DockerSandboxTests(unittest.TestCase):

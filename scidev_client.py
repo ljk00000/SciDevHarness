@@ -124,6 +124,7 @@ from scidev_pr_ui import PullRequestDialog
 from scidev_mcp import MCPManager
 from scidev_mcp_ui import MCPBrowserDialog
 from scidev_intel import IntelUnavailable, PythonIntel
+from scidev_sandbox import SandboxError
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
 from scidev_verification import VerificationTracker
@@ -5335,6 +5336,40 @@ class ClientWindow(QMainWindow):
         settings_layout.addWidget(self.context_window_label, 21, 0)
         settings_layout.addWidget(self.context_window_spin, 21, 1)
         settings_layout.addWidget(self.context_window_note, 22, 0, 1, 4)
+        self.sandbox_backend_label = QLabel("命令沙箱")
+        self.sandbox_backend_combo = QComboBox()
+        self.sandbox_backend_combo.setMinimumContentsLength(10)
+        self.sandbox_backend_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.sandbox_backend_combo.addItem("本机（无 OS 沙箱）", "local")
+        self.sandbox_backend_combo.addItem("Docker（仅工作区，默认断网）", "docker")
+        sandbox_index = self.sandbox_backend_combo.findData(self.summary_settings.sandbox_backend)
+        self.sandbox_backend_combo.setCurrentIndex(max(0, sandbox_index))
+        self.sandbox_backend_combo.setToolTip(
+            "本机：命令以当前用户权限运行，仅受策略/审批约束。\n"
+            "Docker：命令在容器内运行，只挂载工作区；需要本机 Docker 和包含项目工具链的镜像。"
+        )
+        self.sandbox_backend_combo.currentIndexChanged.connect(lambda _index: self._persist_summary_settings())
+        settings_layout.addWidget(self.sandbox_backend_label, 24, 0)
+        settings_layout.addWidget(self.sandbox_backend_combo, 24, 1, 1, 3)
+        self.sandbox_image_label = QLabel("沙箱镜像")
+        self.sandbox_image_edit = QLineEdit()
+        self.sandbox_image_edit.setPlaceholderText("例如 scidev-tools:latest")
+        self.sandbox_image_edit.setText(self.summary_settings.sandbox_image)
+        self.sandbox_image_edit.setToolTip(
+            "Docker 后端必填；镜像必须自带项目解释器、依赖和测试工具。修改后对新命令生效。"
+        )
+        self.sandbox_image_edit.editingFinished.connect(lambda: self._persist_summary_settings())
+        settings_layout.addWidget(self.sandbox_image_label, 25, 0)
+        settings_layout.addWidget(self.sandbox_image_edit, 25, 1, 1, 3)
+        self.sandbox_note = QLabel(
+            "Docker 沙箱会拒绝网络（除非宿主网络策略为 allow 且显式设 bridge）、丢弃 capabilities，"
+            "并限制 pids/内存/CPU；daemon 或镜像不可用时命令直接失败，不会回退到本机。"
+        )
+        self.sandbox_note.setObjectName("Hint")
+        self.sandbox_note.setWordWrap(True)
+        settings_layout.addWidget(self.sandbox_note, 26, 0, 1, 4)
         self.summary_settings_scroll = QScrollArea()
         self.summary_settings_scroll.setObjectName("SettingsScroll")
         self.summary_settings_scroll.setWidgetResizable(True)
@@ -5908,6 +5943,13 @@ class ClientWindow(QMainWindow):
         )
         self.summary_settings.max_agent_turns = self.max_agent_turns_spin.value()
         self.summary_settings.max_task_tokens = self.max_task_tokens_spin.value()
+        sandbox_backend = str(self.sandbox_backend_combo.currentData() or "local").strip().lower()
+        sandbox_image = self.sandbox_image_edit.text().strip()[:200]
+        if sandbox_backend == "docker" and not sandbox_image:
+            self._append_log("Docker 沙箱需要填写镜像；设置未保存")
+            return
+        self.summary_settings.sandbox_backend = sandbox_backend
+        self.summary_settings.sandbox_image = sandbox_image
         self.summary_settings.acceptance_mode = SemanticAcceptance.mode(self.acceptance_mode_combo.currentData())
         self.summary_settings.acceptance_model = self.acceptance_model_edit.text().strip()[:160]
         self.summary_settings.multi_agent_enabled = self.multi_agent_enabled_checkbox.isChecked()
@@ -5919,6 +5961,13 @@ class ClientWindow(QMainWindow):
             self.agent.toolbox.set_execution_mode(self.summary_settings.execution_mode)
             self.agent.toolbox.set_network_policy(self.summary_settings.network_policy)
             self.agent.toolbox.set_allowed_commands(self.summary_settings.allowed_commands)
+            try:
+                self.agent.toolbox.set_sandbox(
+                    self.summary_settings.sandbox_backend,
+                    self.summary_settings.sandbox_image,
+                )
+            except SandboxError as exc:
+                self._append_log(f"命令沙箱设置未生效: {exc}")
             self._render_context_meter()
             state = self._summary_status_text()
             compact_state = (

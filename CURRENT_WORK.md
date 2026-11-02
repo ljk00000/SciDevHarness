@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-02 11:35（Asia/Shanghai）· 沙箱设置进入桌面前端
+- `SummarySettings` 新增 `sandbox_backend`/`sandbox_image` 并持久化；Agent 构造和运行中切换都读取该配置。
+- Agent 设置新增“命令沙箱/沙箱镜像”：本机或 Docker；Docker 镜像为空时拒绝保存，切换后对新命令生效。
+- 新增 1 项设置往返/非法后端回退测试；未做 Docker 真实项目 E2E。
+
 ## 2026-11-01 15:25（Asia/Shanghai）· CLI 任务预算参数
 - `exec --max-turns N`（1–64）和 `--max-tokens N` 覆盖本次任务的轮次/token 上限，不写回项目设置。
 - 新增 1 项 CLI 预算贯通测试。

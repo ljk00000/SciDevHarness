@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 11:35（Asia/Shanghai）· 沙箱设置进入桌面前端
+- `SummarySettings` 持久化 `sandbox_backend`/`sandbox_image`，Agent 构造和设置保存时应用；桌面端新增命令沙箱/镜像控件，Docker 镜像为空拒绝保存。
+- 验证：新增 1 项设置往返/非法后端回退测试。边界：未做 Docker 真实项目 E2E；设置切换只影响后续命令。
+
 ## 2026-11-01 15:25（Asia/Shanghai）· CLI 任务预算参数
 - 新增 `exec --max-turns`/`--max-tokens`，直接覆盖 `SummarySettings` 的本次任务上限，不持久化。
 - 验证：CLI 预算贯通测试通过。边界：仍是 token 估算/轮次硬限，不是货币计费。
