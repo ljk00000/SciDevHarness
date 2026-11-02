@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-02 12:20（Asia/Shanghai）· F5/Pdb 调试入口
+- 新增 `scidev_debug.py`：选择项目 `.venv` 解释器，校验 `.py` 和工作区边界，生成 `python -m pdb <相对路径>`。
+- 桌面端 F5、编辑器“更多”菜单和命令面板 `> debug`/`> 调试` 在集成终端启动 pdb；终端忙时拒绝，未保存文件提示先保存。
+- 新增 3 项纯逻辑测试；这是终端式 pdb，不是 DAP 图形调试器。全量 729 项 0 失败、14 跳过、覆盖率 78%；顺带修复 `showEvent` 在无 `screenChanged` 的 window handle 上抛 `AttributeError` 的问题。
+
 ## 2026-11-02 12:00（Asia/Shanghai）· CLI 结果原子落盘
 - `exec --result-file PATH` 把最终 JSON 原子写入工作区内文件；路径解析后必须位于工作区，越界拒绝并使成功任务返回 1。
 - 成功/失败/取消都写同一份结果；写入失败打印错误，不掩盖原任务状态。

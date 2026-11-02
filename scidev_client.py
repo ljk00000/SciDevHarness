@@ -125,6 +125,7 @@ from scidev_mcp import MCPManager
 from scidev_mcp_ui import MCPBrowserDialog
 from scidev_intel import IntelUnavailable, PythonIntel
 from scidev_sandbox import SandboxError
+from scidev_debug import DebugError, build_debug_argv, command_line as debug_command_line
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
 from scidev_verification import VerificationTracker
@@ -3004,6 +3005,10 @@ class ClientWindow(QMainWindow):
         self.definition_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self.definition_shortcut.activated.connect(self._go_to_definition)
 
+        self.debug_shortcut = QShortcut(QKeySequence("F5"), self)
+        self.debug_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.debug_shortcut.activated.connect(self._debug_current_file)
+
         self.references_shortcut = QShortcut(QKeySequence("Shift+F12"), self)
         self.references_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self.references_shortcut.activated.connect(self._find_symbol_references)
@@ -3234,7 +3239,9 @@ class ClientWindow(QMainWindow):
         handle = self.windowHandle()
         if handle is not None and handle is not self._screen_window_handle:
             self._screen_window_handle = handle
-            handle.screenChanged.connect(self._on_screen_changed)
+            screen_changed = getattr(handle, "screenChanged", None)
+            if screen_changed is not None:
+                screen_changed.connect(self._on_screen_changed)
         screen = handle.screen() if handle is not None else self.screen()
         self._on_screen_changed(screen)
 
@@ -3807,6 +3814,7 @@ class ClientWindow(QMainWindow):
         editor_menu.addAction("文件大纲", self._show_outline)
         editor_menu.addAction("问题", lambda: self._toggle_bottom_panel(2))
         editor_menu.addAction("查看当前文件差异", self._show_current_diff)
+        editor_menu.addAction("调试当前 Python 文件 (F5)", self._debug_current_file)
         editor_menu.addSeparator()
         editor_menu.addAction("在右侧分栏打开", self._toggle_editor_split)
         more.setMenu(editor_menu)
@@ -7821,6 +7829,10 @@ class ClientWindow(QMainWindow):
                 self.command_search.clear()
                 self._show_pull_request()
                 return
+            if "debug" in command or "调试" in command or "pdb" in command:
+                self.command_search.clear()
+                self._debug_current_file()
+                return
             if "open folder" in command or "打开文件夹" in command or "workspace" in command:
                 self.command_search.clear()
                 self._choose_workspace()
@@ -8295,6 +8307,27 @@ class ClientWindow(QMainWindow):
             self.bottom_tabs.setVisible(not self.bottom_tabs.isVisible())
         if self.bottom_tabs.isVisible() and tab_index == 1:
             self.terminal_input.setFocus()
+
+    def _debug_current_file(self) -> None:
+        if self.current_file is None:
+            self._append_log("请先打开一个 Python 文件，再按 F5 调试")
+            return
+        if self.terminal_pty is not None and self.terminal_pty.is_alive():
+            self._append_log("终端已有正在运行的程序；先停止它再启动 pdb")
+            return
+        if self.terminal_process is not None and self.terminal_process.exit_code() is None:
+            self._append_log("终端已有正在运行的程序；先停止它再启动 pdb")
+            return
+        try:
+            argv = build_debug_argv(self.project_root, self.current_file)
+        except DebugError as exc:
+            self._append_log(f"无法启动 pdb: {exc}")
+            return
+        editor = self._active_editor()
+        if editor is not None and editor.document().isModified():
+            self._append_log("提示：pdb 运行磁盘版本，当前文件有未保存修改")
+        self.terminal_input.setText(debug_command_line(argv))
+        self._run_terminal_command()
 
     def _run_terminal_command(self) -> None:
         command = self.terminal_input.text().strip()

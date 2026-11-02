@@ -144,7 +144,8 @@ python scidev_cli.py migrate --workspace .
 - 界面方案：Studio、Paper、Focus 三套可切换并记住选择的外观/布局配置
 - 工作台：响应式分栏、按主题记住拖动宽度；Agent 设置独立滚动，欢迎页不再伪装成代码，打开文件后自动隐藏欢迎标签
 - 设置页：左下角齿轮 / `Ctrl+,` / `> settings` 打开；分类与关键词搜索、只看已修改、单项及整体恢复默认。主题、强调色、字体/字重/字号、缩放、密度、侧栏尺寸和编辑器显示即时应用并保存到本机；Agent 配置仍复用项目设置。
-- 代码高亮：按文件类型区分 Python、HTML（含 CSS/JavaScript）、JS/TS、CSS、JSON、Markdown 和 YAML；属于词法高亮。Python 文件使用常驻 Ruff LSP 进程异步诊断，把 diagnostics 放进“问题”面板，双击可跳到行列；同一窗口复用进程并合并连续输入。TypeScript/JavaScript 文件在检测到 `typescript-language-server`（或设置 `SCIDEV_TYPESCRIPT_LSP` 命令）时使用独立常驻 LSP，Python/TS 进程互不重启。`Ctrl+Space` 用本机 Jedi 显示 Python 补全，`Ctrl+F12` 跳转到工作区内定义。这是本地 Python/可选 TypeScript 智能，不是完整 IDE 语言服务（无重命名/跨文件引用/调试器）。
+- 代码高亮：按文件类型区分 Python、HTML（含 CSS/JavaScript）、JS/TS、CSS、JSON、Markdown 和 YAML；属于词法高亮。Python 文件使用常驻 Ruff LSP 进程异步诊断，把 diagnostics 放进“问题”面板，双击可跳到行列；同一窗口复用进程并合并连续输入。TypeScript/JavaScript 文件在检测到 `typescript-language-server`（或设置 `SCIDEV_TYPESCRIPT_LSP` 命令）时使用独立常驻 LSP，Python/TS 进程互不重启。`Ctrl+Space` 用本机 Jedi 显示 Python 补全，`Ctrl+F12` 跳转到工作区内定义。这是本地 Python/可选 TypeScript 智能，不是完整 IDE 语言服务（无重命名/跨文件引用；F5 在集成终端启动标准库 `pdb`，不是 DAP 图形调试器）。
+- 调试：打开 `.py` 后按 `F5`，或命令面板输入 `> debug`/`> 调试`，使用项目 `.venv` 解释器在集成终端运行 `python -m pdb <相对路径>`；可在终端里输入 `b`、`n`、`s`、`c` 等 pdb 命令。未保存修改会提示先保存；终端已有程序时拒绝启动。没有断点图形界面、变量面板或调用栈视图。
 - 错误趋势：命令面板输入 `> errors` 打开只读面板，统计 1–90 天内任务开始/完成/失败、成功率、按错误分类的分布、可重试标记和每日失败 sparkline；数据来自本机 `.research/runs.db`，不上传。
 - 文件打开：资源树或编辑器标签右键 HTML →“在浏览器中打开”，无需服务器即可查看本地网页；其他文件可“使用默认程序打开”。双击仍进入编辑器；外部程序读取磁盘版本，未保存修改请先 `Ctrl+S`。
 - 版本树：专注画布、可折叠节点详情和 Agent 面板，2.5D 卡片与动态连线；尝试分支可自由拖动并记住位置
