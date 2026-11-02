@@ -3,7 +3,7 @@
 ## 2026-11-02 14:30（Asia/Shanghai）· 跨进程 Git 写锁
 - 新增 `scidev_filelock.FileLock`（Windows `msvcrt` / POSIX `flock`），10 秒等待；`GitManager` 只对 add/commit/reset/checkout 等写命令加 `.git/scidev-git.lock`（worktree fallback `.research/locks`）。
 - 锁超时转为明确的 `PermanentError`；读命令不加锁，避免阻塞 UI 状态刷新。
-- 新增 2 项测试：子进程持锁时父进程超时、写命令分类；仍未做跨进程 add+commit 整段原子化。
+- 新增 2 项测试：子进程持锁时父进程超时、写命令分类；仍未做跨进程 add+commit 整段原子化。远端 CI `41401974331` 三版本全绿。
 
 ## 2026-11-02 14:10（Asia/Shanghai）· 修复 Windows CI 发布暂存失败
 - `896ce5c` 的 Windows CI 三版本均失败：`scripts/stage_release.ps1` 硬编码模块清单漏掉 `scidev_sandbox.py`，导致 staged client/deploy dry-run `ModuleNotFoundError`。
