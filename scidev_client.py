@@ -125,7 +125,7 @@ from scidev_mcp import MCPManager
 from scidev_mcp_ui import MCPBrowserDialog
 from scidev_intel import IntelUnavailable, PythonIntel
 from scidev_sandbox import SandboxError
-from scidev_debug import DebugError, build_debug_argv, command_line as debug_command_line
+from scidev_debug import DebugError, breakpoint_commands, build_debug_argv, command_line as debug_command_line
 from scidev_environment import APPROVAL_EXPLANATION, APPROVAL_PURPOSE, ProjectEnvironmentInspector
 from scidev_usage import ModelRequestUsage, estimate_text_tokens, format_token_count
 from scidev_verification import VerificationTracker
@@ -8328,6 +8328,23 @@ class ClientWindow(QMainWindow):
             self._append_log("提示：pdb 运行磁盘版本，当前文件有未保存修改")
         self.terminal_input.setText(debug_command_line(argv))
         self._run_terminal_command()
+        current_line = editor.textCursor().blockNumber() + 1 if editor is not None else 1
+        if current_line > 1 and self.terminal_pty is not None:
+            try:
+                commands = breakpoint_commands(str(argv[-1]), current_line)
+            except DebugError:
+                return
+            QTimer.singleShot(450, lambda: self._send_debug_startup(commands))
+
+    def _send_debug_startup(self, commands: str) -> None:
+        pty = self.terminal_pty
+        if pty is None or not pty.is_alive():
+            return
+        try:
+            pty.write(commands.replace("\n", "\r\n"))
+            self._append_terminal_output(commands)
+        except PTYUnavailable as exc:
+            self._append_log(f"无法向 pdb 发送断点命令: {exc}")
 
     def _run_terminal_command(self) -> None:
         command = self.terminal_input.text().strip()

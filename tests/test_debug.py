@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from scidev_debug import DebugError, build_debug_argv, command_line
+from scidev_debug import DebugError, breakpoint_commands, build_debug_argv, command_line
 
 
 class DebugLauncherTests(unittest.TestCase):
@@ -45,6 +45,14 @@ class DebugLauncherTests(unittest.TestCase):
         rendered = command_line([r"C:\Program Files\Python\python.exe", "-m", "pdb", "my app.py"])
         self.assertIn('"C:\\Program Files\\Python\\python.exe"', rendered)
         self.assertIn('"my app.py"', rendered)
+
+    def test_breakpoint_commands_target_the_cursor_line_and_continue(self) -> None:
+        self.assertEqual(breakpoint_commands("src/app.py", 12), "b src/app.py:12\nc\n")
+        self.assertEqual(breakpoint_commands("app.py", 0), "b app.py:1\nc\n")
+        with self.assertRaises(DebugError):
+            breakpoint_commands("", 3)
+        with self.assertRaises(DebugError):
+            breakpoint_commands("app.py", "not-a-line")
 
 
 if __name__ == "__main__":

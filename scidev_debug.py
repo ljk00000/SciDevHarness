@@ -51,3 +51,15 @@ def command_line(argv: list[str]) -> str:
     if os.name == "nt":
         return subprocess.list2cmdline(argv)
     return shlex.join(argv)
+
+
+def breakpoint_commands(relative_path: str, line: int) -> str:
+    """pdb input that breaks at a source line and starts running."""
+    text = str(relative_path or "").replace("\r", "").replace("\n", "").strip()
+    if not text:
+        raise DebugError("断点路径不能为空")
+    try:
+        number = max(1, int(line))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise DebugError("断点行号无效") from exc
+    return f"b {text}:{number}\nc\n"
