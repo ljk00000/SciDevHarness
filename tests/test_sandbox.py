@@ -52,8 +52,25 @@ class DockerSandboxTests(unittest.TestCase):
         self.assertIn("no-new-privileges", argv)
         self.assertIn("--pids-limit", argv)
         self.assertIn("--memory", argv)
+        self.assertIn("--name", argv)
+        self.assertIn("scidev-", argv[argv.index("--name") + 1])
         self.assertIn(f"{workspace}:/workspace:rw", argv)
         self.assertEqual(argv[-4:], ["scidev-tools:1", "sh", "-lc", "python -m pytest -q"])
+
+    def test_cleanup_force_removes_only_the_started_container(self) -> None:
+        calls: list[list[str]] = []
+        sandbox = DockerSandbox(
+            image="scidev-tools:1",
+            docker_path="docker",
+            checker=lambda: "24.0",
+            cleanup_runner=calls.append,
+        )
+        argv = sandbox.wrap("pytest", Path("C:/work"))
+        name = argv[argv.index("--name") + 1]
+        sandbox.cleanup()
+        self.assertEqual(calls, [["docker", "rm", "-f", name]])
+        sandbox.cleanup()
+        self.assertEqual(len(calls), 1)
 
     def test_missing_daemon_raises_instead_of_falling_back(self) -> None:
         sandbox = DockerSandbox(image="img", docker_path="docker", checker=lambda: (_ for _ in ()).throw(SandboxError("no daemon")))

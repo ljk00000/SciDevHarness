@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-02 13:45（Asia/Shanghai）· Docker 超时清理与 Windows-only 声明
+- Docker 容器加 `--name scidev-<随机>`；超时/取消时调用 `docker rm -f` 清理，正常结束仍依赖 `--rm`。
+- 新增 1 项 cleanup 测试；`pyproject.toml` 明确 Windows classifier，README 改为“仅支持 Windows 桌面”。
+
 ## 2026-11-02 13:30（Asia/Shanghai）· 只读 MCP stdio 服务端
 - 新增 `scidev_mcp_server.MCPServer` 和 CLI `mcp-serve --workspace`：JSON-RPC initialize/tools/list/tools/call/ping/shutdown。
 - 只暴露 search_code/read_file/list_files/get_project_context/git_diff；write_file/apply_patch/run_command 等直接拒绝。

@@ -20,7 +20,7 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 ## 启动
 
 推荐直接双击 `start_client.bat`，它会校验并使用项目自己的 `.venv`；只有虚拟环境或 PySide6 Essentials 版本不符合要求时才自动创建/更新环境。若已有 `.venv` 使用不兼容的 Python，启动器会报错但不会删除或覆盖它。
-客户端目前以 Windows 桌面为首要支持平台，需要 Python 3.12–3.14、Git CLI；GitHub Actions 配置为对 Python 3.12、3.13 和 3.14 分别执行安装和回归检查。
+客户端当前仅支持 Windows 桌面，需要 Python 3.12–3.14、Git CLI；GitHub Actions 配置为对 Python 3.12、3.13 和 3.14 分别执行安装和回归检查。
 在资源管理器的项目栏点“⋯”或按 `Ctrl+K`、`Ctrl+O` 可在新窗口打开其他文件夹；之后启动会恢复最近使用的工作区。命令行也可指定：
 
 ```powershell

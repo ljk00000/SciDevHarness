@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 import os
 import shutil
 import subprocess
-from typing import Callable
+from typing import Any, Callable
+import uuid
 
 
 class SandboxError(RuntimeError):
@@ -27,7 +28,9 @@ class DockerSandbox:
     pids_limit: int = 256
     docker_path: str = ""
     checker: Callable[[], str] | None = None
+    cleanup_runner: Callable[[list[str]], Any] | None = None
     _checked: str = field(default="", init=False, repr=False)
+    _container_name: str = field(default="", init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.image = str(self.image or "").strip()
@@ -88,11 +91,14 @@ class DockerSandbox:
     def wrap(self, command: str, workspace) -> list[str]:
         self.ensure_available()
         docker = self._docker()
+        self._container_name = f"scidev-{uuid.uuid4().hex[:12]}"
         argv = [
             docker,
             "run",
             "--rm",
             "--init",
+            "--name",
+            self._container_name,
             "--network",
             self.network,
             "--cap-drop",
@@ -132,3 +138,26 @@ class DockerSandbox:
     @property
     def name(self) -> str:
         return f"docker:{self.image}"
+
+
+    def cleanup(self) -> None:
+        """Force-remove the last container after timeout/cancel; best effort."""
+        container = self._container_name
+        self._container_name = ""
+        if not container:
+            return
+        try:
+            docker = self._docker()
+            runner = self.cleanup_runner
+            if runner is None:
+                subprocess.run(
+                    [docker, "rm", "-f", container],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            else:
+                runner([docker, "rm", "-f", container])
+        except (OSError, subprocess.SubprocessError, SandboxError):
+            return

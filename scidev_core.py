@@ -3579,6 +3579,8 @@ class CodingToolbox:
             process = self._active_command
         if process is not None and process.poll() is None:
             terminate_process_tree(process)
+            if self.sandbox is not None:
+                self.sandbox.cleanup()
 
     def reset_command_cancel(self) -> None:
         """Clear a previous task's cancellation before a new task starts."""
@@ -3783,6 +3785,8 @@ class CodingToolbox:
                 output_bytes, _ = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 terminate_process_tree(process)
+                if self.sandbox is not None:
+                    self.sandbox.cleanup()
                 output_bytes, _ = process.communicate()
                 output = decode_process_output(output_bytes or b"")
                 self._finish_command_execution(

@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 13:45（Asia/Shanghai）· Docker 超时清理与 Windows-only 声明
+- 容器带唯一 name；超时/取消时 `docker rm -f` 清理，normal path 继续用 `--rm`；cleanup 失败只忽略。
+- 验证：cleanup 测试通过。边界：未在真实 Docker daemon 上触发超时；仅清理最后一个已启动容器。包装元数据明确 Windows-only。
+
 ## 2026-11-02 13:30（Asia/Shanghai）· 只读 MCP stdio 服务端
 - 新增 MCP 服务端：只读暴露项目检索/读取工具，写文件和命令调用返回 `isError`；支持 initialize/tools/list/tools/call/ping/shutdown。
 - 验证：3 项 MCP 服务端测试通过；CLI `mcp-serve` 管道实测 initialize。边界：只读、无认证、仅 stdio；未接入 GUI。
