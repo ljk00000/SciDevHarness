@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 15:30（Asia/Shanghai）· 桌面端后台下载更新包
+- 更新对话框可后台下载并校验 Release 资产，完成后只报告路径；下载中阻止关闭，未执行安装包。
+- 验证：按钮状态测试通过；下载复用已有 `download_asset`。边界：未做真实大文件下载/取消 UI；下载线程不能中途取消。
+
 ## 2026-11-02 14:30（Asia/Shanghai）· 跨进程 Git 写锁
 - 写命令通过 `.git/scidev-git.lock`（worktree fallback `.research/locks`）串行化，防止两个客户端进程同时操作同一仓库索引；读命令保持并发；`commit_paths` 用可重入 session 覆盖整段 add+commit。
 - 验证：子进程持锁超时、命令分类和 session 可重入测试通过；全量 743 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `41404577147` 三个 Python 版本全部 success。边界：其他多命令 Git 序列不保证原子；未在双进程真实任务中 E2E。

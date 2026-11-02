@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-02 15:30（Asia/Shanghai）· 桌面端后台下载更新包
+- `UpdateDialog` 新增“下载并校验安装包”：选择保存路径后由 `QThread` 调用 `download_asset`，校验 SHA-256；完成只显示路径，不执行。
+- 下载中禁用关闭/按钮；不支持没有资产地址的 Release；新增 1 项按钮状态测试。
+
 ## 2026-11-02 14:30（Asia/Shanghai）· 跨进程 Git 写锁
 - 新增 `scidev_filelock.FileLock`（Windows `msvcrt` / POSIX `flock`），10 秒等待；`GitManager` 只对 add/commit/reset/checkout 等写命令加 `.git/scidev-git.lock`（worktree fallback `.research/locks`）。
 - 锁超时转为明确的 `PermanentError`；读命令不加锁，避免阻塞 UI 状态刷新。

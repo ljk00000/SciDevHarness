@@ -4,11 +4,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QStandardPaths, QThread, QUrl, Signal
+from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -16,13 +17,38 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from scidev_update import UpdateError, UpdateInfo, check_for_update, detect_repo
+from scidev_update import UpdateError, UpdateInfo, check_for_update, detect_repo, download_asset
+
+
+class _DownloadWorker(QThread):
+    completed = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, info: UpdateInfo, destination: Path, overwrite: bool, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.info = info
+        self.destination = destination
+        self.overwrite = overwrite
+
+    def run(self) -> None:
+        try:
+            result = download_asset(
+                self.info,
+                self.destination,
+                overwrite=self.overwrite,
+                timeout=120.0,
+            )
+        except (UpdateError, OSError, ValueError) as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.completed.emit(str(result.path))
 
 
 class UpdateDialog(QDialog):
     def __init__(self, info: UpdateInfo, parent: QWidget | None = None):
         super().__init__(parent)
         self.info = info
+        self._worker: _DownloadWorker | None = None
         self.setWindowTitle("检查更新")
         self.setMinimumWidth(520)
         layout = QVBoxLayout(self)
@@ -51,6 +77,13 @@ class UpdateDialog(QDialog):
         self.open_button.setEnabled(bool(info.url))
         self.open_button.clicked.connect(self._open_release)
         layout.addWidget(self.open_button)
+        self.download_button = QPushButton("下载并校验安装包")
+        self.download_button.setEnabled(bool(info.asset_url and info.asset_name))
+        self.download_button.clicked.connect(self._choose_download)
+        layout.addWidget(self.download_button)
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
@@ -58,6 +91,71 @@ class UpdateDialog(QDialog):
     def _open_release(self) -> None:
         if self.info.url:
             QDesktopServices.openUrl(QUrl(self.info.url))
+
+    def _choose_download(self) -> None:
+        if not self.info.asset_url or not self.info.asset_name:
+            return
+        downloads = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DownloadLocation,
+        )
+        default = Path(downloads or str(Path.home())) / self.info.asset_name
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存并校验安装包",
+            str(default),
+            "安装包 (*.exe *.msi);;所有文件 (*)",
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        overwrite = destination.exists()
+        if overwrite:
+            answer = QMessageBox.question(
+                self,
+                "覆盖已有文件",
+                f"目标已存在，是否覆盖？\n{destination}",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._start_download(destination, overwrite)
+
+    def _start_download(self, destination: Path, overwrite: bool) -> None:
+        self.download_button.setEnabled(False)
+        self.open_button.setEnabled(False)
+        self.buttons.setEnabled(False)
+        self.status_label.setText("下载中并校验 SHA-256；完成前不会执行安装包。")
+        worker = _DownloadWorker(self.info, destination, overwrite, self)
+        self._worker = worker
+        worker.completed.connect(self._download_completed)
+        worker.failed.connect(self._download_failed)
+        worker.finished.connect(self._download_finished)
+        worker.start()
+
+    def _download_completed(self, path: str) -> None:
+        self.status_label.setText(f"已下载并校验：{path}")
+
+    def _download_failed(self, message: str) -> None:
+        self.status_label.setText("下载失败，未执行任何文件。")
+        QMessageBox.warning(self, "下载失败", message)
+
+    def _download_finished(self) -> None:
+        self._worker = None
+        self.download_button.setEnabled(bool(self.info.asset_url and self.info.asset_name))
+        self.open_button.setEnabled(bool(self.info.url))
+        self.buttons.setEnabled(True)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            QMessageBox.information(self, "正在下载", "下载和校验完成前不能关闭这个窗口。")
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def reject(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            QMessageBox.information(self, "正在下载", "下载和校验完成前不能关闭这个窗口。")
+            return
+        super().reject()
 
     @classmethod
     def show_for_workspace(

@@ -50,6 +50,19 @@ class UpdateDialogTests(unittest.TestCase):
         self.assertIn("已是最新", dialog.summary_label.text())
         dialog.close()
 
+    def test_download_requires_a_release_asset(self) -> None:
+        info = _info()
+        info = UpdateInfo(
+            current=info.current,
+            latest=info.latest,
+            url=info.url,
+            published_at=info.published_at,
+            notes=info.notes,
+        )
+        dialog = UpdateDialog(info)
+        self.assertFalse(dialog.download_button.isEnabled())
+        dialog.close()
+
     def test_workspace_checker_is_injected_and_dialogs_are_not_modal(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-update-ui-", ignore_cleanup_errors=True) as temp:
             seen: list[str] = []
