@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from typing import Callable
 
 from PySide6.QtCore import QStandardPaths, QThread, QUrl, Signal
@@ -29,6 +30,10 @@ class _DownloadWorker(QThread):
         self.info = info
         self.destination = destination
         self.overwrite = overwrite
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancelled.set()
 
     def run(self) -> None:
         try:
@@ -37,6 +42,7 @@ class _DownloadWorker(QThread):
                 self.destination,
                 overwrite=self.overwrite,
                 timeout=120.0,
+                cancel=self._cancelled.is_set,
             )
         except (UpdateError, OSError, ValueError) as exc:
             self.failed.emit(str(exc))
@@ -81,6 +87,10 @@ class UpdateDialog(QDialog):
         self.download_button.setEnabled(bool(info.asset_url and info.asset_name))
         self.download_button.clicked.connect(self._choose_download)
         layout.addWidget(self.download_button)
+        self.cancel_button = QPushButton("取消下载")
+        self.cancel_button.setVisible(False)
+        self.cancel_button.clicked.connect(self._cancel_download)
+        layout.addWidget(self.cancel_button)
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
@@ -122,6 +132,8 @@ class UpdateDialog(QDialog):
     def _start_download(self, destination: Path, overwrite: bool) -> None:
         self.download_button.setEnabled(False)
         self.open_button.setEnabled(False)
+        self.cancel_button.setVisible(True)
+        self.cancel_button.setEnabled(True)
         self.buttons.setEnabled(False)
         self.status_label.setText("下载中并校验 SHA-256；完成前不会执行安装包。")
         worker = _DownloadWorker(self.info, destination, overwrite, self)
@@ -135,13 +147,24 @@ class UpdateDialog(QDialog):
         self.status_label.setText(f"已下载并校验：{path}")
 
     def _download_failed(self, message: str) -> None:
+        if message == "下载已取消":
+            self.status_label.setText("已取消下载，未保存文件。")
+            return
         self.status_label.setText("下载失败，未执行任何文件。")
         QMessageBox.warning(self, "下载失败", message)
+
+    def _cancel_download(self) -> None:
+        if self._worker is None:
+            return
+        self._worker.cancel()
+        self.cancel_button.setEnabled(False)
+        self.status_label.setText("正在取消下载…")
 
     def _download_finished(self) -> None:
         self._worker = None
         self.download_button.setEnabled(bool(self.info.asset_url and self.info.asset_name))
         self.open_button.setEnabled(bool(self.info.url))
+        self.cancel_button.setVisible(False)
         self.buttons.setEnabled(True)
 
     def closeEvent(self, event: QCloseEvent) -> None:

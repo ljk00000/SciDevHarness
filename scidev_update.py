@@ -102,6 +102,7 @@ def download_asset(
     timeout: float = 60.0,
     overwrite: bool = False,
     open_url: Callable[[str, float], Any] | None = None,
+    cancel: Callable[[], bool] | None = None,
 ) -> DownloadedAsset:
     """Download one HTTPS release asset, verify it, and stop before execution.
 
@@ -114,6 +115,8 @@ def download_asset(
     url = str(info.asset_url or "")
     if not url.startswith("https://"):
         raise UpdateError("安装包地址必须是 HTTPS")
+    if cancel is not None and cancel():
+        raise UpdateError("下载已取消")
     target = Path(destination).expanduser()
     if target.is_dir():
         if not info.asset_name:
@@ -171,6 +174,8 @@ def download_asset(
             try:
                 with handle:
                     while True:
+                        if cancel is not None and cancel():
+                            raise UpdateError("下载已取消")
                         chunk = response.read(1024 * 1024)
                         if not chunk:
                             break

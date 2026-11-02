@@ -147,6 +147,54 @@ class UpdateTests(unittest.TestCase):
                 download_asset(info, Path(temp) / "big.exe", max_bytes=3,
                                open_url=lambda _url, _timeout: Response(payload))
 
+    def test_download_can_be_cancelled_before_streaming(self) -> None:
+        payload = b"installer-bytes"
+        info = UpdateInfo(
+            current="0.1.0",
+            latest="0.2.0",
+            url="https://example/release",
+            published_at="",
+            notes="",
+            asset_url="https://example/setup.exe",
+            asset_name="setup.exe",
+            asset_size=len(payload),
+            asset_digest=hashlib.sha256(payload).hexdigest(),
+        )
+
+        class Response:
+            headers = {"Content-Length": str(len(payload))}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, size: int = -1) -> bytes:
+                return payload
+
+            def geturl(self) -> str:
+                return "https://example/setup.exe"
+
+        calls = 0
+
+        def cancel() -> bool:
+            nonlocal calls
+            calls += 1
+            return calls > 1
+
+        with tempfile.TemporaryDirectory(prefix="scidev-download-", ignore_cleanup_errors=True) as temp:
+            target = Path(temp) / "setup.exe"
+            with self.assertRaisesRegex(UpdateError, "取消"):
+                download_asset(
+                    info,
+                    target,
+                    open_url=lambda _url, _timeout: Response(),
+                    cancel=cancel,
+                )
+            self.assertFalse(target.exists())
+            self.assertEqual(list(Path(temp).glob("*.part")), [])
+
     def test_cli_downloads_and_reports_a_verified_asset(self) -> None:
         import contextlib
         import json
