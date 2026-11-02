@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-02 12:00（Asia/Shanghai）· CLI 结果原子落盘
+- `exec --result-file PATH` 把最终 JSON 原子写入工作区内文件；路径解析后必须位于工作区，越界拒绝并使成功任务返回 1。
+- 成功/失败/取消都写同一份结果；写入失败打印错误，不掩盖原任务状态。
+- 新增 1 项 CLI 测试，覆盖正常写入、无残留临时文件与越界拒绝。
+
 ## 2026-11-02 11:35（Asia/Shanghai）· 沙箱设置进入桌面前端
 - `SummarySettings` 新增 `sandbox_backend`/`sandbox_image` 并持久化；Agent 构造和运行中切换都读取该配置。
 - Agent 设置新增“命令沙箱/沙箱镜像”：本机或 Docker；Docker 镜像为空时拒绝保存，切换后对新命令生效。

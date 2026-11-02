@@ -66,6 +66,29 @@ class CliTests(unittest.TestCase):
                 code = scidev_cli.main(argv)
             return code, output.getvalue(), root
 
+    def test_exec_writes_a_result_file_and_rejects_escaping_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-cli-result-", ignore_cleanup_errors=True) as temp:
+            root = Path(temp) / "project"
+            root.mkdir()
+            code, output = self._run_in(root, [
+                "exec", "--workspace", "{root}", "--task", "fix it", "--json",
+                "--result-file", ".research/result.json",
+            ])
+            self.assertEqual(code, 0, output)
+            result_path = root / ".research" / "result.json"
+            self.assertTrue(result_path.is_file())
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertTrue(payload["success"])
+            self.assertFalse(list(result_path.parent.glob(".result.json.tmp")))
+
+            code, output = self._run_in(root, [
+                "exec", "--workspace", "{root}", "--task", "fix it", "--json",
+                "--result-file", "../outside.json",
+            ])
+            self.assertEqual(code, 1, output)
+            self.assertIn("result file not written", output)
+            self.assertFalse((Path(temp) / "outside.json").exists())
+
     def test_exec_applies_cli_turn_and_token_budgets(self) -> None:
         code, output, _root = self._run([
             "exec", "--workspace", "{root}", "--task", "fix it", "--json",
@@ -84,6 +107,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertEqual(_FakeAgent.instances[-1].kwargs["sandbox_backend"], "docker")
         self.assertEqual(_FakeAgent.instances[-1].kwargs["sandbox_image"], "scidev-tools:1")
+
+    def _run_in(self, root: Path, argv, fake=_FakeAgent):
+        output = io.StringIO()
+        argv = [item.replace("{root}", str(root)) for item in argv]
+        with (
+            patch("scidev_cli.CodingAgent", fake),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(output),
+        ):
+            code = scidev_cli.main(argv)
+        return code, output.getvalue()
 
     def test_exec_json_uses_policy_and_reports_result(self) -> None:
         code, output, _root = self._run([

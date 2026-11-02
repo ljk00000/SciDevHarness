@@ -49,6 +49,11 @@ def _parser() -> argparse.ArgumentParser:
     exec_parser.add_argument("--task", required=True, help="coding task for the Agent")
     exec_parser.add_argument("--json", action="store_true", help="emit one JSON object instead of prose")
     exec_parser.add_argument(
+        "--result-file",
+        default="",
+        help="also write the final JSON result to this workspace-relative file (atomic)",
+    )
+    exec_parser.add_argument(
         "--execution-mode",
         choices=[mode.value for mode in ExecutionMode],
         default=ExecutionMode.WORKSPACE_WRITE.value,
@@ -287,6 +292,53 @@ def _restore_if_requested(agent: Any, args: argparse.Namespace) -> dict[str, Any
         return agent.restore_last_checkpoint()
     except Exception as exc:  # noqa: BLE001 - report restore failure with the task failure
         return {"failed": {"checkpoint": f"{type(exc).__name__}: {exc}"}}
+
+
+def _write_result_file(path_text: str, payload: dict[str, Any], workspace: Path) -> Path:
+    """Atomically persist one result inside the workspace; never follow it outside."""
+    workspace = Path(workspace).resolve()
+    target = Path(path_text).expanduser()
+    if not target.is_absolute():
+        target = workspace / target
+    target = target.resolve()
+    try:
+        target.relative_to(workspace)
+    except ValueError as exc:
+        raise ValueError("结果文件必须位于工作区内") from exc
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
+def _emit_result(
+    payload: dict[str, Any],
+    args: argparse.Namespace,
+    workspace: Path,
+    *,
+    human_error: bool = False,
+) -> bool:
+    written = True
+    if args.result_file:
+        try:
+            _write_result_file(args.result_file, payload, workspace)
+        except (OSError, ValueError) as exc:
+            print(f"result file not written: {exc}", file=sys.stderr)
+            written = False
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    elif human_error:
+        print(payload.get("error", "failed"), file=sys.stderr)
+    else:
+        _print_human(payload)
+    return written
 
 
 def _failure_payload(error: str, args: argparse.Namespace, session_id: str, agent: Any) -> dict[str, Any]:
@@ -710,30 +762,18 @@ def main(argv: list[str] | None = None) -> int:
             result["detail"] = "no_changes_detected"
     except PermanentError as exc:
         payload = with_worktree(_failure_payload(str(exc), args, session_id, agent))
-        if args.json:
-            print(json.dumps(payload, ensure_ascii=False))
-        else:
-            print(payload["error"], file=sys.stderr)
+        _emit_result(payload, args, workspace_effective, human_error=True)
         return 1
     except Exception as exc:  # noqa: BLE001 - CLI boundary must report, not traceback
         payload = with_worktree(_failure_payload(f"{type(exc).__name__}: {exc}", args, session_id, agent))
-        if args.json:
-            print(json.dumps(payload, ensure_ascii=False))
-        else:
-            print(payload["error"], file=sys.stderr)
+        _emit_result(payload, args, workspace_effective, human_error=True)
         return 1
     except KeyboardInterrupt:
         payload = with_worktree(_failure_payload("cancelled", args, session_id, agent))
-        if args.json:
-            print(json.dumps(payload, ensure_ascii=False))
-        else:
-            print("cancelled", file=sys.stderr)
+        _emit_result(payload, args, workspace_effective, human_error=True)
         return 130
-    if args.json:
-        print(json.dumps(result, ensure_ascii=False))
-    else:
-        _print_human(result)
-    return 0 if result.get("success") else 1
+    written = _emit_result(result, args, workspace_effective)
+    return 0 if result.get("success") and written else 1
 
 
 if __name__ == "__main__":
