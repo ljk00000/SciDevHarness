@@ -2,7 +2,7 @@
 
 ## 2026-11-02 18:00（Asia/Shanghai）· Tag 触发的 Release workflow
 - 新增 `.github/workflows/release.yml`：`v*` tag 触发，`workflow_call` 复用 Windows 打包 job，`gh run download` 取回 installer/manifest，`gh release create` 发布。
-- `windows-package.yml` 增加 `workflow_call`；新增 1 项静态断言。未创建 tag/未实际发布。全量 748 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）。
+- `windows-package.yml` 增加 `workflow_call`；新增 1 项静态断言。未创建 tag/未实际发布。全量 748 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）。远端 CI `41427247710` 三版本成功。
 
 ## 2026-11-02 17:20（Asia/Shanghai）· Pdb 控制菜单
 - 编辑器“更多”菜单新增“Pdb 控制”：继续、单步跳过、单步进入、跳出函数、退出调试；通过现有 PTY 发送 `c/n/s/r/q`，pdb 未运行时只提示。
