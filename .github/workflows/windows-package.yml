@@ -14,6 +14,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Validate release tag matches APP_VERSION
+        if: ${{ github.ref_type == 'tag' }}
+        shell: pwsh
+        run: |
+          $versionLine = Select-String -Path "scidev_update.py" -Pattern '^APP_VERSION = "([^"]+)"'
+          if (-not $versionLine) { throw "APP_VERSION was not found in scidev_update.py" }
+          $version = $versionLine.Matches[0].Groups[1].Value
+          $expected = "v$version"
+          if ($env:GITHUB_REF_NAME -ne $expected) {
+            throw "Release tag $env:GITHUB_REF_NAME does not match APP_VERSION ($expected)."
+          }
+
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"

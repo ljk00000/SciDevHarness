@@ -51,6 +51,7 @@ class InstallerBuildTests(unittest.TestCase):
         self.assertIn("secrets: inherit", workflow)
         self.assertIn("contents: write", workflow)
         self.assertIn("workflow_call:", package)
+        self.assertIn("Validate release tag matches APP_VERSION", package)
 
 
 if __name__ == "__main__":
