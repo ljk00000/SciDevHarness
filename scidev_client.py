@@ -3819,6 +3819,18 @@ class ClientWindow(QMainWindow):
         editor_menu.addAction("问题", lambda: self._toggle_bottom_panel(2))
         editor_menu.addAction("查看当前文件差异", self._show_current_diff)
         editor_menu.addAction("调试当前 Python 文件 (F5)", self._debug_current_file)
+        debug_menu = editor_menu.addMenu("Pdb 控制")
+        for label, command in (
+            ("继续", "c"),
+            ("单步跳过", "n"),
+            ("单步进入", "s"),
+            ("跳出函数", "r"),
+            ("退出调试", "q"),
+        ):
+            debug_menu.addAction(
+                label,
+                lambda checked=False, value=command: self._send_debug_command(value),
+            )
         editor_menu.addSeparator()
         editor_menu.addAction("在右侧分栏打开", self._toggle_editor_split)
         more.setMenu(editor_menu)
@@ -8353,6 +8365,17 @@ class ClientWindow(QMainWindow):
             self._append_terminal_output(commands)
         except PTYUnavailable as exc:
             self._append_log(f"无法向 pdb 发送断点命令: {exc}")
+
+    def _send_debug_command(self, command: str) -> None:
+        pty = self.terminal_pty
+        if pty is None or not pty.is_alive():
+            self._append_log("pdb 未运行；先按 F5 启动调试")
+            return
+        try:
+            pty.write(command + "\r\n")
+            self._append_terminal_output(command + "\n")
+        except PTYUnavailable as exc:
+            self._append_log(f"无法向 pdb 发送命令: {exc}")
 
     def _run_terminal_command(self) -> None:
         command = self.terminal_input.text().strip()
