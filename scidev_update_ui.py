@@ -26,6 +26,7 @@ from scidev_update import UpdateError, UpdateInfo, check_for_update, detect_repo
 class _DownloadWorker(QThread):
     completed = Signal(str)
     failed = Signal(str)
+    progress = Signal(int, int)
 
     def __init__(self, info: UpdateInfo, destination: Path, overwrite: bool, parent: QWidget | None = None):
         super().__init__(parent)
@@ -45,6 +46,7 @@ class _DownloadWorker(QThread):
                 overwrite=self.overwrite,
                 timeout=120.0,
                 cancel=self._cancelled.is_set,
+                progress=self.progress.emit,
             )
         except (UpdateError, OSError, ValueError) as exc:
             self.failed.emit(str(exc))
@@ -166,8 +168,16 @@ class UpdateDialog(QDialog):
         self._worker = worker
         worker.completed.connect(self._download_completed)
         worker.failed.connect(self._download_failed)
+        worker.progress.connect(self._download_progress)
         worker.finished.connect(self._download_finished)
         worker.start()
+
+    def _download_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            percent = min(100, int(done * 100 / total))
+            self.status_label.setText(f"下载中并校验 SHA-256：{percent}%（{done}/{total} 字节）")
+        else:
+            self.status_label.setText(f"下载中并校验 SHA-256：{done} 字节")
 
     def _download_completed(self, path: str) -> None:
         self.status_label.setText(f"已下载并校验：{path}")

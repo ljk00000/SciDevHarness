@@ -103,6 +103,7 @@ def download_asset(
     overwrite: bool = False,
     open_url: Callable[[str, float], Any] | None = None,
     cancel: Callable[[], bool] | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> DownloadedAsset:
     """Download one HTTPS release asset, verify it, and stop before execution.
 
@@ -184,6 +185,11 @@ def download_asset(
                             raise UpdateError(f"安装包超过大小上限：{max_bytes} 字节")
                         digest.update(chunk)
                         handle.write(chunk)
+                        if progress is not None:
+                            try:
+                                progress(size, content_length or int(info.asset_size or 0))
+                            except Exception:  # noqa: BLE001 - progress is advisory
+                                pass
             except Exception:
                 try:
                     os.unlink(temporary_name)

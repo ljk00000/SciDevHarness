@@ -119,6 +119,21 @@ class UpdateDialogTests(unittest.TestCase):
             self.assertEqual(failed, ["offline"])
 
 
+    def test_download_worker_forwards_progress(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-update-worker-", ignore_cleanup_errors=True) as temp:
+            target = Path(temp) / "setup.exe"
+            worker = _DownloadWorker(_info(), target, False)
+            updates: list[tuple[int, int]] = []
+
+            def fake_download(*_args, **kwargs):
+                kwargs["progress"](5, 10)
+                return DownloadedAsset(target, "a" * 64, 10)
+
+            worker.progress.connect(lambda done, total: updates.append((done, total)))
+            with patch("scidev_update_ui.download_asset", side_effect=fake_download):
+                worker.run()
+            self.assertEqual(updates, [(5, 10)])
+
     def test_check_worker_emits_release_info(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-check-worker-", ignore_cleanup_errors=True) as temp:
             with patch("scidev_update_ui.detect_repo", return_value="owner/repo"), patch(

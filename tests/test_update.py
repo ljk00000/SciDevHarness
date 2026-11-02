@@ -124,11 +124,18 @@ class UpdateTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="scidev-download-", ignore_cleanup_errors=True) as temp:
             target = Path(temp) / "setup.exe"
-            result = download_asset(info, target, open_url=lambda _url, _timeout: Response(payload))
+            updates: list[tuple[int, int]] = []
+            result = download_asset(
+                info,
+                target,
+                open_url=lambda _url, _timeout: Response(payload),
+                progress=lambda done, total: updates.append((done, total)),
+            )
             self.assertEqual(result.path, target)
             self.assertEqual(result.sha256, digest)
             self.assertEqual(target.read_bytes(), payload)
             self.assertEqual(result.as_dict()["size"], len(payload))
+            self.assertEqual(updates[-1], (len(payload), len(payload)))
 
             with self.assertRaisesRegex(UpdateError, "SHA-256"):
                 download_asset(

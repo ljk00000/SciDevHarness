@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-02 21:20（Asia/Shanghai）· 下载进度回传
+- `download_asset` 新增可选 `progress(done,total)` 回调；桌面下载线程转发为 Qt 信号，状态栏显示百分比/字节数。
+- 新增 1 项 UI 进度测试，并在下载测试中断言最终进度；全量 757 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）。
+
 ## 2026-11-02 20:50（Asia/Shanghai）· 跨进程任务锁
 - `CodingAgent.run` 在进程内线程锁之外增加 `.git/scidev-task.lock` 跨进程锁；第二个进程直接失败并提示改用 worktree。
 - 非 Git 项目回退 `.research/locks/task.lock`；新增 3 项路径/进程互斥/释放测试。全量 756 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）。远端 CI `41448043884` 三版本成功。
