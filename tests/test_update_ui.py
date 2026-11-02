@@ -10,8 +10,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from scidev_update import UpdateError, UpdateInfo
-from scidev_update_ui import UpdateDialog
+from scidev_update import DownloadedAsset, UpdateError, UpdateInfo
+from scidev_update_ui import UpdateDialog, _DownloadWorker
 
 
 def _info(available: bool = True) -> UpdateInfo:
@@ -87,6 +87,35 @@ class UpdateDialogTests(unittest.TestCase):
                 dialog = UpdateDialog.show_for_workspace(Path(temp), checker=checker)
         self.assertIsNone(dialog)
         warning.assert_called_once()
+
+
+    def test_download_worker_emits_the_saved_path(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-update-worker-", ignore_cleanup_errors=True) as temp:
+            target = Path(temp) / "setup.exe"
+            worker = _DownloadWorker(_info(), target, False)
+            completed: list[str] = []
+            failed: list[str] = []
+            worker.completed.connect(completed.append)
+            worker.failed.connect(failed.append)
+            with patch(
+                "scidev_update_ui.download_asset",
+                return_value=DownloadedAsset(target, "a" * 64, 10),
+            ):
+                worker.run()
+            self.assertEqual(completed, [str(target)])
+            self.assertEqual(failed, [])
+
+    def test_download_worker_reports_failure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-update-worker-", ignore_cleanup_errors=True) as temp:
+            worker = _DownloadWorker(_info(), Path(temp) / "setup.exe", False)
+            completed: list[str] = []
+            failed: list[str] = []
+            worker.completed.connect(completed.append)
+            worker.failed.connect(failed.append)
+            with patch("scidev_update_ui.download_asset", side_effect=UpdateError("offline")):
+                worker.run()
+            self.assertEqual(completed, [])
+            self.assertEqual(failed, ["offline"])
 
 
 if __name__ == "__main__":
