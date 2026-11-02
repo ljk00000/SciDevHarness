@@ -2,7 +2,7 @@
 
 ## 2026-11-02 18:30（Asia/Shanghai）· Release tag/版本一致性
 - `windows-package.yml` 在 tag 触发时校验 `GITHUB_REF_NAME == v + APP_VERSION`，不一致直接失败，避免发布错版本。
-- 新增静态断言；普通 push/manual dispatch 跳过该步骤。全量 748 项 0 失败、14 跳过、无重试目标。
+- 新增静态断言；普通 push/manual dispatch 跳过该步骤。全量 748 项 0 失败、14 跳过、无重试目标。远端 CI `41430517645` 三版本成功。
 
 ## 2026-11-02 18:00（Asia/Shanghai）· Tag 触发的 Release workflow
 - 新增 `.github/workflows/release.yml`：`v*` tag 触发，`workflow_call` 复用 Windows 打包 job，`gh run download` 取回 installer/manifest，`gh release create` 发布。

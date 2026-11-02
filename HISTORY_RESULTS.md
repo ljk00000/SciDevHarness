@@ -2,7 +2,7 @@
 
 ## 2026-11-02 18:30（Asia/Shanghai）· Release tag/版本一致性
 - 打包 workflow 在 tag 上下文校验 tag 与 `APP_VERSION`；不一致时在构建前失败。
-- 验证：静态断言通过；全量 748 项 0 失败、14 跳过、无重试目标；未创建真实 tag。边界：只校验字符串完全相等，要求 `v` 前缀。
+- 验证：静态断言通过；全量 748 项 0 失败、14 跳过、无重试目标；远端 Windows CI run `41430517645` 三版本成功；未创建真实 tag。边界：只校验字符串完全相等，要求 `v` 前缀。
 
 ## 2026-11-02 18:00（Asia/Shanghai）· Tag 触发的 Release workflow
 - 新增 tag 发布的 Release workflow，复用打包 job 并上传 installer/manifest；没有 tag 时不触发。
