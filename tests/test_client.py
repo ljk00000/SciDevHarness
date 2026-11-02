@@ -3701,5 +3701,28 @@ class TerminalUiTests(unittest.TestCase):
         self.assertEqual(decoder.decode(bytes([0xd6]), final=True), "字")
 
 
+class EditorCompletionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_completer_is_created_only_when_completion_is_requested(self) -> None:
+        editor = CodeEditor()
+        try:
+            self.assertIsNone(editor.completer)
+            editor.setPlainText("alphabet = 1\nalpha")
+            cursor = editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            editor.setTextCursor(cursor)
+            editor.show_completions()
+            self.assertIsNotNone(editor.completer)
+            self.assertIsNotNone(editor.completion_model)
+            self.assertIn("alphabet", editor.completion_model.stringList())
+        finally:
+            editor.close()
+            editor.deleteLater()
+            self.app.processEvents()
+
+
 if __name__ == "__main__":
     unittest.main()

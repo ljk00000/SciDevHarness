@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 22:50（Asia/Shanghai）· 编辑器补全器懒加载
+- 补全器从编辑器构造期延后到首次 `Ctrl+Space`/输入触发，避免每个只读 diff 编辑器都创建 popup 模型。
+- 验证：懒加载测试通过；`tests.test_client` 连续 3 轮通过；全量 758 项 0 失败、14 跳过、覆盖率 78%（1 个 GUI 目标自动重试后通过）。边界：仍不能证明彻底消除 Qt 原生崩溃。
+
 ## 2026-11-02 22:10（Asia/Shanghai）· 拆分 EventLedger 与 runtime helpers
 - 审计日志/会话索引与进程级辅助函数从核心单体拆出，核心保留同名导入以兼容 CLI/客户端。
 - 验证：`scidev_core`、`scidev_ledger`、`scidev_runtime` 可导入；core/context/cli 190 项测试通过；全量 757 项 0 失败、14 跳过、覆盖率 78%、无重试目标；远端 Windows CI run `41459680128` 三版本成功；mypy 覆盖 29 个源文件。边界：`scidev_client.py` 仍是 7k 行级单体；只在 Windows CI 验证。

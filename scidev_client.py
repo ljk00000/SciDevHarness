@@ -915,13 +915,8 @@ class CodeEditor(QPlainTextEdit):
         editor_font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(editor_font)
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
-        self.completer = QCompleter(self)
-        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.completion_model = QStringListModel(self)
-        self.completer.setModel(self.completion_model)
-        self.completer.setWidget(self)
-        self.completer.activated.connect(self._insert_completion)
+        self.completer: QCompleter | None = None
+        self.completion_model: QStringListModel | None = None
         self.line_number_area = LineNumberArea(self)
         self.ui_profile = DEFAULT_UI_PROFILE
         self._line_number_background = QColor("#1e1e1e")
@@ -952,20 +947,32 @@ class CodeEditor(QPlainTextEdit):
         self.update_line_number_area_width(0)
         self.highlight_current_line()
 
+    def _ensure_completer(self) -> QCompleter:
+        if self.completer is None:
+            self.completion_model = QStringListModel(self)
+            self.completer = QCompleter(self)
+            self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            self.completer.setModel(self.completion_model)
+            self.completer.setWidget(self)
+            self.completer.activated.connect(self._insert_completion)
+        return self.completer
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Space and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.show_completions()
             event.accept()
             return
-        if self.completer.popup().isVisible():
+        completer = self.completer
+        if completer is not None and completer.popup().isVisible():
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
-                completion = self.completer.currentCompletion()
+                completion = completer.currentCompletion()
                 if completion:
                     self._insert_completion(completion)
                     event.accept()
                     return
             if event.key() == Qt.Key.Key_Escape:
-                self.completer.popup().hide()
+                completer.popup().hide()
                 event.accept()
                 return
         super().keyPressEvent(event)
@@ -975,12 +982,15 @@ class CodeEditor(QPlainTextEdit):
     def show_completions(self) -> None:
         if self.isReadOnly():
             return
+        completer = self._ensure_completer()
+        model = self.completion_model
+        assert model is not None
         cursor = self.textCursor()
         before_cursor = cursor.block().text()[:cursor.positionInBlock()]
         match = re.search(r"[A-Za-z_]\w*$", before_cursor)
         prefix = match.group(0) if match else ""
         if not prefix:
-            self.completer.popup().hide()
+            completer.popup().hide()
             return
         keywords = {
             "and", "as", "assert", "async", "await", "break", "case", "class", "continue",
@@ -990,16 +1000,16 @@ class CodeEditor(QPlainTextEdit):
         }
         words = set(re.findall(r"\b[A-Za-z_]\w*\b", self.toPlainText())) | keywords
         suggestions = sorted(word for word in words if word.casefold().startswith(prefix.casefold()) and word != prefix)
-        self.completion_model.setStringList(suggestions[:100])
+        model.setStringList(suggestions[:100])
         if not suggestions:
-            self.completer.popup().hide()
+            completer.popup().hide()
             return
-        self.completer.setCompletionPrefix(prefix)
-        popup = self.completer.popup()
-        popup.setCurrentIndex(self.completion_model.index(0, 0))
+        completer.setCompletionPrefix(prefix)
+        popup = completer.popup()
+        popup.setCurrentIndex(model.index(0, 0))
         rect = self.cursorRect()
         rect.setWidth(min(360, max(180, popup.sizeHintForColumn(0) + 30)))
-        self.completer.complete(rect)
+        completer.complete(rect)
 
     def _insert_completion(self, completion: str) -> None:
         if self.isReadOnly() or not completion:
@@ -1012,7 +1022,8 @@ class CodeEditor(QPlainTextEdit):
             cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, len(prefix))
         cursor.insertText(completion)
         self.setTextCursor(cursor)
-        self.completer.popup().hide()
+        if self.completer is not None:
+            self.completer.popup().hide()
 
     def line_number_area_width(self) -> int:
         if self.property("welcomeMode") or not self.appearance_preferences.line_numbers:
