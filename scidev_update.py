@@ -19,6 +19,7 @@ from typing import Any, Callable
 APP_VERSION = "0.1.0"
 DEFAULT_REPO = "ljk00000/SciDevHarness"
 MAX_BODY = 12_000
+DOWNLOAD_CHUNK_SIZE = 64 * 1024
 _VERSION = re.compile(r"^[vV]?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$")
 
 
@@ -177,7 +178,7 @@ def download_asset(
                     while True:
                         if cancel is not None and cancel():
                             raise UpdateError("下载已取消")
-                        chunk = response.read(1024 * 1024)
+                        chunk = response.read(DOWNLOAD_CHUNK_SIZE)
                         if not chunk:
                             break
                         size += len(chunk)
