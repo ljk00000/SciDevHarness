@@ -2,7 +2,7 @@
 
 ## 2026-11-02 22:50（Asia/Shanghai）· 编辑器补全器懒加载
 - `CodeEditor` 不再在构造时创建 `QCompleter`/`QStringListModel`，首次请求补全时才创建；减少编辑器实例的 Qt 对象和测试期原生压力。
-- 新增 1 项懒加载测试；`tests.test_client` 连续 3 轮通过；全量 758 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）。
+- 新增 1 项懒加载测试；`tests.test_client` 连续 3 轮通过；全量 758 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）。远端 CI `41466839750` 三版本成功。
 
 ## 2026-11-02 22:10（Asia/Shanghai）· 拆分 EventLedger 与 runtime helpers
 - `EventLedger`（约 422 行）移到 `scidev_ledger.py`；共享锁/`now_iso`/`new_id`/任务锁路径/重试常量移到 `scidev_runtime.py`。`scidev_core.py` 由 8491 行降到约 8023 行，`scidev_core` 继续 re-export 旧名字。
