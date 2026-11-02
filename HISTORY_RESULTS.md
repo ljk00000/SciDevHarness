@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 18:45（Asia/Shanghai）· 本机 fixture 安装器重建
+- 当前暂存脚本产出 63 个文件，包含 `scidev_sandbox/debug/tool_schema/tool_registry/mcp_server/update_ui/filelock`；用 dummy exe 构建 Inno Setup 安装器成功。
+- 产物 2,381,679 字节，SHA-256 `99b76372d423744a188f8fe555b2a37c049491e5880f280d224a860a5c3f7fb0`，unsigned。边界：dummy exe，不是实际 Nuitka 可执行文件，未安装/未运行。
+
 ## 2026-11-02 18:30（Asia/Shanghai）· Release tag/版本一致性
 - 打包 workflow 在 tag 上下文校验 tag 与 `APP_VERSION`；不一致时在构建前失败。
 - 验证：静态断言通过；全量 748 项 0 失败、14 跳过、无重试目标；远端 Windows CI run `41430517645` 三版本成功；未创建真实 tag。边界：只校验字符串完全相等，要求 `v` 前缀。
