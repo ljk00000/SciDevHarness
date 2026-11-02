@@ -1,7 +1,7 @@
 # 当前工作
 
 ## 2026-11-02 17:00（Asia/Shanghai）· 下载线程成功/失败测试
-- 为 `_DownloadWorker` 增加成功路径和失败路径测试，验证 `completed`/`failed` 信号内容；全量 747 项 0 失败、14 跳过、无重试目标。
+- 为 `_DownloadWorker` 增加成功路径和失败路径测试，验证 `completed`/`failed` 信号内容；全量 747 项 0 失败、14 跳过、无重试目标。远端 CI `41417336773` 三版本成功。
 
 ## 2026-11-02 16:35（Asia/Shanghai）· 稳定关闭确认测试
 - `UnsavedCloseTests` 的 `QTimer` 轮询在“继续编辑”取消关闭后仍会继续，可能点击下一次确认框；增加 `active` 停止标志。
