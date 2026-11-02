@@ -3385,6 +3385,16 @@ class CodingToolbox:
             # switching to the terminal's login-shell wrapper.
             launch_command = command
             launch_extra = {"shell": True}
+        if self._command_cancel.is_set():
+            execution["approval_status"] = "cancelled"
+            self._finish_command_execution(
+                execution, "cancelled", elapsed_ms=int((time.monotonic() - method_started) * 1000),
+            )
+            self.ledger.append(
+                "command_cancelled_before_start",
+                {"command": command[:1000]},
+            )
+            raise TaskCancelled("任务已取消，命令未执行。")
         try:
             process = subprocess.Popen(
                 launch_command,
@@ -3397,6 +3407,9 @@ class CodingToolbox:
             )
             with self._active_command_lock:
                 self._active_command = process
+            # Cancellation can arrive between the pre-spawn check and Popen.
+            if self._command_cancel.is_set():
+                terminate_process_tree(process)
             try:
                 output_bytes, _ = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:

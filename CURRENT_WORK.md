@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-02 23:50（Asia/Shanghai）· 修复命令取消竞态
+- 远端 3.14 CI 失败定位：`tool_called` 已写入、但 `Popen` 尚未启动时用户取消，`_command_cancel` 虽已置位仍会 spawn 子进程。
+- `run_command` 在 spawn 前再次检查取消；`Popen` 后立即检查并终止进程树。取消测试改为等待 `tool_called` 事件后取消；连续 5 轮通过。全量测试 760 项 0 失败、14 跳过、无重试目标。
+
 ## 2026-11-02 23:20（Asia/Shanghai）· CLI `sandbox-check`
 - 新增 `scidev sandbox-check [--backend local|docker] [--image ...] [--json]`：local 返回 `ready=true/os_sandbox=false` 并明确说明当前用户权限；docker 查询 daemon/镜像，失败返回 1。
 - 新增 2 项 CLI 测试；README/能力表补充。全量 760 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）；过程中 `test_ui_polish` 子进程在输出 OK 后未退出，已手动终止，需给测试运行器加单目标超时。

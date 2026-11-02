@@ -4819,7 +4819,16 @@ class CancellationTests(unittest.TestCase):
 
             worker = threading.Thread(target=execute, daemon=True)
             worker.start()
-            time.sleep(1.0)
+            events_path = root / ".research" / "events.jsonl"
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if events_path.exists() and "tool_called" in events_path.read_text(encoding="utf-8"):
+                    break
+                time.sleep(0.05)
+            else:
+                agent.request_cancel()
+                worker.join(10)
+                self.fail("the approved command did not start before cancellation")
             agent.request_cancel()
             worker.join(10)
             elapsed = time.monotonic() - started
