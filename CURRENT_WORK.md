@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-03 01:10（Asia/Shanghai）· 测试超时清理进程树
+- 超时目标改用 `Popen` + `terminate_process_tree`，同时清理测试子进程启动的孙进程；等待 10 秒后仍不退则 `kill()`。
+- 超时单元测试覆盖“任务树终止 + 不完整结果”；全量 761 项 0 失败、14 跳过（`UIProfileTests` 自动重试后通过）。
+
 ## 2026-11-03 00:45（Asia/Shanghai）· 测试运行器单目标超时
 - `scripts/run_tests_coverage.py` 为每个目标设置默认 300 秒超时（`SCIDEV_TEST_TARGET_TIMEOUT` 可覆盖）；超时返回 `timed_out` 不完整结果，父进程按既有重试/崩溃逻辑处理，不再无限等待。
 - 新增 1 项超时逻辑测试；全量 761 项 0 失败、14 跳过（`test_ui_polish` 命中 300 秒超时，重试通过；`WorkspaceSearchTests` 也自动重试通过）。远端 CI `41482318437` 三版本成功。

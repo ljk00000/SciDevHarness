@@ -28,6 +28,8 @@ except ValueError:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scidev_process import terminate_process_tree
+
 
 def _isolate_child_environment() -> None:
     """Keep every child's temp files and Git discovery out of the checkout.
@@ -145,32 +147,42 @@ def _targets() -> list[str]:
     return targets
 
 
+def _timeout_payload(part: Path) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "success": False,
+        "complete": False,
+        "last_test": "",
+        "exit": -1,
+        "timed_out": True,
+    }
+    if part.exists():
+        try:
+            partial = json.loads(part.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            partial = {}
+        payload["last_test"] = str(partial.get("last_test") or "")
+    return payload
+
+
 def _run_target(target: str, part: Path) -> dict | None:
+    process = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), CHILD_FLAG, target, str(part)],
+        cwd=str(ROOT),
+    )
     try:
-        completed = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve()), CHILD_FLAG, target, str(part)],
-            cwd=str(ROOT),
-            timeout=TARGET_TIMEOUT_SECONDS,
-        )
+        process.communicate(timeout=TARGET_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        payload: dict[str, object] = {
-            "success": False,
-            "complete": False,
-            "last_test": "",
-            "exit": -1,
-            "timed_out": True,
-        }
-        if part.exists():
-            try:
-                partial = json.loads(part.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                partial = {}
-            payload["last_test"] = str(partial.get("last_test") or "")
-        return payload
+        terminate_process_tree(process)
+        try:
+            process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+        return _timeout_payload(part)
     if not part.exists():
-        return {"success": False, "complete": False, "last_test": "", "exit": completed.returncode}
+        return {"success": False, "complete": False, "last_test": "", "exit": process.returncode}
     payload = json.loads(part.read_text(encoding="utf-8"))
-    payload["exit"] = completed.returncode
+    payload["exit"] = process.returncode
     return payload
 
 
