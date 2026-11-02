@@ -31,6 +31,7 @@ from scidev_update import APP_VERSION, UpdateError, check_for_update, detect_rep
 from scidev_mcp_server import MCPServer, serve_stdio
 from scidev_errors import classify_message
 from scidev_mcp import MCPError, MCPManager
+from scidev_sandbox import DockerSandbox, SandboxError
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -245,6 +246,14 @@ def _parser() -> argparse.ArgumentParser:
         description="Expose search/read/list/context/git-diff tools to another MCP client.",
     )
     mcp_serve_parser.add_argument("--workspace", default=".", help="project directory")
+    sandbox_parser = subparsers.add_parser(
+        "sandbox-check",
+        help="report whether the selected command sandbox is available",
+        description="Check local/docker command isolation before running a task.",
+    )
+    sandbox_parser.add_argument("--backend", choices=("local", "docker"), default="")
+    sandbox_parser.add_argument("--image", default="")
+    sandbox_parser.add_argument("--json", action="store_true")
     return parser
 
 
@@ -489,6 +498,51 @@ def _mcp_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sandbox_check_command(args: argparse.Namespace) -> int:
+    backend = (args.backend or os.getenv("SCIDEV_SANDBOX_BACKEND", "local")).strip().lower()
+    image = (args.image or os.getenv("SCIDEV_SANDBOX_IMAGE", "")).strip()
+    payload: dict[str, Any] = {
+        "backend": backend,
+        "ready": False,
+        "os_sandbox": False,
+        "image": image,
+        "detail": "",
+    }
+    if backend in {"", "local", "none", "off"}:
+        payload["backend"] = "local"
+        payload["ready"] = True
+        payload["detail"] = "本机模式：命令以当前用户权限运行，批准后不受文件/网络沙箱限制。"
+    elif backend != "docker":
+        payload["detail"] = f"不认识的沙箱后端：{backend}（支持 local/docker）"
+    else:
+        try:
+            sandbox = DockerSandbox.from_environment(backend="docker", image=image)
+            if sandbox is None:
+                raise SandboxError("Docker 沙箱没有配置镜像")
+            version = sandbox.ensure_available()
+        except SandboxError as exc:
+            payload["detail"] = str(exc)
+        else:
+            payload.update({
+                "ready": True,
+                "os_sandbox": True,
+                "version": version,
+                "image": sandbox.image,
+                "network": sandbox.network,
+                "detail": "Docker 容器执行：只挂载工作区，按配置限制网络和资源。",
+            })
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"backend: {payload['backend']}")
+        print(f"ready: {'yes' if payload['ready'] else 'no'}")
+        print(f"os_sandbox: {'yes' if payload['os_sandbox'] else 'no'}")
+        if payload.get("version"):
+            print(f"server: {payload['version']}")
+        print(str(payload["detail"]))
+    return 0 if payload["ready"] else 1
+
+
 def _update_command(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     repo = args.repo or detect_repo(workspace if workspace.is_dir() else None)
@@ -687,6 +741,8 @@ def main(argv: list[str] | None = None) -> int:
         return _mcp_command(args)
     if args.command == "mcp-serve":
         return _mcp_serve_command(args)
+    if args.command == "sandbox-check":
+        return _sandbox_check_command(args)
     if args.command != "exec":
         parser.print_help()
         return 2

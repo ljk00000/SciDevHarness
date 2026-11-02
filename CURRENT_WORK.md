@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-02 23:20（Asia/Shanghai）· CLI `sandbox-check`
+- 新增 `scidev sandbox-check [--backend local|docker] [--image ...] [--json]`：local 返回 `ready=true/os_sandbox=false` 并明确说明当前用户权限；docker 查询 daemon/镜像，失败返回 1。
+- 新增 2 项 CLI 测试；README/能力表补充。全量 760 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）；过程中 `test_ui_polish` 子进程在输出 OK 后未退出，已手动终止，需给测试运行器加单目标超时。
+
 ## 2026-11-02 22:50（Asia/Shanghai）· 编辑器补全器懒加载
 - `CodeEditor` 不再在构造时创建 `QCompleter`/`QStringListModel`，首次请求补全时才创建；减少编辑器实例的 Qt 对象和测试期原生压力。
 - 新增 1 项懒加载测试；`tests.test_client` 连续 3 轮通过；全量 758 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）。远端 CI `41466839750` 三版本成功。

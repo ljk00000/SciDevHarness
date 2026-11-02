@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import scidev_cli
 from scidev_core import PermanentError
+from scidev_sandbox import SandboxError
 from scidev_update import UpdateInfo
 
 
@@ -388,6 +389,32 @@ class CliTests(unittest.TestCase):
             records = json.loads(output.getvalue())
             self.assertEqual(records[0]["session_id"], "session_cli_resume")
             self.assertEqual(records[0]["prompt"], "修复登录")
+
+
+    def test_sandbox_check_reports_local_boundary(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = scidev_cli.main(["sandbox-check", "--backend", "local", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(output.getvalue())
+        self.assertTrue(payload["ready"])
+        self.assertFalse(payload["os_sandbox"])
+        self.assertIn("当前用户权限", payload["detail"])
+
+    def test_sandbox_check_fails_closed_for_unavailable_docker(self) -> None:
+        output = io.StringIO()
+        with patch(
+            "scidev_cli.DockerSandbox.ensure_available",
+            side_effect=SandboxError("daemon unavailable"),
+        ), contextlib.redirect_stdout(output):
+            code = scidev_cli.main([
+                "sandbox-check", "--backend", "docker", "--image", "demo:latest", "--json",
+            ])
+        self.assertEqual(code, 1)
+        payload = json.loads(output.getvalue())
+        self.assertFalse(payload["ready"])
+        self.assertFalse(payload["os_sandbox"])
+        self.assertIn("daemon unavailable", payload["detail"])
 
 
 if __name__ == "__main__":

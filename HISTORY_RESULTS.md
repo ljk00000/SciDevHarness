@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-02 23:20（Asia/Shanghai）· CLI `sandbox-check`
+- 启动任务前可以显式检查 local/docker 后端；local 不再让用户误以为有 OS 隔离，Docker 不可用时 fail closed。
+- 验证：2 项 CLI 测试通过；全量 760 项 0 失败、14 跳过、覆盖率 78%（1 个 GUI 目标自动重试后通过）。边界：只检查 CLI/daemon/工具链入口，不实际启动容器；Docker 仍依赖用户本机环境；`test_ui_polish` 子进程在 OK 后未退出，已手动终止，待加运行器超时。
+
 ## 2026-11-02 22:50（Asia/Shanghai）· 编辑器补全器懒加载
 - 补全器从编辑器构造期延后到首次 `Ctrl+Space`/输入触发，避免每个只读 diff 编辑器都创建 popup 模型。
 - 验证：懒加载测试通过；`tests.test_client` 连续 3 轮通过；全量 758 项 0 失败、14 跳过、覆盖率 78%（1 个 GUI 目标自动重试后通过）；远端 Windows CI run `41466839750` 三版本成功。边界：仍不能证明彻底消除 Qt 原生崩溃。
