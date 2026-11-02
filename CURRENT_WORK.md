@@ -5,6 +5,7 @@
 - 暂存脚本改为自动收集 `scidev_*.py`；release staging 测试的期望集合也改为动态，避免新增模块后再次漏测。
 - `test_debug` 在 CI 短路径/解析路径下比较原始字符串失败，改为比较 `Path.resolve()`，只断言 `-m pdb <relative>` 尾部。
 - CI 编译步骤改为动态收集根目录/tests/scripts 的 Python 文件，新模块不会再漏编译。
+- 远端 `31a4fe9` 的 Windows CI run `41397606334` 已在 Python 3.12/3.13/3.14 全部通过。
 
 ## 2026-11-02 14:00（Asia/Shanghai）· 工具注册表
 - 新增 `scidev_tool_registry.ToolRegistry`：集中 name → handler 绑定和只读元数据；`CodingToolbox.execute_tool` 通过注册表取 handler。

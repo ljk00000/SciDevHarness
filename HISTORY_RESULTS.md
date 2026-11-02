@@ -3,7 +3,7 @@
 ## 2026-11-02 14:10（Asia/Shanghai）· 修复 Windows CI 发布暂存失败
 - 根据 GitHub check-run 注解定位：stage_release 漏拷 `scidev_sandbox.py`，导致 staged UI/本地模型/部署 dry-run 失败；改为自动收集所有 `scidev_*.py`，release staging 期望同步动态化。
 - debug 测试改为按解析后的解释器路径比较，修复 CI 路径形式差异；CI 编译改为动态收集，防止新模块漏编译。
-- 验证：本机手工暂存 63 个文件，确认 6 个新模块均在；动态 `py_compile` 113 个文件通过。远端三版本 CI 待新提交验证。
+- 验证：本机手工暂存 63 个文件，确认 6 个新模块均在；动态 `py_compile` 113 个文件通过；远端 run `41397606334` 的 3.12/3.13/3.14 三个 job 全部 success。
 
 ## 2026-11-02 14:00（Asia/Shanghai）· 工具注册表
 - 新增工具绑定表，`execute_tool` 不再维护局部 14 项 handler 字典；只读集合与 MCP 服务端共用。
