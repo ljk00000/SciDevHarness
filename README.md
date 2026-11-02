@@ -81,7 +81,7 @@ powershell -File scripts/sign_release.ps1 -Path dist -Thumbprint <40位证书指
 powershell -File scripts/sign_release.ps1 -Path dist -Thumbprint <40位证书指纹> -VerifyOnly
 ```
 
-脚本对 `.exe/.dll/.msi` 做 SHA-256 Authenticode 签名和 RFC 3161 时间戳，随后用 `/pa` 验证。证书需事先装入当前用户证书存储；脚本不接受密码或 pfx 文件，也不在 CI 中自动签名。
+脚本对 `.exe/.dll/.msi` 做 SHA-256 Authenticode 签名和 RFC 3161 时间戳，随后用 `/pa` 验证。证书需事先装入当前用户证书存储；脚本不接受密码或 pfx 文件，也不在 CI 中自动签名。时间戳默认 `http://timestamp.digicert.com`：本机 `signtool` 对 HTTPS URL 报 `Invalid Timestamp URL`，而 TSA 响应本身仍由 `signtool` 校验；本地 `signtool` 支持 HTTPS 时可显式传 `-TimestampUrl https://...`。
 
 查看和审查：
 

@@ -34,7 +34,7 @@ param(
     [string]$OutputDirectory = "",
     [string]$IsccPath = "",
     [string]$SignThumbprint = "",
-    [string]$TimestampUrl = "https://timestamp.digicert.com"
+    [string]$TimestampUrl = "http://timestamp.digicert.com"
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,8 +50,9 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
 if ($SignThumbprint -and $SignThumbprint -notmatch '^[0-9A-Fa-f]{40}$') {
     throw "SignThumbprint must be a 40-hex SHA-1 certificate thumbprint"
 }
-if (-not $TimestampUrl.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "TimestampUrl must use HTTPS"
+if (-not ($TimestampUrl.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase) -or
+        $TimestampUrl.StartsWith("http://", [System.StringComparison]::OrdinalIgnoreCase))) {
+    throw "TimestampUrl must use HTTP or HTTPS"
 }
 
 if (-not $OutputDirectory) {

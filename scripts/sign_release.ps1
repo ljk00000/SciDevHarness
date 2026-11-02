@@ -15,7 +15,9 @@ File or directory containing .exe/.dll/.msi artifacts.
 40-hex SHA-1 thumbprint of the code-signing certificate.
 
 .PARAMETER TimestampUrl
-RFC 3161 timestamp endpoint. Must be HTTPS.
+RFC 3161 timestamp endpoint. Some signtool builds reject HTTPS endpoints, so the
+default uses HTTP; the TSA response is still verified by signtool. Pass HTTPS
+explicitly when the local signtool supports it.
 
 .PARAMETER VerifyOnly
 Only run signtool verify; do not sign.
@@ -26,7 +28,7 @@ param(
     [string]$Path,
     [Parameter(Mandatory = $true)]
     [string]$Thumbprint,
-    [string]$TimestampUrl = "https://timestamp.digicert.com",
+    [string]$TimestampUrl = "http://timestamp.digicert.com",
     [switch]$VerifyOnly
 )
 
@@ -35,8 +37,9 @@ $thumbprintNormalized = ($Thumbprint -replace '\s', '').ToUpperInvariant()
 if ($thumbprintNormalized -notmatch '^[0-9A-F]{40}$') {
     throw "Thumbprint must be exactly 40 hexadecimal characters."
 }
-if (-not $TimestampUrl.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "TimestampUrl must use HTTPS."
+if (-not ($TimestampUrl.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase) -or
+        $TimestampUrl.StartsWith("http://", [System.StringComparison]::OrdinalIgnoreCase))) {
+    throw "TimestampUrl must use HTTP or HTTPS."
 }
 
 $target = (Resolve-Path -LiteralPath $Path).Path

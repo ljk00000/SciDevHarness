@@ -25,6 +25,8 @@ class InstallerBuildTests(unittest.TestCase):
         self.assertIn("^[0-9]+\\.[0-9]+\\.[0-9]+$", text)
         self.assertIn("ISCC.exe", text)
         self.assertIn("sign_release.ps1", text)
+        self.assertIn('[string]$TimestampUrl = "http://timestamp.digicert.com"', text)
+        self.assertIn("TimestampUrl must use HTTP or HTTPS", text)
         self.assertIn("Get-FileHash", text)
         self.assertNotIn("Invoke-WebRequest", text)
         self.assertNotIn("Start-Process", text)

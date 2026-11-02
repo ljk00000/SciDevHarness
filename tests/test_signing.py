@@ -9,11 +9,12 @@ SCRIPT = ROOT / "scripts" / "sign_release.ps1"
 
 
 class SigningScriptTests(unittest.TestCase):
-    def test_requires_https_timestamp_and_explicit_thumbprint(self) -> None:
+    def test_requires_an_explicit_thumbprint_and_a_timestamp_endpoint(self) -> None:
         text = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("Thumbprint", text)
         self.assertIn("^[0-9A-F]{40}$", text)
-        self.assertIn("TimestampUrl must use HTTPS", text)
+        self.assertIn("TimestampUrl must use HTTP or HTTPS", text)
+        self.assertIn('[string]$TimestampUrl = "http://timestamp.digicert.com"', text)
         self.assertIn('/fd SHA256 /tr $TimestampUrl /td SHA256 /sha1', text)
         self.assertIn("/pa /v", text)
         self.assertNotIn("ConvertTo-SecureString", text)

@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-03 01:20（Asia/Shanghai）· 修复 Authenticode 时间戳端点
+- 真实自签证书测试暴露：本机 `signtool` 拒绝 HTTPS 时间戳 URL，导致签名在时间戳阶段失败；默认改为 `http://timestamp.digicert.com`，仍可由 `signtool` 校验 TSA 签名。
+- 验证：签名阶段成功；自签证书未加入受信任根，`/pa` 验证按预期失败；全量 761 项 0 失败、14 跳过、覆盖率 78%。边界：未在真实受信证书和远端 runner 上验证；HTTP 时间戳请求可被观察，但 TSA 响应有签名。
+
 ## 2026-11-03 01:10（Asia/Shanghai）· 测试超时清理进程树
 - 超时后不只杀直接子进程：Windows 用 `taskkill /T` 清理整棵树，再等待 10 秒，必要时 `kill()`。
 - 验证：超时单元测试通过；全量 761 项 0 失败、14 跳过、覆盖率 78%（`UIProfileTests` 自动重试后通过）；远端 Windows CI run `41486206537` 三版本成功。边界：`test_ui_polish` 的原生 Qt 卡死原因未定位，只是被隔离并重试。
