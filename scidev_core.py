@@ -45,6 +45,7 @@ from scidev_memory import ProjectMemory
 from scidev_mcp import MCPError, MCPManager
 from scidev_hooks import HookError, HookRunner
 from scidev_errors import classify_exception
+from scidev_filelock import FileLock, FileLockTimeout
 from scidev_attachments import AttachmentError, image_content_parts, normalize_images
 from scidev_multi_agent import (
     DELEGATE_PARALLEL_RESEARCH_TOOL,
@@ -938,6 +939,11 @@ class GitManager:
     MAX_AUTO_COMMIT_FILE_BYTES = MAX_UNTRACKED_DIFF_BYTES
     COMMAND_TIMEOUT_SECONDS = GIT_COMMAND_TIMEOUT_SECONDS
     MUTATION_TIMEOUT_SECONDS = GIT_MUTATION_TIMEOUT_SECONDS
+    MUTATING_COMMANDS = frozenset({
+        "add", "am", "apply", "checkout", "cherry-pick", "clean", "commit",
+        "merge", "mv", "rebase", "reset", "restore", "revert", "rm", "stash",
+        "switch", "update-index",
+    })
 
     def __init__(self, project_root: Path):
         self.project_root = Path(project_root).resolve()
@@ -952,6 +958,14 @@ class GitManager:
         # Set when rename detection had to fail closed; exposed for diagnostics.
         self.last_rename_detection_degraded: list[str] = []
 
+    @staticmethod
+    def _is_mutating(args: list[str]) -> bool:
+        for arg in args:
+            if arg.startswith("-"):
+                continue
+            return arg in GitManager.MUTATING_COMMANDS
+        return False
+
     def _run(
         self,
         args: list[str],
@@ -961,21 +975,45 @@ class GitManager:
     ) -> subprocess.CompletedProcess[str]:
         command = ["git", *args]
         limit = self.COMMAND_TIMEOUT_SECONDS if timeout is None else timeout
+        lock = None
+        if self._is_mutating(args):
+            lock_dir = self.project_root / ".git"
+            if not lock_dir.is_dir():
+                lock_dir = self.project_root / ".research" / "locks"
+            lock = FileLock(lock_dir / "scidev-git.lock", timeout=10.0)
         for attempt in range(4):
             try:
                 with self._run_lock:
-                    return subprocess.run(
-                        command,
-                        cwd=self.project_root,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        check=check,
-                        env=env,
-                        timeout=limit,
-                        **background_process_options(),
-                    )
+                    if lock is None:
+                        return subprocess.run(
+                            command,
+                            cwd=self.project_root,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            check=check,
+                            env=env,
+                            timeout=limit,
+                            **background_process_options(),
+                        )
+                    with lock:
+                        return subprocess.run(
+                            command,
+                            cwd=self.project_root,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            check=check,
+                            env=env,
+                            timeout=limit,
+                            **background_process_options(),
+                        )
+            except FileLockTimeout as exc:
+                raise PermanentError(
+                    f"项目 Git 操作被另一个进程占用：{' '.join(args[:3])}"
+                ) from exc
             except subprocess.CalledProcessError as exc:
                 # Another process (user's terminal, IDE) can hold the index
                 # briefly; retry instead of failing the coding task.
