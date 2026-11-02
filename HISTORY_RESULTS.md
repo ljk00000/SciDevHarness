@@ -2,7 +2,7 @@
 
 ## 2026-11-02 19:20（Asia/Shanghai）· Pdb 控制命令测试
 - 新增 2 项测试覆盖控制命令的 PTY 写入和无 pdb 提示。
-- 验证：全量 750 项 0 失败、14 跳过、覆盖率 78%；首次全量在 `test_settings` 触发 Qt 原生崩溃（exit 3221225477），单测与全量重跑通过。边界：未启动真实 pdb 进程。
+- 验证：全量 750 项 0 失败、14 跳过、覆盖率 78%；首次全量在 `test_settings` 触发 Qt 原生崩溃（exit 3221225477），单测与全量重跑通过；远端 Windows CI run `41435693025` 三版本成功。边界：未启动真实 pdb 进程。
 
 ## 2026-11-02 18:45（Asia/Shanghai）· 本机 fixture 安装器重建
 - 当前暂存脚本产出 63 个文件，包含 `scidev_sandbox/debug/tool_schema/tool_registry/mcp_server/update_ui/filelock`；用 dummy exe 构建 Inno Setup 安装器成功。

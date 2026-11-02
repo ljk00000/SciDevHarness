@@ -1,7 +1,7 @@
 # 当前工作
 
 ## 2026-11-02 19:20（Asia/Shanghai）· Pdb 控制命令测试
-- 新增 `tests/test_debug_ui.py`：验证控制命令写入活动 PTY、无 pdb 时只提示；全量 750 项 0 失败、14 跳过、无重试目标。
+- 新增 `tests/test_debug_ui.py`：验证控制命令写入活动 PTY、无 pdb 时只提示；全量 750 项 0 失败、14 跳过、无重试目标。远端 CI `41435693025` 三版本成功。
 - 首次全量在 `test_settings` 出现 Qt 原生崩溃，单测与重跑均通过。
 
 ## 2026-11-02 18:45（Asia/Shanghai）· 本机 fixture 安装器重建
