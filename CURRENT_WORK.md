@@ -2,7 +2,7 @@
 
 ## 2026-11-10 00:55（Asia/Shanghai）· 补丁失败反馈实际行
 - `apply_patch` 上下文失败时，错误信息现在明确提示 `old line/new line` 只是 schema 占位符，并附带当前文件前 3 行的真实内容（最多 600 字符），减少弱模型反复询问或盲猜。
-- 新增断言；本地 Qwen 仍无法完成单行修改（会追问或耗尽 5 步），记录为模型限制。全量 768 项 0 失败、14 跳过、无重试目标；`scidev_patching` 83%。
+- 新增断言；本地 Qwen 仍无法完成单行修改（会追问或耗尽 5 步），记录为模型限制。全量 768 项 0 失败、14 跳过、无重试目标；`scidev_patching` 83%。远端 CI `42660336418` 三版本成功。
 
 ## 2026-11-10 00:30（Asia/Shanghai）· 本地 Qwen 探针与 fallback 提示
 - 启动本机 Ollama，用 `doctor --online` 对 `scidev-qwen2.5-coder-7b:q4_k_m` 实测：模型声明 `tools`，但探针返回文本而非原生 tool_call；doctor 现显示 `text_fallback` 状态，并在 loopback endpoint 建议 `SCIDEV_TEXT_TOOL_CALL_FALLBACK=true`。
