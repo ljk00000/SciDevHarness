@@ -3093,33 +3093,6 @@ class ClientWindow(QMainWindow):
         search.setMinimumWidth(190)
         search.setMaximumWidth(820)
         search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.command_completer = QCompleter(self)
-        self.command_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.command_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.command_completer.setModel(
-            QStringListModel(
-                [
-                    "> open folder",
-                    "> new worktree",
-                    "> worktrees",
-                    "> mcp",
-                    "> errors",
-                    "> pr",
-                    "> terminal",
-                    "> problems",
-                    "> search",
-                    "> replace",
-                    "> outline",
-                    "> git",
-                    "> explorer",
-                    "> appearance",
-                    "> settings",
-                ],
-                self.command_completer,
-            )
-        )
-        self.command_completer.setWidget(search)
-        self.command_completer.activated.connect(self._run_command_completion)
         layout.addWidget(search, 3)
         layout.addStretch(1)
 
@@ -7678,16 +7651,48 @@ class ClientWindow(QMainWindow):
     def _update_editor_tab(self) -> None:
         self._update_editor_tab_for(self._active_editor())
 
+    def _ensure_command_completer(self) -> QCompleter:
+        completer = getattr(self, "command_completer", None)
+        if completer is None:
+            completer = QCompleter(self)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            completer.setModel(
+                QStringListModel(
+                    [
+                        "> open folder",
+                        "> new worktree",
+                        "> worktrees",
+                        "> mcp",
+                        "> errors",
+                        "> pr",
+                        "> terminal",
+                        "> problems",
+                        "> search",
+                        "> replace",
+                        "> outline",
+                        "> git",
+                        "> explorer",
+                        "> appearance",
+                        "> settings",
+                    ],
+                    completer,
+                )
+            )
+            completer.setWidget(self.command_search)
+            completer.activated.connect(self._run_command_completion)
+            self.command_completer = completer
+        return completer
+
     def _update_command_suggestions(self, text: str) -> None:
-        if not hasattr(self, "command_completer"):
-            return
         if text.lstrip().startswith(">"):
-            self.command_completer.setCompletionPrefix(text.strip())
-            if self.command_completer.completionCount() > 0:
-                self.command_completer.complete()
+            completer = self._ensure_command_completer()
+            completer.setCompletionPrefix(text.strip())
+            if completer.completionCount() > 0:
+                completer.complete()
             else:
-                self.command_completer.popup().hide()
-        else:
+                completer.popup().hide()
+        elif hasattr(self, "command_completer"):
             self.command_completer.popup().hide()
 
     def _run_command_completion(self, command: str) -> None:

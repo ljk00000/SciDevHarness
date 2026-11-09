@@ -2753,6 +2753,7 @@ class WorkspaceSearchTests(unittest.TestCase):
             original_excepthook = sys.excepthook
             try:
                 window.show()
+                self.assertFalse(hasattr(window, "command_completer"))
                 window._open_file(source, preview=False)
                 self.app.processEvents()
                 sys.excepthook = lambda kind, error, _traceback: slot_errors.append(
@@ -2772,6 +2773,7 @@ class WorkspaceSearchTests(unittest.TestCase):
                 )
                 QTest.keyClicks(window.command_search, "search")
                 self.app.processEvents()
+                self.assertIn("command_completer", window.__dict__)
                 self.assertEqual(window.command_completer.completionCount(), 1)
 
                 QTest.keyClick(window.command_search, Qt.Key.Key_Escape)
