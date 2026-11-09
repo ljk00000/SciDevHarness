@@ -2,7 +2,7 @@
 
 ## 2026-11-09 23:40（Asia/Shanghai）· `doctor --online` 能力探针
 - 把“本机配置是否存在”和“模型是否真的支持工具调用”分开：默认离线，显式 `--online` 才花费少量 token 探测。
-- 验证：CLI 28 项测试、ruff、mypy 通过；全量 766 项 0 失败、14 跳过、覆盖率 78%（`UIResolutionScalingTests` 自动重试通过），`scidev_cli` 64%。边界：探针只发一次极小的 ping tool-call，不证明复杂任务能力，也不代表上下文/视觉字段在所有 provider 上都准确。
+- 验证：CLI 28 项测试、ruff、mypy 通过；全量 766 项 0 失败、14 跳过、覆盖率 78%（`UIResolutionScalingTests` 自动重试通过），`scidev_cli` 64%；远端 Windows CI run `42651881950` 三版本成功。边界：探针只发一次极小的 ping tool-call，不证明复杂任务能力，也不代表上下文/视觉字段在所有 provider 上都准确。
 
 ## 2026-11-09 23:00（Asia/Shanghai）· CLI `doctor` 环境诊断
 - 把分散的启动/模型/沙箱/工具链检查汇总为一个离线命令，明确报告“local 不是 OS 沙箱”，不输出 API Key 值。
