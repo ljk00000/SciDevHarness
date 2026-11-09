@@ -2,7 +2,7 @@
 
 ## 2026-11-09 22:20（Asia/Shanghai）· 拆分 GitManager 与路径策略
 - `GitManager`/`GitStatusEntry`/`parse_porcelain_z` 移到 `scidev_git.py`；敏感/排除路径判定移到 `scidev_paths.py`。
-- `scidev_core.py` 从 7922 行降到约 7215 行；旧导入路径保留 re-export；`pyproject` 打包与 mypy 列表加入两个新模块（mypy 32 个文件）。core 159 项测试通过；全量 761 项 0 失败、14 跳过、无重试目标；`scidev_git` 覆盖 85%，`scidev_paths` 100%。
+- `scidev_core.py` 从 7922 行降到约 7215 行；旧导入路径保留 re-export；`pyproject` 打包与 mypy 列表加入两个新模块（mypy 32 个文件）。core 159 项测试通过；全量 761 项 0 失败、14 跳过、无重试目标；`scidev_git` 覆盖 85%，`scidev_paths` 100%。远端 CI `42636505682` 三版本成功。
 
 ## 2026-11-09 21:45（Asia/Shanghai）· 拆分 RetryQueue 与稳定异常
 - `RetryQueue`（约 108 行）移到 `scidev_queue.py`；`PermanentError`/`TaskCancelled`/`TaskAborted` 移到 `scidev_errors.py`，`scidev_core` 保留 re-export。

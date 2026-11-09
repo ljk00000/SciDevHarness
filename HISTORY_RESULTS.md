@@ -2,7 +2,7 @@
 
 ## 2026-11-09 22:20（Asia/Shanghai）· 拆分 GitManager 与路径策略
 - Git 状态/差异/暂存/自动提交从 Agent 单体独立；路径安全判定独立为可复用模块，Git 模块不再依赖 `scidev_core`。
-- 验证：core 159 项测试、ruff、mypy（32 个源文件）通过；全量 761 项 0 失败、14 跳过、覆盖率 78%，`scidev_git` 85%、`scidev_paths` 100%。边界：Git 行为和锁语义未改；仍未在真实大型仓库上测并发。
+- 验证：core 159 项测试、ruff、mypy（32 个源文件）通过；全量 761 项 0 失败、14 跳过、覆盖率 78%，`scidev_git` 85%、`scidev_paths` 100%；远端 Windows CI run `42636505682` 三版本成功。边界：Git 行为和锁语义未改；仍未在真实大型仓库上测并发。
 
 ## 2026-11-09 21:45（Asia/Shanghai）· 拆分 RetryQueue 与稳定异常
 - 任务队列 worker 从 Agent 单体中独立，稳定异常放进错误分类模块；旧导入路径继续可用，避免破坏调用方。
