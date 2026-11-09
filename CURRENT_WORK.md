@@ -2,7 +2,7 @@
 
 ## 2026-11-10 07:50（Asia/Shanghai）· 安装包安装/卸载 E2E
 - package workflow 新增真实静默安装 → 运行已安装 exe 的 `--smoke-test` → 静默卸载 → 检查 exe 已删除；这样安装 E2E 在干净 runner 上执行，不依赖本机策略。
-- 本地 bootstrap 断言通过；实际 package workflow 待重跑。
+- 实际 run `42722815742` 全绿：build、smoke、审计、installer、安装/卸载全部通过；Windows CI `42722814737` 三版本成功。全量 771 项 0 失败、14 跳过。
 
 ## 2026-11-10 06:50（Asia/Shanghai）· LSP 回调与安装器实测
 - 全量日志中出现 `RuntimeError: Signal source has been deleted`：窗口销毁后 resident LSP 线程仍回调桥接对象。`ResidentLSPBridge._deliver` 现在捕获该 RuntimeError 并丢弃过期诊断；LSP 7 项测试通过。

@@ -1,5 +1,14 @@
 # 历史与结果
 
+## 2026-11-10 08:00（Asia/Shanghai）· 安装/卸载 E2E 通过
+- package workflow 在干净 Windows runner 上完成真实静默安装 → 已安装 exe 的 `--smoke-test` → 静默卸载 → 确认 exe 已删除，run `42722815742` 全绿。
+- 本机无法启动 unsigned 安装包的环境阻塞因此不再影响结论；CI 证明 per-user 安装包可安装、可运行、可卸载。
+- 安装包仍是 unsigned，未验证代码签名信任链、管理员安装或升级路径。全量 771 项 0 失败、14 跳过；Windows CI `42722814737` 三版本成功。
+
+## 2026-11-10 07:50（Asia/Shanghai）· 安装包安装/卸载 E2E
+- 新增 CI 步骤：静默安装、运行已安装 exe 的 smoke、静默卸载、检查残留。
+- 验证：run `42722815742` 安装/卸载步骤通过；Windows CI `42722814737` 通过。边界：仅 per-user、无签名、无升级/回滚场景。
+
 ## 2026-11-10 07:30（Asia/Shanghai）· 可重试的 Qt 临时目录
 - `TemporaryDirectory` 在 Windows 上会与 Qt 延迟释放的文件句柄竞争；新增 `tests/qt_temp.py`，`test_client` 和 `test_settings` 使用最多 8 次退避重试，仍失败才忽略残留。
 - 验证：4 项受影响测试连续 3 轮通过；全量 771 项 0 失败、14 跳过、无重试目标；远端 Windows CI run `42721031393` 三版本成功。边界：这是测试清理容错，不改变应用运行时的文件监视器。
