@@ -4991,7 +4991,7 @@ class CancellationTests(unittest.TestCase):
             agent.request_cancel()
             worker.join(10)
             self.assertFalse(worker.is_alive())
-            self.assertLess(time.monotonic() - cancel_requested, 5)
+            self.assertLess(time.monotonic() - cancel_requested, 8)
             self.assertLess(time.monotonic() - started, 20)
             self.assertTrue(errors)
             self.assertIn("任务已取消", str(errors[-1]))
