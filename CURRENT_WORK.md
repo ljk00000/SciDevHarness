@@ -2,7 +2,7 @@
 
 ## 2026-11-10 06:25（Asia/Shanghai）· 测试临时目录清理
 - 全量回归偶发 `PermissionError [WinError 32]`：`ClientWindow` 仍被局部变量引用，`QFileSystemWatcher` 在 `TemporaryDirectory.cleanup()` 后才销毁。
-- `test_client` 的重命名测试和 `test_settings` tearDown 在 close 后显式 `deleteLater()` + 处理事件；两项连续 5 轮通过。全量 771 项 0 失败、14 跳过、无重试目标。
+- `test_client` 的重命名测试和 `test_settings` tearDown 在 close 后显式 `deleteLater()` + 处理事件；两项连续 5 轮通过。全量 771 项 0 失败、14 跳过、无重试目标；远端 CI `42712635724` 三版本成功。
 
 ## 2026-11-10 04:20（Asia/Shanghai）· 打包显式设置 VIRTUAL_ENV
 - 实际触发 `Windows Package Verification`（run `42689172205`）发现 `pyside6-deploy` 只认 `VIRTUAL_ENV` 环境变量；workflow 虽从 `.venv` 启动，仍被判定“not using a virtual environment”并等待 stdin，最终 `EOFError`。

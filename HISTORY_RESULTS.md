@@ -2,7 +2,7 @@
 
 ## 2026-11-10 06:25（Asia/Shanghai）· 测试临时目录清理
 - 全量回归出现两个 `PermissionError [WinError 32]`；原因是窗口局部引用未释放，Qt 文件监视器仍在临时目录上。测试改为 close 后 `deleteLater()` 并处理事件，再让 `TemporaryDirectory` 清理。
-- 验证：两项定向测试连续 5 轮通过；全量 771 项 0 失败、14 跳过、覆盖率 78%，无重试目标。边界：修的是测试生命周期，不是文件监视器本身；真实应用关闭窗口仍由 Qt 管理。
+- 验证：两项定向测试连续 5 轮通过；全量 771 项 0 失败、14 跳过、覆盖率 78%，无重试目标；远端 Windows CI run `42712635724` 三版本成功。边界：修的是测试生命周期，不是文件监视器本身；真实应用关闭窗口仍由 Qt 管理。
 
 ## 2026-11-10 06:10（Asia/Shanghai）· 首次真实 Windows 安装包产出
 - `Windows Package Verification` run `42707785249` 全绿：Nuitka standalone 构建、打包后 smoke、build manifest、Inno Setup 安装包。
