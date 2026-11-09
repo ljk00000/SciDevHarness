@@ -2,7 +2,7 @@
 
 ## 2026-11-10 02:55（Asia/Shanghai）· 取消等待时间阈值
 - 3.13 CI 的 `test_cancel_interrupts_an_in_flight_model_stream` 在 5.25s 完成取消，超过原 5s 断言；取消语义正确，阈值对慢 runner 过紧。放宽到 8s，仍保留 join/10s 与“任务已取消”断言。
-- 定向测试连续 3 轮通过；全量 769 项 0 失败、14 跳过（`EditorSplitInteractionTests` 重试通过）、无新增测试。
+- 定向测试连续 3 轮通过；全量 769 项 0 失败、14 跳过（`EditorSplitInteractionTests` 重试通过）、无新增测试。远端 CI `42679272212` 三版本成功（3.13 耗时 11m33s）。
 
 ## 2026-11-10 02:15（Asia/Shanghai）· `doctor --tests` 静态入口发现
 - `doctor --tests` 复用 `ProjectContext` 的路径清单和 `TestCommandDiscovery`，只推断 test/lint/typecheck 候选命令、不执行；输出数量与首个候选，便于用户先确认自动验证入口。
