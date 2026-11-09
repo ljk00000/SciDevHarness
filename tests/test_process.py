@@ -39,8 +39,8 @@ class BackgroundProcessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             manager = GitManager(Path(temporary))
             completed = subprocess.CompletedProcess(["git", "status"], 0, "clean", "")
-            with patch("scidev_core.background_process_options", return_value={"creationflags": 123}):
-                with patch("scidev_core.subprocess.run", return_value=completed) as run:
+            with patch("scidev_git.background_process_options", return_value={"creationflags": 123}):
+                with patch("scidev_git.subprocess.run", return_value=completed) as run:
                     result = manager._run(["status"], check=True, env={"TEST": "preserve"})
             self.assertIs(result, completed)
             kwargs = run.call_args.kwargs

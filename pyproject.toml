@@ -19,6 +19,8 @@ dependencies = ["PySide6-Essentials>=6.11,<7", "pywinpty>=3.0; sys_platform == '
 files = [
     "scidev_client.py",
     "scidev_core.py",
+    "scidev_git.py",
+    "scidev_paths.py",
     "scidev_process.py",
     "scidev_acceptance.py",
     "scidev_usage.py",
@@ -69,6 +71,8 @@ ignore_missing_imports = true
 follow_imports = "skip"
 files = [
     "scidev_process.py",
+    "scidev_git.py",
+    "scidev_paths.py",
     "scidev_usage.py",
     "scidev_policy.py",
     "scidev_pr.py",
