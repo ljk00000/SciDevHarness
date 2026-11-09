@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import scidev_cli
 from scidev_core import PermanentError
-from scidev_provider import ProviderConfigError
+from scidev_provider import ProviderConfig, ProviderConfigError
 from scidev_sandbox import SandboxError
 from scidev_update import UpdateInfo
 
@@ -464,6 +464,26 @@ class CliTests(unittest.TestCase):
         check = next(item for item in payload["checks"] if item["name"] == "provider-probe")
         self.assertEqual(check["status"], "ok")
         self.assertIn("tools=yes", check["detail"])
+
+    def test_doctor_online_suggests_text_fallback_for_local_models(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
+            output = io.StringIO()
+            config = ProviderConfig(
+                base_url="http://127.0.0.1:11434/v1",
+                model="qwen-local",
+                api_key="test",
+            )
+            with patch(
+                "scidev_cli.load_provider_config", return_value=config,
+            ), patch(
+                "scidev_cli.probe_capabilities",
+                return_value={"tools_supported": False, "context_length": None, "vision": None, "detail": ""},
+            ), contextlib.redirect_stdout(output):
+                code = scidev_cli.main(["doctor", "--workspace", temp, "--online", "--json"])
+        self.assertEqual(code, 0, output.getvalue())
+        payload = json.loads(output.getvalue())
+        check = next(item for item in payload["checks"] if item["name"] == "provider-probe")
+        self.assertIn("SCIDEV_TEXT_TOOL_CALL_FALLBACK=true", check["fix"])
 
     def test_doctor_marks_invalid_provider_config_as_attention(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:

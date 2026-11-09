@@ -15,6 +15,7 @@ import sys
 from importlib import metadata
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from scidev_core import CodingAgent, EventLedger, GitManager, PermanentError, SummarySettings, new_id
 from scidev_policy import ExecutionMode
@@ -564,6 +565,14 @@ def _sandbox_check_command(args: argparse.Namespace) -> int:
     return 0 if payload["ready"] else 1
 
 
+def _is_loopback_base_url(value: str) -> bool:
+    try:
+        host = urlsplit(value).hostname
+    except ValueError:
+        return False
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
 def _find_language_tool(workspace: Path, name: str) -> str | None:
     candidates = [shutil.which(name)]
     for relative in (Path(".venv") / "Scripts" / f"{name}.exe", Path(".venv") / "bin" / name):
@@ -603,7 +612,10 @@ def _doctor_command(args: argparse.Namespace) -> int:
         add(
             "provider",
             provider_status,
-            f"model={provider.model}; base_url={provider.base_url}; api_key={key_source}",
+            (
+                f"model={provider.model}; base_url={provider.base_url}; api_key={key_source}; "
+                f"text_fallback={'enabled' if provider.text_tool_call_fallback else 'disabled'}"
+            ),
             "" if provider_status == "ok" else "在设置中保存 API Key，或配置 SCIDEV_API_KEY",
         )
     except ProviderConfigError as exc:
@@ -623,11 +635,20 @@ def _doctor_command(args: argparse.Namespace) -> int:
                 detail = f"tools={tools}; context={context}; vision={vision}"
                 if probe.get("detail"):
                     detail += f"; {probe['detail']}"
+                if probe.get("tools_supported"):
+                    probe_fix = ""
+                elif _is_loopback_base_url(provider.base_url):
+                    probe_fix = (
+                        "本地模型可能返回文本工具调用；可尝试 "
+                        "SCIDEV_TEXT_TOOL_CALL_FALLBACK=true，并检查模型/endpoint"
+                    )
+                else:
+                    probe_fix = "模型可能不支持 tool calling；可检查模型或 endpoint"
                 add(
                     "provider-probe",
                     "ok" if probe.get("tools_supported") else "warn",
                     detail,
-                    "" if probe.get("tools_supported") else "模型可能不支持 tool calling；可检查模型或 endpoint",
+                    probe_fix,
                 )
 
     if shutil.which("git") is None:
