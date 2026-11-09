@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 06:25（Asia/Shanghai）· 测试临时目录清理
+- 全量回归偶发 `PermissionError [WinError 32]`：`ClientWindow` 仍被局部变量引用，`QFileSystemWatcher` 在 `TemporaryDirectory.cleanup()` 后才销毁。
+- `test_client` 的重命名测试和 `test_settings` tearDown 在 close 后显式 `deleteLater()` + 处理事件；两项连续 5 轮通过。全量 771 项 0 失败、14 跳过、无重试目标。
+
 ## 2026-11-10 04:20（Asia/Shanghai）· 打包显式设置 VIRTUAL_ENV
 - 实际触发 `Windows Package Verification`（run `42689172205`）发现 `pyside6-deploy` 只认 `VIRTUAL_ENV` 环境变量；workflow 虽从 `.venv` 启动，仍被判定“not using a virtual environment”并等待 stdin，最终 `EOFError`。
 - 在构建 step 中显式 `set "VIRTUAL_ENV=%GITHUB_WORKSPACE%\.venv"`；本地 `pyside6-deploy --dry-run` 退出 0。新增 workflow 断言；全量 770 项 0 失败、14 跳过。
@@ -8,7 +12,8 @@
 - 第三次重跑找到 2 个 `scidev_client.exe`（仍在 `.dist` 过滤范围内）；改为直接使用 `deployment\SciDevHarness.dist\scidev_client.exe`。
 - 第五次重跑 smoke 的 `$LASTEXITCODE` 为空：GUI 子系统 exe 用 `&` 启动不会等待。改用 `Start-Process -PassThru -Wait`，捕获 stdout/stderr 和进程退出码。
 - smoke 已通过，但 `audit_standalone.py` 仍把中间产物算作第二个 exe；现在优先使用 `deployment\SciDevHarness.dist`（实际同时存在 `scidev_client.dist` 和 `SciDevHarness.dist`），错误信息列出路径。新增审计测试（6 项）。
-- 第八次重跑 smoke/审计通过，但 installer 仍把 deployment 根目录当源码目录，根目录没有 exe；改为传 `SciDevHarness.dist`。全量 771 项 0 失败、14 跳过；实际打包待再次重跑。
+- 第八次重跑 smoke/审计通过，但 installer 仍把 deployment 根目录当源码目录，根目录没有 exe；改为传 `SciDevHarness.dist`。
+- 最终重跑 `42707785249` 成功：Nuitka standalone、smoke、build manifest、Inno Setup 安装包全部通过；产物见 `SciDevHarness-Windows-x64-installer`。全量 771 项 0 失败、14 跳过。
 
 ## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
 - `doctor --tests` 的 `ProjectContext` 不再用恒 false 的 protected 回调，改为排除 `.git/.research/.venv/venv/node_modules/secrets`，避免把本地状态或密钥目录纳入静态扫描。

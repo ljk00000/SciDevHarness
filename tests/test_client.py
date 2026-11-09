@@ -1817,6 +1817,7 @@ class EditorSplitInteractionTests(unittest.TestCase):
                         except RuntimeError:
                             pass
                 window.close()
+                window.deleteLater()
                 self.app.processEvents()
 
     def test_agent_refresh_updates_a_shared_document_only_once(self) -> None:

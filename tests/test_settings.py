@@ -66,6 +66,8 @@ class WorkbenchSettingsTests(unittest.TestCase):
     def tearDown(self):
         self.window.close()
         self.settle()
+        self.window.deleteLater()
+        self.settle()
         self.settings_patch.stop()
         self.temp.cleanup()
 
