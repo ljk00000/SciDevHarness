@@ -582,7 +582,7 @@ def _doctor_command(args: argparse.Namespace) -> int:
         try:
             pyside_version = metadata.version("PySide6")
         except metadata.PackageNotFoundError:
-            add("pyside6", "error", "PySide6 未安装", "安装 requirements.txt 或运行启动脚本")
+            add("pyside6", "warn", "PySide6 未安装（CLI 可用，桌面端不可用）", "安装 requirements.txt 或运行启动脚本")
         else:
             add("pyside6", "ok", f"PySide6 {pyside_version}")
 
