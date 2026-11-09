@@ -99,7 +99,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("contents: read", workflow)
         self.assertIn("runs-on: windows-2022", workflow)
         self.assertIn("vcvars64.bat", workflow)
-        self.assertIn("--config-file pysidedeploy.spec --nuitka-version=4.1.1", workflow)
+        self.assertIn("--config-file pysidedeploy.spec --nuitka-version=4.1.1 --keep-deployment-files", workflow)
         self.assertIn('set "VIRTUAL_ENV=%GITHUB_WORKSPACE%\\.venv"', workflow)
         self.assertIn('Filter "scidev_client.exe"', workflow)
         self.assertIn('Filter "DevelopmentTree.qml"', workflow)

@@ -56,7 +56,7 @@ jobs:
           if errorlevel 1 exit /b 1
           set "PATH=%GITHUB_WORKSPACE%\.venv\Scripts;%PATH%"
           set "VIRTUAL_ENV=%GITHUB_WORKSPACE%\.venv"
-          "%GITHUB_WORKSPACE%\.venv\Scripts\pyside6-deploy.exe" --config-file pysidedeploy.spec --nuitka-version=4.1.1
+          "%GITHUB_WORKSPACE%\.venv\Scripts\pyside6-deploy.exe" --config-file pysidedeploy.spec --nuitka-version=4.1.1 --keep-deployment-files
           if errorlevel 1 exit /b 1
 
       - name: Smoke-test standalone executable and write a build manifest
