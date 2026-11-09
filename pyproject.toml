@@ -43,6 +43,7 @@ files = [
     "scidev_filelock.py",
     "scidev_runtime.py",
     "scidev_ledger.py",
+    "scidev_queue.py",
     "scidev_mcp_server.py",
     "ui/qml/DevelopmentTree.qml",
     "ui/icons/chevron-down.svg",
@@ -95,6 +96,7 @@ files = [
     "scidev_filelock.py",
     "scidev_runtime.py",
     "scidev_ledger.py",
+    "scidev_queue.py",
     "scidev_mcp_server.py",
 ]
 

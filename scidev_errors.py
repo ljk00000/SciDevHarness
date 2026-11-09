@@ -26,6 +26,18 @@ class ErrorInfo:
         }
 
 
+class PermanentError(RuntimeError):
+    """An operation should not be retried automatically."""
+
+
+class TaskCancelled(PermanentError):
+    """The user stopped the task while a provider stream was still running."""
+
+
+class TaskAborted(PermanentError):
+    """A safety guard must stop the run instead of feeding an error back."""
+
+
 _AUTH = re.compile(r"(?i)\b(401|403|unauthori[sz]ed|invalid api key|authentication|forbidden|permission denied)\b|认证|未授权|权限不足|密钥无效")
 _RATE = re.compile(r"(?i)\b(429|rate limit|too many requests|quota)\b|限流|额度|过于频繁")
 _TIMEOUT = re.compile(r"(?i)\b(timeout|timed out|deadline exceeded)\b|超时")

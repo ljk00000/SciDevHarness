@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-09 21:45（Asia/Shanghai）· 拆分 RetryQueue 与稳定异常
+- 任务队列 worker 从 Agent 单体中独立，稳定异常放进错误分类模块；旧导入路径继续可用，避免破坏调用方。
+- 验证：core/errors 162 项测试、ruff、mypy（30 个源文件）通过；全量 761 项 0 失败、14 跳过、覆盖率 78%，`scidev_queue` 覆盖 90%。边界：仅拆分代码，队列协议和重试语义未变；仍未做真实长任务压力测试。
+
 ## 2026-11-03 01:20（Asia/Shanghai）· 修复 Authenticode 时间戳端点
 - 真实自签证书测试暴露：本机 `signtool` 拒绝 HTTPS 时间戳 URL，导致签名在时间戳阶段失败；默认改为 `http://timestamp.digicert.com`，仍可由 `signtool` 校验 TSA 签名。
 - 验证：签名阶段成功；自签证书未加入受信任根，`/pa` 验证按预期失败；全量 761 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `41490858500` 三版本成功。边界：未在真实受信证书和远端 runner 上验证；HTTP 时间戳请求可被观察，但 TSA 响应有签名。
