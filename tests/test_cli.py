@@ -437,6 +437,19 @@ class CliTests(unittest.TestCase):
             code = scidev_cli.main(["doctor", "--workspace", "definitely-missing-workspace"])
         self.assertEqual(code, 2)
 
+    def test_doctor_treats_missing_pyside_as_a_warning(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
+            output = io.StringIO()
+            with patch(
+                "scidev_cli.metadata.version",
+                side_effect=scidev_cli.metadata.PackageNotFoundError("PySide6"),
+            ), contextlib.redirect_stdout(output):
+                code = scidev_cli.main(["doctor", "--workspace", temp, "--json"])
+        self.assertEqual(code, 0, output.getvalue())
+        payload = json.loads(output.getvalue())
+        pyside = next(item for item in payload["checks"] if item["name"] == "pyside6")
+        self.assertEqual(pyside["status"], "warn")
+
     def test_doctor_online_flag_probes_model_capabilities(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
             output = io.StringIO()

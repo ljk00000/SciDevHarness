@@ -630,17 +630,20 @@ def _doctor_command(args: argparse.Namespace) -> int:
                     "" if probe.get("tools_supported") else "模型可能不支持 tool calling；可检查模型或 endpoint",
                 )
 
-    git = GitManager(workspace)
-    try:
-        is_repo = git.is_repo()
-    except Exception as exc:  # noqa: BLE001 - doctor reports instead of failing
-        add("git", "error", f"Git 检查失败：{type(exc).__name__}: {exc}")
+    if shutil.which("git") is None:
+        add("git", "warn", "Git CLI 未安装", "安装 Git 后才能使用自动提交和 worktree")
     else:
-        if is_repo:
-            head = git.head_sha()[:12] or "(no commits)"
-            add("git", "ok", f"branch={git.branch() or '(detached)'}; head={head}")
+        git = GitManager(workspace)
+        try:
+            is_repo = git.is_repo()
+        except Exception as exc:  # noqa: BLE001 - doctor reports instead of failing
+            add("git", "error", f"Git 检查失败：{type(exc).__name__}: {exc}")
         else:
-            add("git", "warn", "当前目录不是 Git 仓库", "初始化 Git 后才能使用自动提交和 worktree")
+            if is_repo:
+                head = git.head_sha()[:12] or "(no commits)"
+                add("git", "ok", f"branch={git.branch() or '(detached)'}; head={head}")
+            else:
+                add("git", "warn", "当前目录不是独立 Git 仓库", "在仓库根目录打开，或初始化独立 Git 仓库")
 
     backend = os.getenv("SCIDEV_SANDBOX_BACKEND", "local").strip().lower()
     if backend in {"", "local", "none", "off"}:
