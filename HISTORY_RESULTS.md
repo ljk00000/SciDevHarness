@@ -2,7 +2,7 @@
 
 ## 2026-11-09 23:00（Asia/Shanghai）· CLI `doctor` 环境诊断
 - 把分散的启动/模型/沙箱/工具链检查汇总为一个离线命令，明确报告“local 不是 OS 沙箱”，不输出 API Key 值。
-- 验证：CLI 26 项测试、ruff、mypy 通过；全量 764 项 0 失败、14 跳过、覆盖率 78%（`WorkspaceSearchTests` 自动重试通过），`scidev_cli` 64%。边界：只做本地静态/进程检查，不调用模型、不启动 Docker、不验证 LSP 请求；Git 检查可能受父仓库影响；CI 无 PySide6 时只告警。
+- 验证：CLI 26 项测试、ruff、mypy 通过；全量 764 项 0 失败、14 跳过、覆盖率 78%（`WorkspaceSearchTests` 自动重试通过），`scidev_cli` 64%；远端 Windows CI run `42644493899` 三版本成功。边界：只做本地静态/进程检查，不调用模型、不启动 Docker、不验证 LSP 请求；Git 检查可能受父仓库影响；CI 无 PySide6 时只告警。
 
 ## 2026-11-09 22:20（Asia/Shanghai）· 拆分 GitManager 与路径策略
 - Git 状态/差异/暂存/自动提交从 Agent 单体独立；路径安全判定独立为可复用模块，Git 模块不再依赖 `scidev_core`。
