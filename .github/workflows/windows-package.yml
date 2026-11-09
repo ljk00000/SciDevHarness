@@ -63,9 +63,10 @@ jobs:
         shell: pwsh
         run: |
           $deployment = Join-Path $env:RUNNER_TEMP "scidev-package-stage\deployment"
-          $executables = @(Get-ChildItem -LiteralPath $deployment -Filter "scidev_client.exe" -File -Recurse)
+          $executables = @(Get-ChildItem -LiteralPath $deployment -Filter "scidev_client.exe" -File -Recurse |
+            Where-Object { $_.Directory.Name -like "*.dist" })
           if ($executables.Count -ne 1) {
-            throw "Expected one standalone scidev_client.exe; found $($executables.Count)."
+            throw "Expected one standalone scidev_client.exe in a .dist directory; found $($executables.Count)."
           }
           $qmlFiles = @(Get-ChildItem -LiteralPath $deployment -Filter "DevelopmentTree.qml" -File -Recurse)
           if ($qmlFiles.Count -lt 1) {
