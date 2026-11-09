@@ -466,9 +466,10 @@ class CoreTests(unittest.TestCase):
 
         self.assertEqual(patch_schema["type"], "string")
         self.assertEqual(patch_schema["maxLength"], 500000)
-        self.assertLessEqual(len(CodingAgent.SYSTEM_PROMPT), 700)
+        self.assertLessEqual(len(CodingAgent.SYSTEM_PROMPT), 850)
         self.assertIn("`apply_patch`", CodingAgent.SYSTEM_PROMPT)
         self.assertIn("禁止换工具绕过", CodingAgent.SYSTEM_PROMPT)
+        self.assertIn("old line", CodingAgent.SYSTEM_PROMPT)
 
     def test_agent_blocks_legacy_edits_to_preexisting_files_but_allows_new_file_iteration(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-agent-edit-policy-") as temp:
@@ -2665,7 +2666,7 @@ class CoreTests(unittest.TestCase):
 
     def test_agent_prompt_requires_explicit_checks_to_be_run_before_completion(self) -> None:
         prompt = CodingAgent.SYSTEM_PROMPT
-        self.assertLessEqual(len(prompt), 700)
+        self.assertLessEqual(len(prompt), 850)
         self.assertIn("每次修改后，再精确编辑前先重读", prompt)
         for required_rule in (
             "用工具完成用户在工作区内的请求",
