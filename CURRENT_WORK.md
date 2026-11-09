@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 06:50（Asia/Shanghai）· LSP 回调与安装器实测
+- 全量日志中出现 `RuntimeError: Signal source has been deleted`：窗口销毁后 resident LSP 线程仍回调桥接对象。`ResidentLSPBridge._deliver` 现在捕获该 RuntimeError 并丢弃过期诊断；LSP 7 项测试通过。
+- 下载真实 unsigned 安装包做静默安装实测；本机 `Start-Process` 后未出现安装进程、目标目录或日志，判定为本地策略/环境阻塞，未当作安装通过。全量 771 项 0 失败、14 跳过、无重试目标。
+
 ## 2026-11-10 06:25（Asia/Shanghai）· 测试临时目录清理
 - 全量回归偶发 `PermissionError [WinError 32]`：`ClientWindow` 仍被局部变量引用，`QFileSystemWatcher` 在 `TemporaryDirectory.cleanup()` 后才销毁。
 - `test_client` 的重命名测试和 `test_settings` tearDown 在 close 后显式 `deleteLater()` + 处理事件；两项连续 5 轮通过。全量 771 项 0 失败、14 跳过、无重试目标；远端 CI `42712635724` 三版本成功。

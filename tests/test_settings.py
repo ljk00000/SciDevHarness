@@ -16,10 +16,14 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFontInfo
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit
+from shiboken6 import delete as delete_qt_object
 
 from scidev_client import ClientWindow
 from scidev_preferences import AppearancePreferences
 from scidev_ui import accent_text_color, create_ui_font
+from tests.qt_temp import QtTemporaryDirectory
+
+tempfile.TemporaryDirectory = QtTemporaryDirectory
 
 
 class PreferenceValidationTests(unittest.TestCase):
@@ -65,9 +69,16 @@ class WorkbenchSettingsTests(unittest.TestCase):
 
     def tearDown(self):
         self.window.close()
-        self.settle()
-        self.window.deleteLater()
-        self.settle()
+        try:
+            delete_qt_object(self.window.file_model)
+        except RuntimeError:
+            pass
+        try:
+            delete_qt_object(self.window)
+        except RuntimeError:
+            pass
+        self.window = None
+        self.settings = None
         self.settings_patch.stop()
         self.temp.cleanup()
 

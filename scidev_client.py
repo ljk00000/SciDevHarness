@@ -811,7 +811,11 @@ class ResidentLSPBridge(QObject):
         self._resident.start()
 
     def _deliver(self, path: Path, generation: int, diagnostics: object, error: str) -> None:
-        self.diagnostics_ready.emit(str(path), generation, diagnostics, error)
+        try:
+            self.diagnostics_ready.emit(str(path), generation, diagnostics, error)
+        except RuntimeError:
+            # The window closed while the resident LSP thread was finishing.
+            return
 
     def submit(self, path: Path, text: str, generation: int) -> None:
         self._resident.submit(path, text, generation)
@@ -9440,6 +9444,7 @@ class ClientWindow(QMainWindow):
         if resident_lsp is not None:
             resident_lsp.close()
             self._resident_lsp_bridge = None
+        self.file_model.setRootPath("")
         app = QApplication.instance()
         windows = getattr(app, "_scidev_windows", []) if app is not None else []
         if self in windows:

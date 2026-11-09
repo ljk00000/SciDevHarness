@@ -36,6 +36,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QFontInfo, QIcon, QTextCursor, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
+from shiboken6 import delete as delete_qt_object  # noqa: E402
 
 from scidev_client import (  # noqa: E402
     CodeEditor,
@@ -53,6 +54,23 @@ from scidev_client import (  # noqa: E402
 )
 from scidev_core import CodingToolbox, SummarySettings  # noqa: E402
 from scidev_ui import ACTIVITY_RAIL_WIDTH, _scale_stylesheet_metrics, ui_scale_for_resolution  # noqa: E402
+from tests.qt_temp import QtTemporaryDirectory  # noqa: E402
+
+tempfile.TemporaryDirectory = QtTemporaryDirectory
+
+
+def close_window_for_test(app: QApplication, window: ClientWindow) -> None:
+    """Destroy the Qt objects before Windows temp cleanup releases their handles."""
+    window.close()
+    try:
+        delete_qt_object(window.file_model)
+    except RuntimeError:
+        pass
+    try:
+        delete_qt_object(window)
+    except RuntimeError:
+        pass
+    app.processEvents()
 
 
 class MutableScreen(QObject):
@@ -768,8 +786,7 @@ class EditorPersistenceTests(unittest.TestCase):
                     )
                     self.assertFalse(editor.document().isModified())
                 finally:
-                    window.close()
-                    self.app.processEvents()
+                    close_window_for_test(self.app, window)
 
     def test_clean_agent_refresh_updates_the_editor_eol_style(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-editor-refresh-eol-") as temp:
@@ -1816,9 +1833,7 @@ class EditorSplitInteractionTests(unittest.TestCase):
                             editor.document().setModified(False)
                         except RuntimeError:
                             pass
-                window.close()
-                window.deleteLater()
-                self.app.processEvents()
+                close_window_for_test(self.app, window)
 
     def test_agent_refresh_updates_a_shared_document_only_once(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-editor-split-agent-refresh-") as temp:
