@@ -169,6 +169,49 @@ jobs:
           $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
           $manifest | ConvertTo-Json -Compress
 
+      - name: Install and uninstall the per-user installer
+        shell: pwsh
+        run: |
+          $versionLine = Select-String -Path "$env:GITHUB_WORKSPACE\scidev_update.py" -Pattern '^APP_VERSION = "([^"]+)"'
+          if (-not $versionLine) { throw "APP_VERSION was not found in scidev_update.py" }
+          $version = $versionLine.Matches[0].Groups[1].Value
+          $installer = Join-Path $env:RUNNER_TEMP "scidev-installer\SciDevHarness-Setup-$version.exe"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "Installer is missing: $installer"
+          }
+          $target = Join-Path $env:RUNNER_TEMP "scidev-install-e2e"
+          if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+          $install = Start-Process -FilePath $installer -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=$target"
+          ) -PassThru -Wait
+          if ($install.ExitCode -ne 0) {
+            throw "Installer failed with exit code $($install.ExitCode)"
+          }
+          $installedExe = Join-Path $target "scidev_client.exe"
+          if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
+            throw "Installed executable is missing: $installedExe"
+          }
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_QUICK_BACKEND = "software"
+          $smoke = Start-Process -FilePath $installedExe -ArgumentList "--smoke-test" -PassThru -Wait
+          if ($smoke.ExitCode -ne 0) {
+            throw "Installed executable failed its smoke test (exit $($smoke.ExitCode))"
+          }
+          $uninstaller = Join-Path $target "unins000.exe"
+          if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
+            throw "Uninstaller is missing: $uninstaller"
+          }
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+          ) -PassThru -Wait
+          if ($uninstall.ExitCode -ne 0) {
+            throw "Uninstaller failed with exit code $($uninstall.ExitCode)"
+          }
+          Start-Sleep -Seconds 2
+          if (Test-Path -LiteralPath $installedExe) {
+            throw "Uninstaller left the installed executable behind: $installedExe"
+          }
+
       - name: Remove signing certificate
         if: always()
         shell: pwsh
