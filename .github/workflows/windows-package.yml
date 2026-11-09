@@ -179,13 +179,18 @@ jobs:
           if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
             throw "Installer is missing: $installer"
           }
-          $target = Join-Path $env:RUNNER_TEMP "scidev-install-e2e"
+          $target = Join-Path $env:RUNNER_TEMP "scidev install e2e"
           if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
-          $install = Start-Process -FilePath $installer -ArgumentList @(
+          $installArgs = @(
             "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=$target"
-          ) -PassThru -Wait
+          )
+          $install = Start-Process -FilePath $installer -ArgumentList $installArgs -PassThru -Wait
           if ($install.ExitCode -ne 0) {
             throw "Installer failed with exit code $($install.ExitCode)"
+          }
+          $reinstall = Start-Process -FilePath $installer -ArgumentList $installArgs -PassThru -Wait
+          if ($reinstall.ExitCode -ne 0) {
+            throw "Reinstall over an existing installation failed with exit code $($reinstall.ExitCode)"
           }
           $installedExe = Join-Path $target "scidev_client.exe"
           if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
