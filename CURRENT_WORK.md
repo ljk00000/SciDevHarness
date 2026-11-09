@@ -2,7 +2,8 @@
 
 ## 2026-11-10 04:20（Asia/Shanghai）· 打包显式设置 VIRTUAL_ENV
 - 实际触发 `Windows Package Verification`（run `42689172205`）发现 `pyside6-deploy` 只认 `VIRTUAL_ENV` 环境变量；workflow 虽从 `.venv` 启动，仍被判定“not using a virtual environment”并等待 stdin，最终 `EOFError`。
-- 在构建 step 中显式 `set "VIRTUAL_ENV=%GITHUB_WORKSPACE%\.venv"`；本地 `pyside6-deploy --dry-run` 退出 0。新增 workflow 断言；全量 770 项 0 失败、14 跳过；实际打包待重跑。
+- 在构建 step 中显式 `set "VIRTUAL_ENV=%GITHUB_WORKSPACE%\.venv"`；本地 `pyside6-deploy --dry-run` 退出 0。新增 workflow 断言；全量 770 项 0 失败、14 跳过。
+- 修复后真实 Nuitka 构建成功，但 Nuitka 在非交互环境拒绝自动下载 Dependency Walker，`deployment` 未生成、smoke 失败。spec 增加 `--assume-yes-for-downloads`，并新增断言；实际打包待再次重跑。
 
 ## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
 - `doctor --tests` 的 `ProjectContext` 不再用恒 false 的 protected 回调，改为排除 `.git/.research/.venv/venv/node_modules/secrets`，避免把本地状态或密钥目录纳入静态扫描。

@@ -129,6 +129,8 @@ class BootstrapTests(unittest.TestCase):
         workflow = (project_root / ".github" / "workflows" / "windows-package.yml").read_text(encoding="utf-8")
         self.assertIn("-r requirements.txt -r requirements-build.txt", workflow)
         self.assertIn('--pyside-version "6.11.2"', workflow)
+        deploy_spec = (project_root / "pysidedeploy.spec").read_text(encoding="utf-8")
+        self.assertIn("--assume-yes-for-downloads", deploy_spec)
         audit_script = (project_root / "scripts" / "audit_standalone.py").read_text(encoding="utf-8")
         self.assertIn('"pyside6_distribution": "PySide6-Essentials"', audit_script)
 
