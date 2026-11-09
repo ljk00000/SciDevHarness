@@ -110,13 +110,15 @@ def build_manifest(
     final_executables = [
         path
         for path in executables
-        if any(part.casefold().endswith(".dist") for part in path.relative_to(deployment).parts[:-1])
+        if len(path.relative_to(deployment).parts) == 2
+        and path.relative_to(deployment).parts[0].casefold().endswith(".dist")
     ]
     if final_executables:
         executables = final_executables
     qml_files = [path for path in files if path.name.casefold() == "developmenttree.qml"]
     if len(executables) != 1:
-        raise ValueError(f"expected exactly one scidev_client.exe, found {len(executables)}")
+        names = ", ".join(path.relative_to(deployment).as_posix() for path in executables[:4])
+        raise ValueError(f"expected exactly one scidev_client.exe, found {len(executables)}: {names}")
     if not qml_files:
         raise ValueError("standalone package is missing DevelopmentTree.qml")
 

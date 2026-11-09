@@ -7,7 +7,7 @@
 - 再次重跑后构建完成，但 `pyside6-deploy` 默认在结束时清理 `deployment`，smoke 仍找不到目录。命令增加 `--keep-deployment-files`。
 - 第三次重跑找到 2 个 `scidev_client.exe`（仍在 `.dist` 过滤范围内）；改为直接使用 `deployment\SciDevHarness.dist\scidev_client.exe`。
 - 第五次重跑 smoke 的 `$LASTEXITCODE` 为空：GUI 子系统 exe 用 `&` 启动不会等待。改用 `Start-Process -PassThru -Wait`，捕获 stdout/stderr 和进程退出码。
-- smoke 已通过，但 `audit_standalone.py` 仍把中间产物算作第二个 exe；现优先选择 `.dist` 目录，新增审计测试（6 项）；全量 771 项 0 失败、14 跳过。实际打包待再次重跑。
+- smoke 已通过，但 `audit_standalone.py` 仍把中间产物算作第二个 exe；现在只把 `deployment` 的直接子 `.dist` 目录视为最终产物，错误信息列出路径。新增审计测试（6 项）；全量 771 项 0 失败、14 跳过。实际打包待再次重跑。
 
 ## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
 - `doctor --tests` 的 `ProjectContext` 不再用恒 false 的 protected 回调，改为排除 `.git/.research/.venv/venv/node_modules/secrets`，避免把本地状态或密钥目录纳入静态扫描。
