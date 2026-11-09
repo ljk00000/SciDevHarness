@@ -2,7 +2,7 @@
 
 ## 2026-11-10 00:30（Asia/Shanghai）· 本地 Qwen 探针与 fallback 提示
 - 启动本机 Ollama，用 `doctor --online` 对 `scidev-qwen2.5-coder-7b:q4_k_m` 实测：模型声明 `tools`，但探针返回文本而非原生 tool_call；doctor 现显示 `text_fallback` 状态，并在 loopback endpoint 建议 `SCIDEV_TEXT_TOOL_CALL_FALLBACK=true`。
-- 打开 fallback 后跑真实 `scidev exec` 单行任务，模型仍生成无效补丁并最终无改动；记录为模型能力限制，不伪造成功。新增 1 项 CLI 测试（29 项）；全量 767 项 0 失败、14 跳过、无重试目标；`scidev_cli` 覆盖率 64%。
+- 打开 fallback 后跑真实 `scidev exec` 单行任务，模型仍生成无效补丁并最终无改动；记录为模型能力限制，不伪造成功。新增 1 项 CLI 测试（29 项）；全量 767 项 0 失败、14 跳过、无重试目标；`scidev_cli` 覆盖率 64%。远端 CI `42656127420` 三版本成功。
 
 ## 2026-11-09 23:40（Asia/Shanghai）· `doctor --online` 能力探针
 - `scidev doctor --online` 在本地检查后显式请求 provider `/models` 并做一次最小 tool-call 探针；报告 tools/context/vision，缺 Key/网络/HTTP 失败只告警。

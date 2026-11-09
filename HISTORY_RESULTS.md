@@ -3,7 +3,7 @@
 ## 2026-11-10 00:30（Asia/Shanghai）· 本地 Qwen 探针与 fallback 提示
 - 本机 Qwen 7B 的 `/models` 声明支持 tools，但实际返回文本 JSON；原生工具探针为 no。doctor 不再只给笼统告警，而是显示 fallback 状态并对本地 endpoint 给出具体开关建议。
 - 真实 CLI E2E（fallback 开启）仍未能完成单行修改：模型生成补丁上下文不匹配，最终 `no_changes`。这证明当前 harness 不会把“模型说完成”误报为成功，但也说明弱模型任务完成率仍低。
-- 验证：CLI 29 项测试、ruff、mypy 通过；全量 767 项 0 失败、14 跳过、覆盖率 78%，`scidev_cli` 64%。边界：只测了一个本地 7B 模型和一个简单任务，不能外推到其他模型/复杂仓库。
+- 验证：CLI 29 项测试、ruff、mypy 通过；全量 767 项 0 失败、14 跳过、覆盖率 78%，`scidev_cli` 64%；远端 Windows CI run `42656127420` 三版本成功。边界：只测了一个本地 7B 模型和一个简单任务，不能外推到其他模型/复杂仓库。
 
 ## 2026-11-09 23:40（Asia/Shanghai）· `doctor --online` 能力探针
 - 把“本机配置是否存在”和“模型是否真的支持工具调用”分开：默认离线，显式 `--online` 才花费少量 token 探测。
