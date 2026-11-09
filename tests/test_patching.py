@@ -152,6 +152,20 @@ class PatchEngineTests(unittest.TestCase):
             with self.assertRaisesRegex(PatchError, "非法片段"):
                 self.engine(root).prepare(self.two_hunk_patch("../outside.py"))
 
+    def test_missing_context_mentions_the_schema_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "app.py").write_text('greeting = "hello"\n', encoding="utf-8")
+            copied_placeholder = """*** Begin Patch
+*** Update File: app.py
+@@
+-old line
++new line
+*** End Patch"""
+            with self.assertRaisesRegex(PatchError, "old line/new line") as raised:
+                self.engine(root).prepare(copied_placeholder)
+            self.assertIn('1: greeting = "hello"', str(raised.exception))
+
     def test_rejected_all_hunks_is_a_noop(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

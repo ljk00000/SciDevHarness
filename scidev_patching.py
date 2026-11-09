@@ -157,7 +157,14 @@ class PatchEngine:
         ]
         if len(matches) != 1:
             reason = "未找到" if not matches else f"匹配 {len(matches)} 处，位置不唯一"
-            raise PatchError(f"{path} 补丁上下文{reason}；请重新读取文件并生成更精确补丁")
+            preview = "\n".join(
+                f"{index + 1}: {line}" for index, line in enumerate(lines[:3])
+            )[:600]
+            raise PatchError(
+                f"{path} 补丁上下文{reason}；示例中的 old line/new line 不是文件内容，"
+                "请使用 read_file 返回的真实行重新生成补丁"
+                + (f"；当前文件前几行：\n{preview}" if preview else "")
+            )
         return matches[0]
 
     def _apply_hunk(self, lines: list[str], hunk: PatchHunk) -> tuple[list[str], list[str], list[str], int]:

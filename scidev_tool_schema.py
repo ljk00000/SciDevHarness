@@ -82,6 +82,8 @@ def tool_definitions(
                     "description": (
                         "严格使用 Codex 格式。单文件修改示例：\n"
                         "*** Begin Patch\n*** Update File: main.py\n@@\n-old line\n+new line\n*** End Patch\n"
+                        "示例中的 old line/new line 只是占位符，必须替换为 read_file 返回的真实内容，"
+                        "不要原样复制。"
                         "文件操作行必须分别写成 `*** Update File: 路径`、`*** Add File: 路径` 或 "
                         "`*** Delete File: 路径`，不可写 `Update/Add/Delete` 这类合并选项。路径必须是项目相对路径。"
                     ),
