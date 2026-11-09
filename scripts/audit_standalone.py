@@ -107,14 +107,20 @@ def build_manifest(
 
     files = sorted(_regular_files(deployment), key=lambda path: path.as_posix().casefold())
     executables = [path for path in files if path.name.casefold() == "scidev_client.exe"]
-    final_executables = [
-        path
-        for path in executables
-        if len(path.relative_to(deployment).parts) == 2
-        and path.relative_to(deployment).parts[0].casefold().endswith(".dist")
+    preferred_executables = [
+        path for path in executables if path.parent == deployment / "SciDevHarness.dist"
     ]
-    if final_executables:
-        executables = final_executables
+    if preferred_executables:
+        executables = preferred_executables
+    else:
+        final_executables = [
+            path
+            for path in executables
+            if len(path.relative_to(deployment).parts) == 2
+            and path.relative_to(deployment).parts[0].casefold().endswith(".dist")
+        ]
+        if final_executables:
+            executables = final_executables
     qml_files = [path for path in files if path.name.casefold() == "developmenttree.qml"]
     if len(executables) != 1:
         names = ", ".join(path.relative_to(deployment).as_posix() for path in executables[:4])

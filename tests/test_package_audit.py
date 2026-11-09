@@ -132,10 +132,13 @@ class StandaloneAuditTests(unittest.TestCase):
             (deployment / "scidev_client.exe").unlink()
             dist = deployment / "SciDevHarness.dist"
             intermediate = deployment / "build"
+            alternate = deployment / "scidev_client.dist"
             dist.mkdir()
             intermediate.mkdir()
+            alternate.mkdir()
             (dist / "scidev_client.exe").write_bytes(b"final executable")
             (intermediate / "scidev_client.exe").write_bytes(b"intermediate executable")
+            (alternate / "scidev_client.exe").write_bytes(b"input-named executable")
             manifest = build_manifest(
                 deployment,
                 site_packages,
