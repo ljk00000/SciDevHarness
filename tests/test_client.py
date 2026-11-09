@@ -95,6 +95,17 @@ class UIResolutionScalingTests(unittest.TestCase):
     def _screen(geometry: QRect, available: QRect) -> MutableScreen:
         return MutableScreen(geometry, available)
 
+    def test_show_event_tolerates_a_handle_without_screen(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-screen-handle-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                with patch.object(ClientWindow, "windowHandle", return_value=object()):
+                    window.show()
+                    self.app.processEvents()
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_screen_geometry_signal_rescales_window_without_monitor_switch(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-screen-geometry-signal-") as temp:
             window = ClientWindow(Path(temp))

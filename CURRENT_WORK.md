@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 03:35（Asia/Shanghai）· showEvent 不再假定窗口句柄可提供屏幕
+- `tests.test_ui_polish` 偶发 `windowHandle()` 返回无 `screen()` 的 `QWidgetItem`，触发 `showEvent` AttributeError。改为优先 `self.screen()`，仅在为空时才尝试 handle，并新增无 `screen()` 句柄的回归测试。
+- `tests.test_ui_polish` 连续 10 轮通过；全量 770 项 0 失败、14 跳过、无重试目标。
+
 ## 2026-11-10 03:15（Asia/Shanghai）· 命令补全惰性创建
 - 命令搜索框不再在窗口构造时创建 `QCompleter`，改为首次输入 `>` 时才创建；测试断言启动时无补全器、输入后出现。减少每个窗口的 Qt 对象和 offscreen 原生崩溃暴露面。
 - 定向 UI 测试通过；全量 769 项 0 失败、14 跳过（`tests.test_ui_polish` 重试通过）。远端 CI `42683199600` 三版本成功。

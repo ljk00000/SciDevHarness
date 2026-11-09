@@ -3227,7 +3227,11 @@ class ClientWindow(QMainWindow):
             screen_changed = getattr(handle, "screenChanged", None)
             if screen_changed is not None:
                 screen_changed.connect(self._on_screen_changed)
-        screen = handle.screen() if handle is not None else self.screen()
+        screen = self.screen()
+        if screen is None and handle is not None:
+            handle_screen = getattr(handle, "screen", None)
+            if callable(handle_screen):
+                screen = handle_screen()
         self._on_screen_changed(screen)
 
     def _on_screen_changed(self, screen) -> None:  # noqa: ANN001 - QScreen is binding-defined.
