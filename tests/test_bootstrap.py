@@ -103,6 +103,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn('set "VIRTUAL_ENV=%GITHUB_WORKSPACE%\\.venv"', workflow)
         self.assertIn('Filter "scidev_client.exe"', workflow)
         self.assertIn('Join-Path $deployment "SciDevHarness.dist"', workflow)
+        self.assertIn("Deployment = $applicationDirectory", workflow)
         self.assertIn('Filter "DevelopmentTree.qml"', workflow)
         self.assertIn("copy_default_sample.ps1", workflow)
         self.assertIn("--smoke-test", workflow)

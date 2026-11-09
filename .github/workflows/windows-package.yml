@@ -143,9 +143,10 @@ jobs:
           $versionLine = Select-String -Path "$env:GITHUB_WORKSPACE\scidev_update.py" -Pattern '^APP_VERSION = "([^"]+)"'
           if (-not $versionLine) { throw "APP_VERSION was not found in scidev_update.py" }
           $version = $versionLine.Matches[0].Groups[1].Value
+          $applicationDirectory = Join-Path $deployment "SciDevHarness.dist"
           $installerDir = Join-Path $env:RUNNER_TEMP "scidev-installer"
           $buildArgs = @{
-            Deployment = $deployment
+            Deployment = $applicationDirectory
             Version = $version
             OutputDirectory = $installerDir
           }

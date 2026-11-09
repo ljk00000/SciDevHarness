@@ -6,7 +6,8 @@
 - 构建随后完成，但 `pyside6-deploy` 默认清理生成目录；CI 需要 `--keep-deployment-files` 才能 smoke 和打安装包。
 - 保留目录后又发现两个同名 exe，smoke 改为直接使用 `deployment\SciDevHarness.dist\scidev_client.exe`。
 - GUI 子系统 exe 用 `&` 启动时 PowerShell 不等待，`$LASTEXITCODE` 为空；改用 `Start-Process -Wait` 并记录 stdout/stderr/exit code。
-- smoke 通过后，审计脚本又把中间产物算作第二个 exe；实际存在 `scidev_client.dist` 和 `SciDevHarness.dist` 两个直接子目录，现在优先使用与标题一致的 `SciDevHarness.dist`，并列出冲突路径。新增审计测试；全量 771 项 0 失败、14 跳过。边界：仍需 package workflow 实际产出安装包并做 smoke，dry-run 不能替代。
+- smoke 通过后，审计脚本又把中间产物算作第二个 exe；实际存在 `scidev_client.dist` 和 `SciDevHarness.dist` 两个直接子目录，现在优先使用与标题一致的 `SciDevHarness.dist`，并列出冲突路径。新增审计测试。
+- installer 步骤仍把 deployment 根目录当源码目录，根目录没有 exe；现在把 `SciDevHarness.dist` 传给构建脚本。全量 771 项 0 失败、14 跳过。边界：仍需 package workflow 实际产出安装包并做 smoke，dry-run 不能替代。
 
 ## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
 - 静态测试入口发现现在复用明确的 protected 判定，跳过 `.git`、`.research`、`.venv`、`venv`、`node_modules`、`secrets`；减少无意义扫描和敏感目录暴露面。
