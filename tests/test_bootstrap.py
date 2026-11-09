@@ -106,6 +106,8 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn('Filter "DevelopmentTree.qml"', workflow)
         self.assertIn("copy_default_sample.ps1", workflow)
         self.assertIn("--smoke-test", workflow)
+        self.assertIn("Start-Process -FilePath $executables[0].FullName", workflow)
+        self.assertIn("-PassThru -Wait", workflow)
         self.assertNotIn("--smoke-test --workspace", workflow)
         sample_copy = (project_root / "scripts" / "copy_default_sample.ps1").read_text(encoding="utf-8")
         self.assertIn('"examples\\tetris"', sample_copy)

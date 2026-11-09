@@ -76,9 +76,14 @@ jobs:
           & "$env:GITHUB_WORKSPACE\scripts\copy_default_sample.ps1" -ApplicationDirectory $applicationDirectory
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:QT_QUICK_BACKEND = "software"
-          & $executables[0].FullName --smoke-test
-          if ($LASTEXITCODE -ne 0) {
-            throw "Packaged executable failed its Qt/QML startup smoke test (exit $LASTEXITCODE)."
+          $smokeStdout = Join-Path $env:RUNNER_TEMP "scidev-smoke-stdout.txt"
+          $smokeStderr = Join-Path $env:RUNNER_TEMP "scidev-smoke-stderr.txt"
+          $smokeProcess = Start-Process -FilePath $executables[0].FullName -ArgumentList "--smoke-test" `
+            -PassThru -Wait -RedirectStandardOutput $smokeStdout -RedirectStandardError $smokeStderr
+          if (Test-Path -LiteralPath $smokeStdout) { Get-Content -LiteralPath $smokeStdout }
+          if (Test-Path -LiteralPath $smokeStderr) { Get-Content -LiteralPath $smokeStderr }
+          if ($smokeProcess.ExitCode -ne 0) {
+            throw "Packaged executable failed its Qt/QML startup smoke test (exit $($smokeProcess.ExitCode))."
           }
           $manifestPath = Join-Path $env:RUNNER_TEMP "SciDevHarness-Windows-x64-build-manifest.json"
           $python = Join-Path $env:GITHUB_WORKSPACE ".venv\Scripts\python.exe"
