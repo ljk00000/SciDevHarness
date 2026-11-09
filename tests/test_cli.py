@@ -437,6 +437,21 @@ class CliTests(unittest.TestCase):
             code = scidev_cli.main(["doctor", "--workspace", "definitely-missing-workspace"])
         self.assertEqual(code, 2)
 
+    def test_doctor_online_flag_probes_model_capabilities(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
+            output = io.StringIO()
+            with patch(
+                "scidev_cli.probe_capabilities",
+                return_value={"tools_supported": True, "context_length": 8192, "vision": False, "detail": ""},
+            ) as probe, contextlib.redirect_stdout(output):
+                code = scidev_cli.main(["doctor", "--workspace", temp, "--online", "--json"])
+        self.assertEqual(code, 0, output.getvalue())
+        probe.assert_called_once()
+        payload = json.loads(output.getvalue())
+        check = next(item for item in payload["checks"] if item["name"] == "provider-probe")
+        self.assertEqual(check["status"], "ok")
+        self.assertIn("tools=yes", check["detail"])
+
     def test_doctor_marks_invalid_provider_config_as_attention(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
             output = io.StringIO()

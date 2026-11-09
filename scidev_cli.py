@@ -35,7 +35,12 @@ from scidev_mcp_server import MCPServer, serve_stdio
 from scidev_errors import classify_message
 from scidev_mcp import MCPError, MCPManager
 from scidev_sandbox import DockerSandbox, SandboxError
-from scidev_provider import ProviderConfigError, key_status as provider_key_status, load as load_provider_config
+from scidev_provider import (
+    ProviderConfigError,
+    key_status as provider_key_status,
+    load as load_provider_config,
+    probe_capabilities,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -265,6 +270,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument("--workspace", default=".", help="project directory")
     doctor_parser.add_argument("--json", action="store_true")
+    doctor_parser.add_argument(
+        "--online",
+        action="store_true",
+        help="also call the provider /models endpoint and one tiny tool probe (costs a few tokens)",
+    )
     return parser
 
 
@@ -598,6 +608,27 @@ def _doctor_command(args: argparse.Namespace) -> int:
         )
     except ProviderConfigError as exc:
         add("provider", "error", f"provider 配置无效：{exc}", "检查 .research/provider.json 或环境变量")
+    else:
+        if args.online:
+            try:
+                probe = probe_capabilities(provider, timeout=15)
+            except ProviderConfigError as exc:
+                add("provider-probe", "warn", f"无法在线探测：{exc}", "先在设置或环境变量中配置 API Key")
+            except Exception as exc:  # noqa: BLE001 - doctor reports instead of failing
+                add("provider-probe", "warn", f"在线探测失败：{type(exc).__name__}: {exc}")
+            else:
+                tools = "yes" if probe.get("tools_supported") else "no"
+                context = probe.get("context_length") or "unknown"
+                vision = "yes" if probe.get("vision") else ("unknown" if probe.get("vision") is None else "no")
+                detail = f"tools={tools}; context={context}; vision={vision}"
+                if probe.get("detail"):
+                    detail += f"; {probe['detail']}"
+                add(
+                    "provider-probe",
+                    "ok" if probe.get("tools_supported") else "warn",
+                    detail,
+                    "" if probe.get("tools_supported") else "模型可能不支持 tool calling；可检查模型或 endpoint",
+                )
 
     git = GitManager(workspace)
     try:

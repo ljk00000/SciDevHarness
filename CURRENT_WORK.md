@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-09 23:40（Asia/Shanghai）· `doctor --online` 能力探针
+- `scidev doctor --online` 在本地检查后显式请求 provider `/models` 并做一次最小 tool-call 探针；报告 tools/context/vision，缺 Key/网络/HTTP 失败只告警。
+- 默认不加 `--online` 不产生任何模型请求；新增 1 项 CLI 测试（27 项）。全量 765 项 0 失败、14 跳过、无重试目标；`scidev_cli` 覆盖率 64%。
+
 ## 2026-11-09 23:00（Asia/Shanghai）· CLI `doctor` 环境诊断
 - 新增 `scidev doctor --workspace . --json`：离线检查运行时/PySide6、provider 模型与密钥来源（不打印密钥）、Git 分支/HEAD、local/docker 边界、项目 `.venv`/PATH 中的 LSP 工具。
 - 有 `error` 时返回 1；缺失工作区返回 2；provider 配置无效计为 error；缺少 API Key、非 Git、local 后端、缺少 PySide6（CLI 仍可用）或 LSP 计为 warn。新增 3 项 CLI 测试；全量 764 项 0 失败、14 跳过（`WorkspaceSearchTests` 重试通过）；`scidev_cli` 覆盖率 64%。远端 CI `42644493899` 三版本成功。
