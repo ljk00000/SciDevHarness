@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import scidev_cli
 from scidev_core import PermanentError
+from scidev_provider import ProviderConfigError
 from scidev_sandbox import SandboxError
 from scidev_update import UpdateInfo
 
@@ -415,6 +416,40 @@ class CliTests(unittest.TestCase):
         self.assertFalse(payload["ready"])
         self.assertFalse(payload["os_sandbox"])
         self.assertIn("daemon unavailable", payload["detail"])
+
+
+    def test_doctor_reports_runtime_without_printing_secrets(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                code = scidev_cli.main(["doctor", "--workspace", temp, "--json"])
+        self.assertEqual(code, 0, output.getvalue())
+        payload = json.loads(output.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["version"], "0.1.0")
+        names = {item["name"] for item in payload["checks"]}
+        self.assertTrue({"runtime", "provider", "git", "sandbox", "lsp"} <= names)
+        self.assertNotIn("sk-", output.getvalue())
+
+    def test_doctor_rejects_a_missing_workspace(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            code = scidev_cli.main(["doctor", "--workspace", "definitely-missing-workspace"])
+        self.assertEqual(code, 2)
+
+    def test_doctor_marks_invalid_provider_config_as_attention(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
+            output = io.StringIO()
+            with patch(
+                "scidev_cli.load_provider_config",
+                side_effect=ProviderConfigError("bad provider"),
+            ), contextlib.redirect_stdout(output):
+                code = scidev_cli.main(["doctor", "--workspace", temp, "--json"])
+        self.assertEqual(code, 1, output.getvalue())
+        payload = json.loads(output.getvalue())
+        self.assertFalse(payload["ok"])
+        provider = next(item for item in payload["checks"] if item["name"] == "provider")
+        self.assertEqual(provider["status"], "error")
 
 
 if __name__ == "__main__":

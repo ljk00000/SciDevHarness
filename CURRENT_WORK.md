@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-09 23:00（Asia/Shanghai）· CLI `doctor` 环境诊断
+- 新增 `scidev doctor --workspace . --json`：离线检查运行时/PySide6、provider 模型与密钥来源（不打印密钥）、Git 分支/HEAD、local/docker 边界、项目 `.venv`/PATH 中的 LSP 工具。
+- 有 `error` 时返回 1；缺失工作区返回 2；provider 配置无效计为 error，缺少 API Key/非 Git/local 后端计为 warn。新增 3 项 CLI 测试；全量 764 项 0 失败、14 跳过、无重试目标；`scidev_cli` 覆盖率 64%。
+
 ## 2026-11-09 22:20（Asia/Shanghai）· 拆分 GitManager 与路径策略
 - `GitManager`/`GitStatusEntry`/`parse_porcelain_z` 移到 `scidev_git.py`；敏感/排除路径判定移到 `scidev_paths.py`。
 - `scidev_core.py` 从 7922 行降到约 7215 行；旧导入路径保留 re-export；`pyproject` 打包与 mypy 列表加入两个新模块（mypy 32 个文件）。core 159 项测试通过；全量 761 项 0 失败、14 跳过、无重试目标；`scidev_git` 覆盖 85%，`scidev_paths` 100%。远端 CI `42636505682` 三版本成功。

@@ -9,7 +9,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
+import shutil
 import sys
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +35,7 @@ from scidev_mcp_server import MCPServer, serve_stdio
 from scidev_errors import classify_message
 from scidev_mcp import MCPError, MCPManager
 from scidev_sandbox import DockerSandbox, SandboxError
+from scidev_provider import ProviderConfigError, key_status as provider_key_status, load as load_provider_config
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -254,6 +258,13 @@ def _parser() -> argparse.ArgumentParser:
     sandbox_parser.add_argument("--backend", choices=("local", "docker"), default="")
     sandbox_parser.add_argument("--image", default="")
     sandbox_parser.add_argument("--json", action="store_true")
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="diagnose the local runtime, provider, Git and sandbox setup",
+        description="Run offline environment checks without printing any API key.",
+    )
+    doctor_parser.add_argument("--workspace", default=".", help="project directory")
+    doctor_parser.add_argument("--json", action="store_true")
     return parser
 
 
@@ -543,6 +554,107 @@ def _sandbox_check_command(args: argparse.Namespace) -> int:
     return 0 if payload["ready"] else 1
 
 
+def _find_language_tool(workspace: Path, name: str) -> str | None:
+    candidates = [shutil.which(name)]
+    for relative in (Path(".venv") / "Scripts" / f"{name}.exe", Path(".venv") / "bin" / name):
+        candidate = workspace / relative
+        if candidate.is_file():
+            candidates.append(str(candidate))
+    return next((path for path in candidates if path), None)
+
+
+def _doctor_command(args: argparse.Namespace) -> int:
+    workspace = Path(args.workspace).expanduser().resolve()
+    if not workspace.is_dir():
+        print(f"workspace is not a directory: {workspace}", file=sys.stderr)
+        return 2
+    checks: list[dict[str, str]] = []
+
+    def add(name: str, status: str, detail: str, fix: str = "") -> None:
+        checks.append({"name": name, "status": status, "detail": detail, "fix": fix})
+
+    add(
+        "runtime",
+        "ok",
+        f"SciDevHarness {APP_VERSION}; Python {platform.python_version()}; {platform.system()} {platform.release()}",
+    )
+    if metadata is not None:
+        try:
+            pyside_version = metadata.version("PySide6")
+        except metadata.PackageNotFoundError:
+            add("pyside6", "error", "PySide6 未安装", "安装 requirements.txt 或运行启动脚本")
+        else:
+            add("pyside6", "ok", f"PySide6 {pyside_version}")
+
+    try:
+        provider = load_provider_config(workspace)
+        key_source = provider_key_status(workspace)
+        provider_status = "ok" if key_source != "missing" else "warn"
+        add(
+            "provider",
+            provider_status,
+            f"model={provider.model}; base_url={provider.base_url}; api_key={key_source}",
+            "" if provider_status == "ok" else "在设置中保存 API Key，或配置 SCIDEV_API_KEY",
+        )
+    except ProviderConfigError as exc:
+        add("provider", "error", f"provider 配置无效：{exc}", "检查 .research/provider.json 或环境变量")
+
+    git = GitManager(workspace)
+    try:
+        is_repo = git.is_repo()
+    except Exception as exc:  # noqa: BLE001 - doctor reports instead of failing
+        add("git", "error", f"Git 检查失败：{type(exc).__name__}: {exc}")
+    else:
+        if is_repo:
+            head = git.head_sha()[:12] or "(no commits)"
+            add("git", "ok", f"branch={git.branch() or '(detached)'}; head={head}")
+        else:
+            add("git", "warn", "当前目录不是 Git 仓库", "初始化 Git 后才能使用自动提交和 worktree")
+
+    backend = os.getenv("SCIDEV_SANDBOX_BACKEND", "local").strip().lower()
+    if backend in {"", "local", "none", "off"}:
+        add(
+            "sandbox",
+            "warn",
+            "local：命令以当前用户权限运行，不是 OS 沙箱",
+            "需要更强边界时使用 --sandbox docker 并先运行 sandbox-check",
+        )
+    elif backend == "docker":
+        add(
+            "sandbox",
+            "warn",
+            "docker：已配置，但尚未探测 daemon/image",
+            "运行 scidev sandbox-check --backend docker --image <镜像>",
+        )
+    else:
+        add("sandbox", "error", f"未知沙箱后端：{backend}", "设置 SCIDEV_SANDBOX_BACKEND=local 或 docker")
+
+    language_tools = {
+        name: _find_language_tool(workspace, name)
+        for name in ("ruff", "pyright", "typescript-language-server")
+    }
+    found = [name for name, path in language_tools.items() if path]
+    add(
+        "lsp",
+        "ok" if found else "warn",
+        "已找到：" + ", ".join(found) if found else "未找到 ruff/pyright/typescript-language-server",
+        "" if found else "安装 Ruff 或在设置中配置 TypeScript LSP",
+    )
+
+    ok = not any(item["status"] == "error" for item in checks)
+    payload = {"ok": ok, "version": APP_VERSION, "workspace": str(workspace), "checks": checks}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"SciDevHarness {APP_VERSION} · {workspace}")
+        for item in checks:
+            print(f"[{item['status']}] {item['name']}: {item['detail']}")
+            if item["fix"]:
+                print(f"       fix: {item['fix']}")
+        print(f"overall: {'ok' if ok else 'needs attention'}")
+    return 0 if ok else 1
+
+
 def _update_command(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     repo = args.repo or detect_repo(workspace if workspace.is_dir() else None)
@@ -743,6 +855,8 @@ def main(argv: list[str] | None = None) -> int:
         return _mcp_serve_command(args)
     if args.command == "sandbox-check":
         return _sandbox_check_command(args)
+    if args.command == "doctor":
+        return _doctor_command(args)
     if args.command != "exec":
         parser.print_help()
         return 2
