@@ -63,16 +63,16 @@ jobs:
         shell: pwsh
         run: |
           $deployment = Join-Path $env:RUNNER_TEMP "scidev-package-stage\deployment"
-          $executables = @(Get-ChildItem -LiteralPath $deployment -Filter "scidev_client.exe" -File -Recurse |
-            Where-Object { $_.Directory.Name -like "*.dist" })
+          $applicationDirectory = Join-Path $deployment "SciDevHarness.dist"
+          $executables = @(Get-ChildItem -LiteralPath $applicationDirectory -Filter "scidev_client.exe" -File)
           if ($executables.Count -ne 1) {
-            throw "Expected one standalone scidev_client.exe in a .dist directory; found $($executables.Count)."
+            throw "Expected one standalone scidev_client.exe in SciDevHarness.dist; found $($executables.Count)."
           }
           $qmlFiles = @(Get-ChildItem -LiteralPath $deployment -Filter "DevelopmentTree.qml" -File -Recurse)
           if ($qmlFiles.Count -lt 1) {
             throw "The standalone package is missing DevelopmentTree.qml."
           }
-          $applicationDirectory = Split-Path -Parent $executables[0].FullName
+          $applicationDirectory = Join-Path $deployment "SciDevHarness.dist"
           & "$env:GITHUB_WORKSPACE\scripts\copy_default_sample.ps1" -ApplicationDirectory $applicationDirectory
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:QT_QUICK_BACKEND = "software"

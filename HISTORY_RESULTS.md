@@ -4,7 +4,7 @@
 - 真实打包验证第一次失败在 `pyside6-deploy` 的交互提示，而不是 Nuitka：它只通过 `VIRTUAL_ENV` 判断虚拟环境，CI 没有设置，导致 EOF。
 - 修复 VIRTUAL_ENV 后真实 Nuitka 构建可以开始，但非交互环境拒绝 Dependency Walker 下载，导致 `deployment` 不存在。spec 增加 `--assume-yes-for-downloads`，这是构建工具链的下载开关，不是应用运行时的网络权限。
 - 构建随后完成，但 `pyside6-deploy` 默认清理生成目录；CI 需要 `--keep-deployment-files` 才能 smoke 和打安装包。
-- 保留目录后又发现两个同名 exe，`smoke` 现在只选 `.dist` 下的最终产物。全量 770 项 0 失败、14 跳过。边界：仍需 package workflow 实际产出安装包并做 smoke，dry-run 不能替代。
+- 保留目录后又发现两个同名 exe，smoke 改为直接使用 `deployment\SciDevHarness.dist\scidev_client.exe`。全量 770 项 0 失败、14 跳过。边界：仍需 package workflow 实际产出安装包并做 smoke，dry-run 不能替代。
 
 ## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
 - 静态测试入口发现现在复用明确的 protected 判定，跳过 `.git`、`.research`、`.venv`、`venv`、`node_modules`、`secrets`；减少无意义扫描和敏感目录暴露面。

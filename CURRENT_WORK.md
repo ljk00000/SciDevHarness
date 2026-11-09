@@ -5,7 +5,7 @@
 - 在构建 step 中显式 `set "VIRTUAL_ENV=%GITHUB_WORKSPACE%\.venv"`；本地 `pyside6-deploy --dry-run` 退出 0。新增 workflow 断言；全量 770 项 0 失败、14 跳过。
 - 修复后真实 Nuitka 构建成功，但 Nuitka 在非交互环境拒绝自动下载 Dependency Walker，`deployment` 未生成、smoke 失败。spec 增加 `--assume-yes-for-downloads`，并新增断言。
 - 再次重跑后构建完成，但 `pyside6-deploy` 默认在结束时清理 `deployment`，smoke 仍找不到目录。命令增加 `--keep-deployment-files`。
-- 第三次重跑找到 2 个 `scidev_client.exe`（构建中间产物 + `.dist`）；smoke 只接受 `.dist` 下的最终可执行文件。实际打包待再次重跑。
+- 第三次重跑找到 2 个 `scidev_client.exe`（仍在 `.dist` 过滤范围内）；改为直接使用 `deployment\SciDevHarness.dist\scidev_client.exe`。实际打包待再次重跑。
 
 ## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
 - `doctor --tests` 的 `ProjectContext` 不再用恒 false 的 protected 回调，改为排除 `.git/.research/.venv/venv/node_modules/secrets`，避免把本地状态或密钥目录纳入静态扫描。

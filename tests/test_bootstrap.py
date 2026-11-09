@@ -102,7 +102,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("--config-file pysidedeploy.spec --nuitka-version=4.1.1 --keep-deployment-files", workflow)
         self.assertIn('set "VIRTUAL_ENV=%GITHUB_WORKSPACE%\\.venv"', workflow)
         self.assertIn('Filter "scidev_client.exe"', workflow)
-        self.assertIn('$_.Directory.Name -like "*.dist"', workflow)
+        self.assertIn('Join-Path $deployment "SciDevHarness.dist"', workflow)
         self.assertIn('Filter "DevelopmentTree.qml"', workflow)
         self.assertIn("copy_default_sample.ps1", workflow)
         self.assertIn("--smoke-test", workflow)
