@@ -2,7 +2,7 @@
 
 ## 2026-11-09 21:45（Asia/Shanghai）· 拆分 RetryQueue 与稳定异常
 - `RetryQueue`（约 108 行）移到 `scidev_queue.py`；`PermanentError`/`TaskCancelled`/`TaskAborted` 移到 `scidev_errors.py`，`scidev_core` 保留 re-export。
-- `scidev_core.py` 从 8042 行降到 7922 行；`pyproject` 打包与 mypy 列表加入新模块（mypy 30 个文件）。core/errors 162 项测试通过；全量 761 项 0 失败、14 跳过（2 个 GUI 目标自动重试后通过）。
+- `scidev_core.py` 从 8042 行降到 7922 行；`pyproject` 打包与 mypy 列表加入新模块（mypy 30 个文件）。core/errors 162 项测试通过；全量 761 项 0 失败、14 跳过（2 个 GUI 目标自动重试后通过）。远端 CI `42629420605` 三版本成功。
 
 ## 2026-11-03 01:20（Asia/Shanghai）· 修复 Authenticode 时间戳端点
 - 用自签代码签名证书实际调用 `sign_release.ps1`，发现本机 signtool 对 `https://timestamp.digicert.com` 报 `Invalid Timestamp URL`；改为默认 HTTP，接受 HTTP/HTTPS 覆盖。
