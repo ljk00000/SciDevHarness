@@ -13,7 +13,7 @@ import platform
 import shutil
 import sys
 from importlib import metadata
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -572,6 +572,11 @@ def _sandbox_check_command(args: argparse.Namespace) -> int:
     return 0 if payload["ready"] else 1
 
 
+def _doctor_protected(path: str) -> bool:
+    parts = {part.casefold() for part in PurePosixPath(path).parts}
+    return bool(parts & {".git", ".research", ".venv", "venv", "node_modules", "secrets"})
+
+
 def _is_loopback_base_url(value: str) -> bool:
     try:
         host = urlsplit(value).hostname
@@ -705,7 +710,7 @@ def _doctor_command(args: argparse.Namespace) -> int:
 
     if getattr(args, "tests", False):
         try:
-            inventory = ProjectContext(workspace, lambda _path: False).list_paths()
+            inventory = ProjectContext(workspace, _doctor_protected).list_paths()
             discovery = TestCommandDiscovery.discover(workspace, inventory.get("paths", []))
             candidates = [
                 str(candidate.get("command") or "")

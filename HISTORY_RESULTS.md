@@ -1,5 +1,13 @@
 # 历史与结果
 
+## 2026-11-10 04:20（Asia/Shanghai）· 打包显式设置 VIRTUAL_ENV
+- 真实打包验证第一次失败在 `pyside6-deploy` 的交互提示，而不是 Nuitka：它只通过 `VIRTUAL_ENV` 判断虚拟环境，CI 没有设置，导致 EOF。
+- 修复 workflow 后本地 dry-run 能生成完整 Nuitka 计划并退出 0；全量 770 项 0 失败、14 跳过。这验证了 staging、spec 和参数，但没有完成真实 MSVC 构建。边界：仍需远端 package workflow 实际跑完才能证明安装包产物。
+
+## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
+- 静态测试入口发现现在复用明确的 protected 判定，跳过 `.git`、`.research`、`.venv`、`venv`、`node_modules`、`secrets`；减少无意义扫描和敏感目录暴露面。
+- 验证：CLI 30 项测试、ruff、mypy 通过；全量回归见本轮结果。边界：规则是名称级，不替代完整的路径/凭据策略。
+
 ## 2026-11-10 03:35（Asia/Shanghai）· showEvent 不再假定窗口句柄可提供屏幕
 - offscreen/PySide 下窗口句柄偶尔不是带 `screen()` 的 QWindow；`showEvent` 之前无条件向句柄要屏幕，导致 UI 测试间歇性 `QWidgetItem has no attribute 'screen'`。现在先取 `QWidget.screen()`，句柄只作为兜底。
 - 验证：`tests.test_ui_polish` 连续 10 轮通过；新增回归测试覆盖无 `screen()` 的 handle；全量 770 项 0 失败、14 跳过、无重试目标；远端 Windows CI run `42687016853` 三版本成功。边界：不同平台/窗口系统仍可能有别的句柄差异，但不再依赖句柄提供屏幕。

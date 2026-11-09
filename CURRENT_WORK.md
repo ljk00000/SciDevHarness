@@ -1,5 +1,13 @@
 # 当前工作
 
+## 2026-11-10 04:20（Asia/Shanghai）· 打包显式设置 VIRTUAL_ENV
+- 实际触发 `Windows Package Verification`（run `42689172205`）发现 `pyside6-deploy` 只认 `VIRTUAL_ENV` 环境变量；workflow 虽从 `.venv` 启动，仍被判定“not using a virtual environment”并等待 stdin，最终 `EOFError`。
+- 在构建 step 中显式 `set "VIRTUAL_ENV=%GITHUB_WORKSPACE%\.venv"`；本地 `pyside6-deploy --dry-run` 退出 0。新增 workflow 断言；全量 770 项 0 失败、14 跳过；实际打包待重跑。
+
+## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
+- `doctor --tests` 的 `ProjectContext` 不再用恒 false 的 protected 回调，改为排除 `.git/.research/.venv/venv/node_modules/secrets`，避免把本地状态或密钥目录纳入静态扫描。
+- CLI 30 项测试、ruff、mypy 通过；全量待验证。
+
 ## 2026-11-10 03:35（Asia/Shanghai）· showEvent 不再假定窗口句柄可提供屏幕
 - `tests.test_ui_polish` 偶发 `windowHandle()` 返回无 `screen()` 的 `QWidgetItem`，触发 `showEvent` AttributeError。改为优先 `self.screen()`，仅在为空时才尝试 handle，并新增无 `screen()` 句柄的回归测试。
 - `tests.test_ui_polish` 连续 10 轮通过；全量 770 项 0 失败、14 跳过、无重试目标。远端 CI `42687016853` 三版本成功。
