@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 01:50（Asia/Shanghai）· 显式保存指定编辑器
+- 3.13 CI 偶发 `EditorSplitInteractionTests` 保存后文件未变；`_save_editor` 之前通过全局 active editor 间接保存。现在把目标 editor 直接传给 `save_current_file(editor)`，消除分栏/焦点切换的竞态。
+- 定向测试连续 3 轮通过；ruff/mypy 通过。全量 768 项 0 失败、14 跳过、无重试目标。
+
 ## 2026-11-10 01:20（Asia/Shanghai）· 强化补丁提示
 - 系统提示新增：`apply_patch` 的 hunk 必须逐字使用 `read_file` 的真实行，schema 的 `old line`/`new line` 不能复制；提示长度上限从 700 调到 850。
 - 本地 Qwen 仍未能完成单行修改（继续追问/抄占位符），记录为模型限制。全量 768 项 0 失败、14 跳过（`UIProfileTests` 重试通过）；无新增测试。

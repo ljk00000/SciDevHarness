@@ -7265,7 +7265,7 @@ class ClientWindow(QMainWindow):
         self._active_editor_group = group
         if group.currentWidget() is not editor:
             group.setCurrentWidget(editor)
-        self.save_current_file()
+        self.save_current_file(editor)
 
     def _close_other_editor_tabs(self, keep_index: int, group: QTabWidget | None = None) -> None:
         group = group or self._active_editor_group
@@ -8541,8 +8541,8 @@ class ClientWindow(QMainWindow):
         if process is not None:
             process.close()
 
-    def save_current_file(self) -> None:
-        editor = self._active_editor()
+    def save_current_file(self, editor: CodeEditor | None = None) -> None:
+        editor = editor or self._active_editor()
         path = self._editor_paths.get(editor) if editor is not None else None
         if editor is None or path is None or not path.is_relative_to(self.project_root):
             self._append_log("当前没有可保存的项目文件")
