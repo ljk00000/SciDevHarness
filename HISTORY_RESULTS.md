@@ -2,7 +2,7 @@
 
 ## 2026-11-10 03:35（Asia/Shanghai）· showEvent 不再假定窗口句柄可提供屏幕
 - offscreen/PySide 下窗口句柄偶尔不是带 `screen()` 的 QWindow；`showEvent` 之前无条件向句柄要屏幕，导致 UI 测试间歇性 `QWidgetItem has no attribute 'screen'`。现在先取 `QWidget.screen()`，句柄只作为兜底。
-- 验证：`tests.test_ui_polish` 连续 10 轮通过；新增回归测试覆盖无 `screen()` 的 handle；全量 770 项 0 失败、14 跳过、无重试目标。边界：不同平台/窗口系统仍可能有别的句柄差异，但不再依赖句柄提供屏幕。
+- 验证：`tests.test_ui_polish` 连续 10 轮通过；新增回归测试覆盖无 `screen()` 的 handle；全量 770 项 0 失败、14 跳过、无重试目标；远端 Windows CI run `42687016853` 三版本成功。边界：不同平台/窗口系统仍可能有别的句柄差异，但不再依赖句柄提供屏幕。
 
 ## 2026-11-10 03:15（Asia/Shanghai）· 命令补全惰性创建
 - 窗口启动不再立即构造命令补全器；只有输入以 `>` 开头时创建，避免无交互窗口承担 QCompleter 的 Qt 对象和潜在原生崩溃。
