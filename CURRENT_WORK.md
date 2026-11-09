@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 02:15（Asia/Shanghai）· `doctor --tests` 静态入口发现
+- `doctor --tests` 复用 `ProjectContext` 的路径清单和 `TestCommandDiscovery`，只推断 test/lint/typecheck 候选命令、不执行；输出数量与首个候选，便于用户先确认自动验证入口。
+- 新增 1 项 CLI 集成测试（30 项）。全量 769 项 0 失败、14 跳过、无重试目标；`scidev_cli` 64%。
+
 ## 2026-11-10 01:50（Asia/Shanghai）· 显式保存指定编辑器
 - 3.13 CI 偶发 `EditorSplitInteractionTests` 保存后文件未变；`_save_editor` 之前通过全局 active editor 间接保存。现在把目标 editor 直接传给 `save_current_file(editor)`，消除分栏/焦点切换的竞态。
 - 定向测试连续 3 轮通过；ruff/mypy 通过。全量 768 项 0 失败、14 跳过、无重试目标。远端 CI `42670148888` 三版本成功。

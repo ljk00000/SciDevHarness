@@ -465,6 +465,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(check["status"], "ok")
         self.assertIn("tools=yes", check["detail"])
 
+    def test_doctor_tests_flag_reports_static_candidates(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-doctor-tests-") as temp:
+            root = Path(temp)
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_app.py").write_text(
+                "import unittest\n\nclass TestApp(unittest.TestCase):\n"
+                "    def test_ok(self):\n        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with patch("scidev_cli.ProjectContext") as context_type, contextlib.redirect_stdout(output):
+                context_type.return_value.list_paths.return_value = {
+                    "paths": ["tests/test_app.py"],
+                    "complete": True,
+                }
+                code = scidev_cli.main(["doctor", "--workspace", temp, "--tests", "--json"])
+        self.assertEqual(code, 0, output.getvalue())
+        payload = json.loads(output.getvalue())
+        check = next(item for item in payload["checks"] if item["name"] == "tests")
+        self.assertEqual(check["status"], "ok")
+        self.assertIn("unittest", check["detail"])
+
     def test_doctor_online_suggests_text_fallback_for_local_models(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
             output = io.StringIO()

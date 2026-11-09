@@ -18,6 +18,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from scidev_core import CodingAgent, EventLedger, GitManager, PermanentError, SummarySettings, new_id
+from scidev_context import ProjectContext
+from scidev_verification import TestCommandDiscovery
 from scidev_policy import ExecutionMode
 from scidev_attachments import AttachmentError, load_image_file
 from scidev_eval import EvalError, EvalRunner
@@ -271,6 +273,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument("--workspace", default=".", help="project directory")
     doctor_parser.add_argument("--json", action="store_true")
+    doctor_parser.add_argument(
+        "--tests",
+        action="store_true",
+        help="also infer test/lint/typecheck command candidates without running them",
+    )
     doctor_parser.add_argument(
         "--online",
         action="store_true",
@@ -695,6 +702,29 @@ def _doctor_command(args: argparse.Namespace) -> int:
         "已找到：" + ", ".join(found) if found else "未找到 ruff/pyright/typescript-language-server",
         "" if found else "安装 Ruff 或在设置中配置 TypeScript LSP",
     )
+
+    if getattr(args, "tests", False):
+        try:
+            inventory = ProjectContext(workspace, lambda _path: False).list_paths()
+            discovery = TestCommandDiscovery.discover(workspace, inventory.get("paths", []))
+            candidates = [
+                str(candidate.get("command") or "")
+                for candidate in discovery.get("candidates", [])
+                if candidate.get("command")
+            ]
+        except Exception as exc:  # noqa: BLE001 - doctor reports instead of failing
+            add("tests", "warn", f"测试命令推断失败：{type(exc).__name__}: {exc}")
+        else:
+            add(
+                "tests",
+                "ok" if candidates else "warn",
+                (
+                    f"发现 {len(candidates)} 个静态候选；首个：{candidates[0]}"
+                    if candidates
+                    else "未发现可识别的测试/lint/typecheck 入口"
+                ),
+                "" if candidates else "确认项目是否有 pytest/unittest/npm/cargo/go 等入口",
+            )
 
     ok = not any(item["status"] == "error" for item in checks)
     payload = {"ok": ok, "version": APP_VERSION, "workspace": str(workspace), "checks": checks}
