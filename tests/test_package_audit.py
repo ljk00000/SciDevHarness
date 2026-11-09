@@ -125,6 +125,29 @@ class StandaloneAuditTests(unittest.TestCase):
                 )
             self.assertEqual(result, 1)
 
+    def test_manifest_prefers_the_dist_executable_over_intermediate_builds(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-package-audit-") as temporary:
+            root = Path(temporary)
+            deployment, site_packages = self._fixture(root)
+            (deployment / "scidev_client.exe").unlink()
+            dist = deployment / "SciDevHarness.dist"
+            intermediate = deployment / "build"
+            dist.mkdir()
+            intermediate.mkdir()
+            (dist / "scidev_client.exe").write_bytes(b"final executable")
+            (intermediate / "scidev_client.exe").write_bytes(b"intermediate executable")
+            manifest = build_manifest(
+                deployment,
+                site_packages,
+                python_version="3.14",
+                pyside_version="6.11.2",
+                nuitka_version="4.1.1",
+            )
+            self.assertEqual(
+                manifest["executable"]["path"],
+                "SciDevHarness.dist/scidev_client.exe",
+            )
+
     def test_manifest_rejects_incomplete_standalone_outputs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-package-audit-") as temporary:
             root = Path(temporary)

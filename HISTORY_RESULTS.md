@@ -5,7 +5,8 @@
 - 修复 VIRTUAL_ENV 后真实 Nuitka 构建可以开始，但非交互环境拒绝 Dependency Walker 下载，导致 `deployment` 不存在。spec 增加 `--assume-yes-for-downloads`，这是构建工具链的下载开关，不是应用运行时的网络权限。
 - 构建随后完成，但 `pyside6-deploy` 默认清理生成目录；CI 需要 `--keep-deployment-files` 才能 smoke 和打安装包。
 - 保留目录后又发现两个同名 exe，smoke 改为直接使用 `deployment\SciDevHarness.dist\scidev_client.exe`。
-- GUI 子系统 exe 用 `&` 启动时 PowerShell 不等待，`$LASTEXITCODE` 为空；改用 `Start-Process -Wait` 并记录 stdout/stderr/exit code。全量 770 项 0 失败、14 跳过。边界：仍需 package workflow 实际产出安装包并做 smoke，dry-run 不能替代。
+- GUI 子系统 exe 用 `&` 启动时 PowerShell 不等待，`$LASTEXITCODE` 为空；改用 `Start-Process -Wait` 并记录 stdout/stderr/exit code。
+- smoke 通过后，审计脚本又把中间产物算作第二个 exe；现在优先选 `.dist` 下的最终可执行文件，并新增审计测试；全量 771 项 0 失败、14 跳过。边界：仍需 package workflow 实际产出安装包并做 smoke，dry-run 不能替代。
 
 ## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
 - 静态测试入口发现现在复用明确的 protected 判定，跳过 `.git`、`.research`、`.venv`、`venv`、`node_modules`、`secrets`；减少无意义扫描和敏感目录暴露面。
