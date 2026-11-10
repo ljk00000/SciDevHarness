@@ -2,7 +2,7 @@
 
 ## 2026-11-10 10:50（Asia/Shanghai）· 拆分补丁审核 UI
 - `UnifiedDiffHighlighter`、`PatchDiffPanel`、`PatchReviewCard` 移入 `scidev_patch_ui.py`，客户端保留同名导入；diff 面板改用普通只读 `QPlainTextEdit`。
-- 删除客户端 283 行；mypy 覆盖 34 个源文件；PatchReviewUiTests 5 项通过。全量/CI 待验证。
+- 删除客户端 283 行；mypy 覆盖 34 个源文件；PatchReviewUiTests 5 项通过；Windows CI `42745635924` 三版本成功。package 待重跑。
 
 ## 2026-11-10 10:30（Asia/Shanghai）· 取消延迟按请求时刻计算
 - 3.13 CI 失败：命令在慢 runner 上约 10s 才启动，原断言从 worker 启动计时，`elapsed=10.27 > 8`；这不是取消失效。
