@@ -1,6 +1,7 @@
 """Code editor widget with line numbers and completion support."""
 from __future__ import annotations
 
+import difflib
 import re
 
 from PySide6.QtCore import QRect, QSize, QStringListModel, Qt
@@ -41,6 +42,8 @@ class CodeEditor(QPlainTextEdit):
         self._line_number_background = QColor("#1e1e1e")
         self._line_number_foreground = QColor("#858585")
         self._current_line_background = QColor("#252526")
+        self._diff_added: set[int] = set()
+        self._diff_modified: set[int] = set()
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
@@ -190,15 +193,64 @@ class CodeEditor(QPlainTextEdit):
             block_number += 1
 
     def highlight_current_line(self) -> None:
-        if not self.appearance_preferences.highlight_line:
-            self.setExtraSelections([])
-            return
-        selection = QTextEdit.ExtraSelection()
-        selection.format.setBackground(self._current_line_background)
-        selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-        selection.cursor = self.textCursor()
-        selection.cursor.clearSelection()
-        self.setExtraSelections([selection])
+        selections: list[QTextEdit.ExtraSelection] = []
+        if self.appearance_preferences.highlight_line:
+            selection = QTextEdit.ExtraSelection()
+            selection.format.setBackground(self._current_line_background)
+            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+            selection.cursor = self.textCursor()
+            selection.cursor.clearSelection()
+            selections.append(selection)
+        selections.extend(self._diff_selections())
+        self.setExtraSelections(selections)
+
+    def set_diff_lines(self, added: set[int], modified: set[int]) -> None:
+        """Highlight 1-based changed lines without touching the document text."""
+        self._diff_added = {int(line) for line in added if int(line) > 0}
+        self._diff_modified = {int(line) for line in modified if int(line) > 0}
+        self.highlight_current_line()
+
+    def clear_diff_lines(self) -> None:
+        self._diff_added.clear()
+        self._diff_modified.clear()
+        self.highlight_current_line()
+
+    def highlight_unsaved_diff(self, disk_text: str) -> tuple[int, int]:
+        """Compare the buffer with disk and mark added/modified lines inline."""
+        old_lines = str(disk_text).splitlines()
+        new_lines = self.toPlainText().splitlines()
+        added: set[int] = set()
+        modified: set[int] = set()
+        matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+        for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+            if tag == "insert":
+                added.update(range(j1 + 1, j2 + 1))
+            elif tag == "replace":
+                modified.update(range(j1 + 1, j2 + 1))
+            elif tag == "delete":
+                anchor = min(j1 + 1, len(new_lines))
+                if anchor > 0:
+                    modified.add(anchor)
+        self.set_diff_lines(added, modified)
+        return len(added), len(modified)
+
+    def _diff_selections(self) -> list[QTextEdit.ExtraSelection]:
+        selections: list[QTextEdit.ExtraSelection] = []
+        for lines, color in (
+            (self._diff_added, QColor(85, 227, 193, 45)),
+            (self._diff_modified, QColor(242, 202, 120, 55)),
+        ):
+            for line in sorted(lines):
+                block = self.document().findBlockByNumber(line - 1)
+                if not block.isValid():
+                    continue
+                selection = QTextEdit.ExtraSelection()
+                selection.format.setBackground(color)
+                selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+                selection.cursor = QTextCursor(block)
+                selection.cursor.clearSelection()
+                selections.append(selection)
+        return selections
 
     def set_ui_profile(self, profile_key: str) -> None:
         profile = ui_profile_for_key(profile_key)

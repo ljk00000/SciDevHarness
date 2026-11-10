@@ -5319,6 +5319,14 @@ class ClientWindow(QMainWindow):
         save.setEnabled(widget in self._editor_paths and isinstance(widget, CodeEditor) and widget.document().isModified())
         save.triggered.connect(lambda: self._save_editor(widget))
         path = self._editor_paths.get(widget)
+        show_diff = menu.addAction("显示未保存差异")
+        show_diff.setEnabled(
+            isinstance(widget, CodeEditor) and path is not None and widget.document().isModified()
+        )
+        show_diff.triggered.connect(lambda: self._show_editor_buffer_diff(widget))
+        clear_diff = menu.addAction("清除差异标记")
+        clear_diff.setEnabled(isinstance(widget, CodeEditor))
+        clear_diff.triggered.connect(lambda: self._clear_editor_diff(widget))
         self._add_external_file_actions(menu, path)
         menu.addSeparator()
         close = menu.addAction("关闭")
@@ -5329,6 +5337,29 @@ class ClientWindow(QMainWindow):
         open_side.setEnabled(path is not None)
         open_side.triggered.connect(lambda: self._open_editor_to_side(path))
         menu.exec(bar.mapToGlobal(point))
+
+    def _show_editor_buffer_diff(self, editor: QWidget | None) -> None:
+        if not isinstance(editor, CodeEditor):
+            self._append_log("当前标签不是代码编辑器")
+            return
+        path = self._editor_paths.get(editor)
+        if path is None:
+            self._append_log("当前标签没有对应的项目文件")
+            return
+        try:
+            disk_text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            self._append_log(f"读取磁盘版本失败：{exc}")
+            return
+        added, modified = editor.highlight_unsaved_diff(disk_text)
+        self._append_log(f"差异标记：新增 {added} 行，修改 {modified} 行；保存后自动消失")
+
+    def _clear_editor_diff(self, editor: QWidget | None) -> None:
+        if not isinstance(editor, CodeEditor):
+            self._append_log("当前标签不是代码编辑器")
+            return
+        editor.clear_diff_lines()
+        self._append_log("已清除差异标记")
 
     def _save_editor(self, editor: QWidget | None) -> None:
         group = self._editor_group_for(editor)
@@ -6662,6 +6693,7 @@ class ClientWindow(QMainWindow):
                 text = text.replace("\n", line_ending)
             result = self.toolbox.write_file(relative, text)
             editor.document().setModified(False)
+            editor.clear_diff_lines()
             self._update_editor_tab_for(editor)
             self._append_log(result)
             self.refresh_git_status()

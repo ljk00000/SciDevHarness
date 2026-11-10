@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 16:20（Asia/Shanghai）· 编辑器内联差异标记
+- `CodeEditor.highlight_unsaved_diff()` 对比磁盘与缓冲区，按行标记新增/修改；保存后自动清除。
+- 编辑器标签菜单新增“显示未保存差异”“清除差异标记”；4 个单元测试 + 1 个 UI 流程通过。全量/CI 待验证。
+
 ## 2026-11-10 15:45（Asia/Shanghai）· 支持拖入/粘贴图片文件路径
 - `PromptEdit` 识别剪贴板文件 URL 中的 PNG/JPEG/GIF/WebP，发出 `image_file_pasted`；UI 复用 `load_image_file()` 的有界校验。
 - 剪贴板位图与图片文件两种入口均保留 4 张/5MB/12MB 限制；目标测试 7 项通过；Windows CI `42766254901` 三版本成功；package run `42767574275` 验证新入口能进入 installer。

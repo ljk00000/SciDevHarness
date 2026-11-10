@@ -3220,6 +3220,28 @@ class SummarySettingsUiTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+    def test_editor_buffer_diff_marks_changed_lines_and_save_clears_them(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-inline-diff-") as temp:
+            root = Path(temp)
+            path = root / "sample.py"
+            path.write_text("alpha\nbeta\n", encoding="utf-8")
+            window = ClientWindow(root)
+            try:
+                window.show()
+                self.app.processEvents()
+                window._open_file(path, preview=False)
+                editor = window._active_editor()
+                self.assertIsInstance(editor, CodeEditor)
+                editor.setPlainText("alpha\nchanged\ngamma\n")
+                window._show_editor_buffer_diff(editor)
+                self.assertTrue(editor._diff_added or editor._diff_modified)
+                window.save_current_file(editor)
+                self.assertEqual(editor._diff_added, set())
+                self.assertEqual(editor._diff_modified, set())
+            finally:
+                window.close()
+                self.app.processEvents()
+
     def test_lsp_diagnostics_are_rendered_in_problems_panel(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-lsp-ui-") as temp:
             root = Path(temp)
