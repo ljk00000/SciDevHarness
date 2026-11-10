@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 11:20（Asia/Shanghai）· 拆分聊天与通知 UI
+- `MessageBubble`、`ExecutionGroup`、`NotificationToast` 移入 `scidev_chat_ui.py`，客户端保留同名导入；删除 213 行。
+- 客户端约 8507 行；mypy 覆盖 35 个源文件；通知/补丁/UI polish 18 项通过。全量/CI 待验证。
+
 ## 2026-11-10 10:50（Asia/Shanghai）· 拆分补丁审核 UI
 - `UnifiedDiffHighlighter`、`PatchDiffPanel`、`PatchReviewCard` 移入 `scidev_patch_ui.py`，客户端保留同名导入；diff 面板改用普通只读 `QPlainTextEdit`。
 - 删除客户端 283 行；mypy 覆盖 34 个源文件；PatchReviewUiTests 5 项通过；Windows CI `42745635924` 三版本成功；package run `42746749314` 验证新模块能进入 installer。
