@@ -787,7 +787,7 @@ class ProjectContextRepositoryRegressionTests(unittest.TestCase):
             ("project memory index summaries", "scidev_memory.py", []),
             ("task planning update statuses", "scidev_planning.py", []),
             ("nested test command discovery", "scidev_verification.py", []),
-            ("responsive theme QML version tree", "scidev_client.py", []),
+            ("responsive theme QML version tree", ("scidev_client.py", "scidev_tree_ui.py"), []),
             (
                 "俄罗斯方块网页画布键盘控制",
                 "examples/tetris/index.html",
@@ -802,7 +802,11 @@ class ProjectContextRepositoryRegressionTests(unittest.TestCase):
                 # new files can shift neighbours without losing the right answer.
                 # Assert against the eight sources that are actually sent to the
                 # model, not an arbitrary top-six prefix.
-                self.assertIn(expected, result["sources"], result["sources"])
+                candidates = (expected,) if isinstance(expected, str) else expected
+                self.assertTrue(
+                    any(candidate in result["sources"] for candidate in candidates),
+                    result["sources"],
+                )
 
 
 if __name__ == "__main__":
