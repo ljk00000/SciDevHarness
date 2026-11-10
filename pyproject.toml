@@ -94,6 +94,7 @@ files = [
     "scidev_plan_ui.py",
     "scidev_widgets.py",
     "scidev_tree_ui.py",
+    "scidev_shell_ui.py",
     "scidev_mcp_ui.py",
     "scidev_analytics.py",
     "scidev_analytics_ui.py",

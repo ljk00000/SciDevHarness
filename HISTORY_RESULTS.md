@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-10 13:10（Asia/Shanghai）· 拆分项目过滤器与标题栏
+- `ProjectFilterProxy`、`WindowTitleBar` 移入 `scidev_shell_ui.py`；`_is_link_or_junction` 归入 `scidev_paths.py`。
+- 客户端降至约 7775 行，mypy 覆盖 39 个源文件；快速打开/搜索 12 项通过。边界：只移动代码与 re-export，行为不变。
+
 ## 2026-11-10 12:30（Asia/Shanghai）· 拆分 QML 开发树
 - `DevelopmentTreeView`、布局偏移辅助函数/常量移入 `scidev_tree_ui.py`；`application_base_dir` 移入 `scidev_paths.py`。
 - 客户端降至约 7974 行，mypy 覆盖 38 个源文件；开发树交互测试通过。CI 暴露上下文回归测试硬编码旧文件名，现接受 `scidev_client.py` 或 `scidev_tree_ui.py`；Windows CI `42755325779` 三版本成功；package run `42756506069` 验证 `scidev_tree_ui.py` 能进入 installer。边界：只移动代码与 re-export，行为不变。

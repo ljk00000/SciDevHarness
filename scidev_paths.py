@@ -12,6 +12,18 @@ def application_base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _is_link_or_junction(path: Path) -> bool:
+    try:
+        if path.is_symlink():
+            return True
+        is_junction = getattr(path, "is_junction", None)
+        return bool(callable(is_junction) and is_junction())
+    except OSError:
+        # A path can disappear while QFileSystemModel refreshes; keep filesystem
+        # errors out of the Qt filter callback.
+        return True
+
+
 DEFAULT_EXCLUDED_PATH_NAMES = frozenset(
     {".git", ".research", "__pycache__", ".pytest_cache", ".venv", "venv", "node_modules"}
 )
