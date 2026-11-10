@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-10 14:00（Asia/Shanghai）· 拆分代码编辑器
+- `LineNumberArea` / `CodeEditor` 移入 `scidev_editor.py`；客户端保留 `CodeEditor` re-export。
+- 客户端降至约 7583 行，mypy 覆盖 40 个源文件；编辑器持久化/分屏 10 项通过。边界：只移动代码与类型标注，行为不变。
+
 ## 2026-11-10 13:10（Asia/Shanghai）· 拆分项目过滤器与标题栏
 - `ProjectFilterProxy`、`WindowTitleBar` 移入 `scidev_shell_ui.py`；`_is_link_or_junction` 归入 `scidev_paths.py`。
 - 客户端降至约 7775 行，mypy 覆盖 39 个源文件；快速打开/搜索 12 项通过；Windows CI `42757809639` 三版本成功；package run `42759011980` 验证 `scidev_shell_ui.py` 能进入 installer。边界：只移动代码与 re-export，行为不变。
