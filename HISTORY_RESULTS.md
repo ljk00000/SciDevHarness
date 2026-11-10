@@ -2,7 +2,7 @@
 
 ## 2026-11-10 08:45（Asia/Shanghai）· 拆分 LSP Qt 桥接
 - `ResidentLSPBridge` 移入 `scidev_lsp_ui.py`，客户端不再直接依赖 `ResidentLSP`/诊断线程；删除未使用的 `LSPDiagnosticsThread` 和无效的 `_lsp_thread` 关闭分支。
-- 新模块纳入 mypy（33 个源文件）；全量 771 项 0 失败、14 跳过，`scidev_lsp_ui` 覆盖率 100%。边界：只做移动/删除，不改诊断行为。
+- 新模块纳入 mypy（33 个源文件）；全量 771 项 0 失败、14 跳过，`scidev_lsp_ui` 覆盖率 100%；Windows CI `42730916986` 三版本成功。边界：只做移动/删除，不改诊断行为。
 
 ## 2026-11-10 08:20（Asia/Shanghai）· 含空格路径重装与取消测试
 - 安装 E2E 目录改为含空格路径并重复安装；`Start-Process -ArgumentList` 数组不会自动引用空格参数，改为 `/DIR="..."` 后 run `42725771804` 全绿，覆盖安装后 smoke/卸载通过。
