@@ -181,9 +181,7 @@ jobs:
           }
           $target = Join-Path $env:RUNNER_TEMP "scidev install e2e"
           if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
-          $installArgs = @(
-            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=$target"
-          )
+          $installArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=`"$target`""
           $install = Start-Process -FilePath $installer -ArgumentList $installArgs -PassThru -Wait
           if ($install.ExitCode -ne 0) {
             throw "Installer failed with exit code $($install.ExitCode)"

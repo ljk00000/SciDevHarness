@@ -119,6 +119,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn('"/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"', workflow)
         self.assertIn("unins000.exe", workflow)
         self.assertIn('Join-Path $env:RUNNER_TEMP "scidev install e2e"', workflow)
+        self.assertIn("/DIR=`\"$target`\"", workflow)
         self.assertIn("Reinstall over an existing installation", workflow)
         self.assertIn("retention-days: 7", workflow)
         self.assertIn("scripts\\audit_standalone.py", workflow)

@@ -2,7 +2,7 @@
 
 ## 2026-11-10 08:10（Asia/Shanghai）· 安装路径与重复安装
 - CI 安装 E2E 的目录改为含空格路径（`scidev install e2e`），并在 smoke 前重复运行同一安装包，验证覆盖安装/幂等路径；随后仍卸载并检查残留。
-- 本地 bootstrap 断言通过；package workflow 待重跑。
+- 首轮失败：`Start-Process -ArgumentList` 数组不会给含空格路径加引号，`/DIR` 被拆成两个参数；改为单个带引号参数串 `/DIR="..."`。本地 bootstrap 断言通过；package workflow 待重跑。
 
 ## 2026-11-10 07:50（Asia/Shanghai）· 安装包安装/卸载 E2E
 - package workflow 新增真实静默安装 → 运行已安装 exe 的 `--smoke-test` → 静默卸载 → 检查 exe 已删除；这样安装 E2E 在干净 runner 上执行，不依赖本机策略。
