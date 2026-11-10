@@ -2,7 +2,7 @@
 
 ## 2026-11-10 15:10（Asia/Shanghai）· 支持粘贴剪贴板图片
 - `PromptEdit` 捕获剪贴板/拖放图片，经 `image_from_bytes()` 校验后追加到待发送附件；仍受 4 张、5MB/张、12MB 总量限制。
-- 新增图片字节入口与剪贴板 UI 测试；附件/目标测试 8 项通过。全量/CI 待验证。
+- 新增图片字节入口与剪贴板 UI 测试；附件/目标测试 8 项通过；Windows CI `42763474797` 三版本成功。package 待重跑。
 
 ## 2026-11-10 14:00（Asia/Shanghai）· 拆分代码编辑器
 - `LineNumberArea` / `CodeEditor` 移入 `scidev_editor.py`，客户端保留 `CodeEditor` re-export。
