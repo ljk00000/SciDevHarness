@@ -3,7 +3,7 @@
 ## 2026-11-10 08:20（Asia/Shanghai）· 含空格路径重装与取消测试
 - 安装 E2E 目录改为含空格路径并重复安装；`Start-Process -ArgumentList` 数组不会自动引用空格参数，改为 `/DIR="..."` 后 run `42725771804` 全绿，覆盖安装后 smoke/卸载通过。
 - 3.12 CI 的批准命令取消测试在慢 runner 上等待 `tool_called` 超时；现在同时观察 `_active_command` 进程，定向测试 5 轮通过。边界：测试更稳，不改变取消语义。
-- 全量由 Windows CI 验证。
+- 全量 771 项 0 失败、14 跳过；Windows CI `42727312933` 三版本成功。
 
 ## 2026-11-10 08:00（Asia/Shanghai）· 安装/卸载 E2E 通过
 - package workflow 在干净 Windows runner 上完成真实静默安装 → 已安装 exe 的 `--smoke-test` → 静默卸载 → 确认 exe 已删除，run `42722815742` 全绿。
