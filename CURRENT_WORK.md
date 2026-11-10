@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 08:45（Asia/Shanghai）· 拆分 LSP Qt 桥接
+- 把 `ResidentLSPBridge` 从 `scidev_client.py` 拆到 `scidev_lsp_ui.py`；删除从未实例化的 `LSPDiagnosticsThread` 和对应死清理分支，客户端只保留 LSP 调用。
+- 新模块加入 mypy 文件列表（33 个源文件）；全量 771 项 0 失败、14 跳过，新模块覆盖率 100%。Windows CI 待验证。
+
 ## 2026-11-10 08:20（Asia/Shanghai）· 空路径重装与取消测试
 - 安装 E2E 改为含空格路径 + 覆盖安装；首轮暴露 `ArgumentList` 未加引号导致 `/DIR` 被拆开，改为单个带引号参数串后 run `42725771804` 全绿。
 - 3.12 CI 的取消测试偶发“命令未在取消前启动”；现在同时等待 `tool_called` 事件或 `_active_command` 进程，重复 5 轮通过；Windows CI `42727312933` 三版本成功。

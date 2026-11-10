@@ -9,7 +9,6 @@ The coding Agent and its retry/audit services remain UI-independent in
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import ast
 import io
 import json
@@ -113,7 +112,8 @@ from scidev_core import (
 )
 from scidev_icons import activity_icon
 from scidev_highlighting import LanguageHighlighter, PythonHighlighter
-from scidev_lsp import ResidentLSP, collect_diagnostics as collect_lsp_diagnostics, language_spec
+from scidev_lsp import language_spec
+from scidev_lsp_ui import ResidentLSPBridge
 from scidev_worktree import WorktreeError, WorktreeManager
 from scidev_worktree_ui import WorktreeDialog
 from scidev_pty import PTYSession, PTYUnavailable
@@ -800,47 +800,6 @@ class ProviderCheckThread(QThread):
         except Exception as exc:  # noqa: BLE001 - a connectivity probe must not crash the UI
             ok, message = False, f"{type(exc).__name__}: {exc}"
         self.checked.emit(ok, message)
-
-
-class ResidentLSPBridge(QObject):
-    diagnostics_ready = Signal(str, int, object, str)
-
-    def __init__(self, root: Path, parent=None):
-        super().__init__(parent)
-        self._resident = ResidentLSP(root, self._deliver)
-        self._resident.start()
-
-    def _deliver(self, path: Path, generation: int, diagnostics: object, error: str) -> None:
-        try:
-            self.diagnostics_ready.emit(str(path), generation, diagnostics, error)
-        except RuntimeError:
-            # The window closed while the resident LSP thread was finishing.
-            return
-
-    def submit(self, path: Path, text: str, generation: int) -> None:
-        self._resident.submit(path, text, generation)
-
-    def close(self) -> None:
-        self._resident.close()
-
-
-class LSPDiagnosticsThread(QThread):
-    diagnostics_ready = Signal(str, int, object, str)
-
-    def __init__(self, root: Path, path: Path, text: str, generation: int, parent: QObject | None = None):
-        super().__init__(parent)
-        self.root = root
-        self.path = path
-        self.text = text
-        self.generation = generation
-
-    def run(self) -> None:
-        try:
-            diagnostics = collect_lsp_diagnostics(self.root, self.path, self.text, timeout=3.0)
-            payload = [asdict(item) for item in diagnostics]
-            self.diagnostics_ready.emit(str(self.path), self.generation, payload, "")
-        except Exception as exc:  # noqa: BLE001 - diagnostics are optional and must not crash the UI
-            self.diagnostics_ready.emit(str(self.path), self.generation, [], f"{type(exc).__name__}: {exc}")
 
 
 class ElidedLabel(QLabel):
@@ -2834,7 +2793,6 @@ class ClientWindow(QMainWindow):
         self._code_intel_timer.setSingleShot(True)
         self._code_intel_timer.setInterval(self.CODE_INTEL_DEBOUNCE_MS)
         self._code_intel_timer.timeout.connect(self._refresh_code_intel)
-        self._lsp_thread: LSPDiagnosticsThread | None = None
         self._resident_lsp_bridge: ResidentLSPBridge | None = None
         self._lsp_generation = 0
         self._lsp_diagnostics: dict[str, list[dict]] = {}
@@ -9434,12 +9392,6 @@ class ClientWindow(QMainWindow):
         if completion_popup is not None:
             completion_popup.close()
             self._completion_popup = None
-        lsp_thread = getattr(self, "_lsp_thread", None)
-        if lsp_thread is not None and lsp_thread.isRunning():
-            lsp_thread.wait(12000)
-            if lsp_thread.isRunning():
-                lsp_thread.terminate()
-                lsp_thread.wait(1000)
         resident_lsp = getattr(self, "_resident_lsp_bridge", None)
         if resident_lsp is not None:
             resident_lsp.close()
