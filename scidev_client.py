@@ -6103,7 +6103,7 @@ class ClientWindow(QMainWindow):
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, card)
         QTimer.singleShot(
             0,
-            lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()),
+            self._scroll_chat_to_bottom,
         )
 
     def _open_patch_diff_tab(self, request: dict[str, Any]) -> None:
@@ -6564,7 +6564,7 @@ class ClientWindow(QMainWindow):
             self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
             self._streaming_bubbles[key] = bubble
         bubble.append_message(text)
-        QTimer.singleShot(0, lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()))
+        QTimer.singleShot(0, self._scroll_chat_to_bottom)
 
     def _finish_streamed_assistant(self, payload: dict[str, Any]) -> None:
         session_id = str(payload.get("session_id", ""))
@@ -6579,7 +6579,7 @@ class ClientWindow(QMainWindow):
             return
         bubble.set_speaker("Agent")
         bubble.set_message(text)
-        QTimer.singleShot(0, lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()))
+        QTimer.singleShot(0, self._scroll_chat_to_bottom)
 
     def _interrupt_streaming_bubbles(self, speaker: str) -> None:
         for bubble in self._streaming_bubbles.values():
@@ -6692,7 +6692,15 @@ class ClientWindow(QMainWindow):
             group.add_item(bubble)
         else:
             self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
-        QTimer.singleShot(0, lambda: self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum()))
+        QTimer.singleShot(0, self._scroll_chat_to_bottom)
+
+    def _scroll_chat_to_bottom(self) -> None:
+        try:
+            scrollbar = self.chat_scroll.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        except RuntimeError:
+            # A queued scroll may run after the window has already closed.
+            return
 
     def _clear_chat_history(self) -> None:
         for request in list(self._pending_patch_reviews.values()):
