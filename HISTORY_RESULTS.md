@@ -2,7 +2,7 @@
 
 ## 2026-11-10 11:20（Asia/Shanghai）· 拆分聊天与通知 UI
 - `MessageBubble`、`ExecutionGroup`、`NotificationToast` 移入 `scidev_chat_ui.py`；客户端降至约 8507 行，mypy 覆盖 35 个源文件。
-- 通知/补丁/UI polish 18 项通过。边界：仅移动与类型标注，行为不变。
+- 通知/补丁/UI polish 18 项通过；Windows CI `42748304193` 三版本成功。边界：仅移动与类型标注，行为不变。
 
 ## 2026-11-10 10:50（Asia/Shanghai）· 拆分补丁审核 UI
 - 补丁高亮、编辑器侧 diff 面板和聊天侧审核卡移入 `scidev_patch_ui.py`；客户端从约 9000 行降到约 8719 行，mypy 覆盖 34 个源文件。
