@@ -2,7 +2,7 @@
 
 ## 2026-11-10 09:40（Asia/Shanghai）· 分离文档的布局
 - 关闭共享文档视图时，裸 `QTextDocument` 缺少 `QPlainTextDocumentLayout`；PySide6 需显式 `setDocumentLayout` 才消除 `QPlainTextEdit::setDocument` 警告。
-- split 7 项测试连续 2 轮 0 warning；全量 771 项 0 失败、14 跳过，警告消失。边界：有 1 个 `EditorSplitInteractionTests` 原生崩溃后重试通过，尚未做到零重试。
+- split 7 项测试连续 2 轮 0 warning；全量 771 项 0 失败、14 跳过，警告消失；Windows CI `42738524760` 三版本成功。边界：有 1 个 `EditorSplitInteractionTests` 原生崩溃后重试通过，尚未做到零重试。
 
 ## 2026-11-10 09:10（Asia/Shanghai）· 延迟滚动回调保护
 - `QTimer.singleShot(0, lambda: self.chat_scroll...)` 可能在窗口销毁后执行；改为带 RuntimeError 保护的 `_scroll_chat_to_bottom()`，覆盖全部 4 个调用点。
