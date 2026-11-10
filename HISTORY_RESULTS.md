@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-10 10:30（Asia/Shanghai）· 取消延迟按请求时刻计算
+- 取消测试在慢 runner 上因命令启动耗时被误判失败；断言现在只测 `request_cancel()` 到 worker 结束的延迟，定向 5 轮通过。边界：不改变取消语义，只修正观测点。
+
+## 2026-11-10 10:10（Asia/Shanghai）· 删除遗留开发树
+- `_LegacyDevelopmentTreeView` 已无引用，删除 479 行和 5 个只服务它的导入；当前 QML `DevelopmentTreeView` 不变。client/UI 124 项测试通过。
+
 ## 2026-11-10 09:40（Asia/Shanghai）· 分离文档的布局
 - 关闭共享文档视图时，裸 `QTextDocument` 缺少 `QPlainTextDocumentLayout`；PySide6 需显式 `setDocumentLayout` 才消除 `QPlainTextEdit::setDocument` 警告。
 - split 7 项测试连续 2 轮 0 warning；全量 771 项 0 失败、14 跳过，警告消失；Windows CI `42738524760` 三版本成功。边界：有 1 个 `EditorSplitInteractionTests` 原生崩溃后重试通过，尚未做到零重试。

@@ -4806,7 +4806,6 @@ class CancellationTests(unittest.TestCase):
                 }],
             }
             errors: list[str] = []
-            started = time.monotonic()
 
             def execute() -> None:
                 try:
@@ -4834,9 +4833,10 @@ class CancellationTests(unittest.TestCase):
                 agent.request_cancel()
                 worker.join(10)
                 self.fail("the approved command did not start before cancellation")
+            cancel_requested = time.monotonic()
             agent.request_cancel()
             worker.join(10)
-            elapsed = time.monotonic() - started
+            elapsed = time.monotonic() - cancel_requested
             self.assertFalse(worker.is_alive())
             self.assertLess(elapsed, 8)
             self.assertTrue(errors)
