@@ -2,7 +2,7 @@
 
 ## 2026-11-10 11:50（Asia/Shanghai）· 拆分任务计划与通用控件
 - `TaskPlanPanel` 移入 `scidev_plan_ui.py`，`ElidedLabel` 移入 `scidev_widgets.py`；客户端保留同名导入，再减 260 行。
-- 客户端约 8249 行；mypy 覆盖 37 个源文件；UI polish/通知 13 项通过。全量/CI 待验证。
+- 客户端约 8249 行；mypy 覆盖 37 个源文件；UI polish/通知 13 项通过；Windows CI `42751399374` 三版本成功。package 待重跑。
 
 ## 2026-11-10 11:20（Asia/Shanghai）· 拆分聊天与通知 UI
 - `MessageBubble`、`ExecutionGroup`、`NotificationToast` 移入 `scidev_chat_ui.py`，客户端保留同名导入；删除 213 行。
