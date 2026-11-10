@@ -763,6 +763,7 @@ class ProviderCheckThread(QThread):
 class PromptEdit(QTextEdit):
     send_requested = Signal()
     image_pasted = Signal(object)
+    image_file_pasted = Signal(str)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -777,6 +778,14 @@ class PromptEdit(QTextEdit):
             if isinstance(image, QImage) and not image.isNull():
                 self.image_pasted.emit(image)
                 return
+        if source.hasUrls():
+            for url in source.urls():
+                if not url.isLocalFile():
+                    continue
+                path = Path(url.toLocalFile())
+                if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+                    self.image_file_pasted.emit(str(path))
+                    return
         super().insertFromMimeData(source)
 
 
@@ -3693,6 +3702,7 @@ class ClientWindow(QMainWindow):
         self.chat_input.textChanged.connect(self._render_context_meter)
         self.chat_input.send_requested.connect(self.submit_chat)
         self.chat_input.image_pasted.connect(self._attach_pasted_image)
+        self.chat_input.image_file_pasted.connect(self._attach_image_path)
         composer_layout.addWidget(self.chat_input)
         bottom = QHBoxLayout()
         bottom.setContentsMargins(0, 0, 0, 0)
@@ -7208,6 +7218,19 @@ class ClientWindow(QMainWindow):
         self._append_log("已请求停止当前任务")
         if hasattr(self, "stop_task_button"):
             self.stop_task_button.setEnabled(False)
+
+    def _attach_image_path(self, raw_path: str) -> None:
+        if len(self._pending_images) >= 4:
+            self._append_log("最多附加 4 张图片")
+            return
+        try:
+            attachment = load_image_file(Path(raw_path))
+        except AttachmentError as exc:
+            self._append_log(f"图片未附加：{exc}")
+            return
+        self._pending_images.append(attachment)
+        self._update_image_attachment_ui()
+        self._append_log(f"已附加图片：{attachment['name']}")
 
     def _attach_pasted_image(self, image: QImage) -> None:
         if len(self._pending_images) >= 4:

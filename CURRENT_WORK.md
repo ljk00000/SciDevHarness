@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 15:45（Asia/Shanghai）· 支持拖入/粘贴图片文件路径
+- `PromptEdit` 识别剪贴板文件 URL 中的 PNG/JPEG/GIF/WebP，发出 `image_file_pasted`；UI 复用 `load_image_file()` 的有界校验。
+- 剪贴板位图与图片文件两种入口均保留 4 张/5MB/12MB 限制；目标测试 7 项通过。全量/CI 待验证。
+
 ## 2026-11-10 15:10（Asia/Shanghai）· 支持粘贴剪贴板图片
 - `PromptEdit` 捕获剪贴板/拖放图片，经 `image_from_bytes()` 校验后追加到待发送附件；仍受 4 张、5MB/张、12MB 总量限制。
 - 新增图片字节入口与剪贴板 UI 测试；附件/目标测试 8 项通过；Windows CI `42763474797` 三版本成功；package run `42764776533` 验证新入口能进入 installer。

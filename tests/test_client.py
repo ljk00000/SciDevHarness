@@ -32,6 +32,7 @@ from PySide6.QtCore import (
     QSettings,
     QTimer,
     Qt,
+    QUrl,
     Signal,
 )  # noqa: E402
 from PySide6.QtGui import QFontInfo, QIcon, QImage, QTextCursor, QWheelEvent  # noqa: E402
@@ -3204,6 +3205,16 @@ class SummarySettingsUiTests(unittest.TestCase):
                 mime.setImageData(image)
                 prompt.insertFromMimeData(mime)
                 self.assertEqual(len(pasted), 1)
+                dragged = Path(temp) / "dragged.png"
+                self.assertTrue(image.save(str(dragged), "PNG"))
+                paths: list[str] = []
+                prompt.image_file_pasted.connect(paths.append)
+                file_mime = QMimeData()
+                file_mime.setUrls([QUrl.fromLocalFile(str(dragged))])
+                prompt.insertFromMimeData(file_mime)
+                self.assertEqual(paths, [str(dragged)])
+                window._attach_image_path(str(dragged))
+                self.assertEqual(len(window._pending_images), 2)
                 prompt.deleteLater()
             finally:
                 window.close()

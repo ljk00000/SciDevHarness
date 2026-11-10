@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-10 15:45（Asia/Shanghai）· 支持拖入/粘贴图片文件路径
+- `PromptEdit` 新增 `image_file_pasted`，识别剪贴板/拖放文件 URL 中的图片扩展名；UI 走 `load_image_file()`，不绕过大小、MIME 与数量限制。
+- 剪贴板位图与文件路径两种入口共用同一附件列表。目标测试 7 项通过。边界：仍需模型支持视觉输入。
+
 ## 2026-11-10 15:10（Asia/Shanghai）· 支持粘贴剪贴板图片
 - `PromptEdit` 新增 `image_pasted`，`insertFromMimeData` 识别剪贴板/拖放图片；`image_from_bytes()` 复用附件校验与 MIME 探测。
 - UI 将 QImage 编码为 PNG 后走同一 4 张、5MB/张、12MB 总量限制。附件/目标测试 8 项通过；Windows CI `42763474797` 三版本成功；package run `42764776533` 验证新入口能进入 installer。边界：仍需模型支持视觉输入。
