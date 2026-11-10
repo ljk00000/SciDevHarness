@@ -4821,9 +4821,13 @@ class CancellationTests(unittest.TestCase):
             worker = threading.Thread(target=execute, daemon=True)
             worker.start()
             events_path = root / ".research" / "events.jsonl"
-            deadline = time.monotonic() + 5
+            deadline = time.monotonic() + 12
             while time.monotonic() < deadline:
-                if events_path.exists() and "tool_called" in events_path.read_text(encoding="utf-8"):
+                with agent.toolbox._active_command_lock:
+                    active = agent.toolbox._active_command
+                if (events_path.exists() and "tool_called" in events_path.read_text(encoding="utf-8")) or (
+                    active is not None and active.poll() is None
+                ):
                     break
                 time.sleep(0.05)
             else:

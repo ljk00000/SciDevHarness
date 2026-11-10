@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-10 08:20（Asia/Shanghai）· 空路径重装与取消测试
+- 安装 E2E 改为含空格路径 + 覆盖安装；首轮暴露 `ArgumentList` 未加引号导致 `/DIR` 被拆开，改为单个带引号参数串后 run `42725771804` 全绿。
+- 3.12 CI 的取消测试偶发“命令未在取消前启动”；现在同时等待 `tool_called` 事件或 `_active_command` 进程，重复 5 轮通过。
+- 全量待 CI 验证。
+
 ## 2026-11-10 08:10（Asia/Shanghai）· 安装路径与重复安装
 - CI 安装 E2E 的目录改为含空格路径（`scidev install e2e`），并在 smoke 前重复运行同一安装包，验证覆盖安装/幂等路径；随后仍卸载并检查残留。
 - 首轮失败：`Start-Process -ArgumentList` 数组不会给含空格路径加引号，`/DIR` 被拆成两个参数；改为单个带引号参数串 `/DIR="..."`。本地 bootstrap 断言通过；package workflow 待重跑。
