@@ -888,6 +888,7 @@ class ClientWindow(QMainWindow):
         except (ProviderConfigError, OSError, ValueError):
             self.provider_config = None
         self._available_models: list[str] = []
+        self._pending_model_choice = ""
         self._detected_local_providers: list[dict[str, Any]] = []
         self._local_provider_thread: LocalProviderCheckThread | None = None
         self.model_usage = ModelRequestUsage.empty()
@@ -3612,8 +3613,12 @@ class ClientWindow(QMainWindow):
         )
         self.provider_status_label.setObjectName("Hint")
         self.provider_status_label.setWordWrap(True)
-        if provider is not None:
+        if provider is not None and provider.source == "saved":
             self.provider_status_label.setText(f"已保存：{provider.base_url} · {provider.model}")
+        elif provider is not None:
+            self.provider_status_label.setText(
+                f"当前来自环境变量：{provider.base_url} · {provider.model}；保存后会覆盖环境变量。"
+            )
         settings_layout.addWidget(self.provider_status_label, 28, 0, 1, 4)
         self.provider_preset_combo.currentIndexChanged.connect(self._apply_provider_preset)
         self._sync_provider_preset_selection()
@@ -3978,6 +3983,7 @@ class ClientWindow(QMainWindow):
             self.provider_key_edit.setPlaceholderText("本地服务通常无需 Key；如需可填写")
         if preset.models:
             self._available_models = list(preset.models)
+        self._pending_model_choice = preset.model
         note = preset.note or f"已填入 {preset.label}；填写 Key 后保存。"
         self.provider_status_label.setText(f"{preset.label}：{note}")
         if preset.local:
@@ -4021,6 +4027,7 @@ class ClientWindow(QMainWindow):
         first = self._detected_local_providers[0]
         self.provider_base_edit.setText(str(first.get("base_url") or ""))
         self.provider_model_edit.setText(str(first.get("model") or ""))
+        self._pending_model_choice = str(first.get("model") or "")
         self.provider_key_edit.setPlaceholderText("本地服务通常无需 Key；如需可填写")
         models = first.get("models")
         if isinstance(models, list):
@@ -4047,6 +4054,8 @@ class ClientWindow(QMainWindow):
             current = str(getattr(config, "model", "") or "") if config is not None else ""
             if configured and current:
                 selector.addItem(current, current)
+            elif self._pending_model_choice:
+                selector.addItem(f"{self._pending_model_choice}（未保存）", "__configure__")
             else:
                 selector.addItem("未配置模型", "__configure__")
             for model in self._available_models:
@@ -4113,6 +4122,7 @@ class ClientWindow(QMainWindow):
             self.provider_status_label.setText(f"保存失败：{exc}")
             return
         self.provider_config = config
+        self._pending_model_choice = ""
         self._available_models = [config.model, *[
             model for model in self._available_models if model != config.model
         ]]

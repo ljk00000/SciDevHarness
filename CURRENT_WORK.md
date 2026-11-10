@@ -3,7 +3,7 @@
 ## 2026-11-10 17:30（Asia/Shanghai）· 模型配置入口与多服务商预设
 - 修复 `_provider_configured` 只看环境变量的问题：保存的配置与本地端点现在能正确点亮“就绪”。
 - 顶栏“未配置模型”改为红色可点击状态；输入框右下角新增模型下拉；设置页新增 OpenAI、DeepSeek、Anthropic Claude（兼容层）、OpenRouter、Ollama、LM Studio、llama.cpp 与自定义预设。
-- 本地探测走 loopback 直连、不经过代理，允许无 Key 保存；Ollama 走 `/api/tags`，其余走 `/v1/models`。provider/UI 目标测试通过，全量/CI 待验证。
+- 本地探测走 loopback 直连、不经过代理，允许无 Key 保存；Ollama 走 `/api/tags`，其余走 `/v1/models`。provider/UI 目标测试通过；全量 788 项 0 失败；CI 42774447065（3.12/3.13/3.14）绿。
 
 ## 2026-11-10 16:45（Asia/Shanghai）· 明确调试器非目标
 - Codex 自身没有内置调试器；VS Code 调试器属于宿主 IDE。本项目不再把 DAP/变量/调用栈面板列为对标缺口。

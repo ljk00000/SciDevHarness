@@ -50,7 +50,7 @@ PROVIDER_PRESETS: tuple[ProviderPreset, ...] = (
     ),
     ProviderPreset(
         "anthropic",
-        "Anthropic Claude",
+        "Anthropic Claude（兼容层）",
         ANTHROPIC_BASE_URL,
         "claude-sonnet-4-5",
         "使用 Anthropic 的 OpenAI 兼容层；若账号未开放该层，可改用 OpenRouter。",
