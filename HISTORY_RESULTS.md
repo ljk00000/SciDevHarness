@@ -1,7 +1,7 @@
 # 历史与结果
 
 ## 2026-11-10 10:30（Asia/Shanghai）· 取消延迟按请求时刻计算
-- 取消测试在慢 runner 上因命令启动耗时被误判失败；断言现在只测 `request_cancel()` 到 worker 结束的延迟，定向 5 轮通过。边界：不改变取消语义，只修正观测点。
+- 取消测试在慢 runner 上因命令启动耗时被误判失败；断言现在只测 `request_cancel()` 到 worker 结束的延迟，定向 5 轮通过；Windows CI `42742566240` 三版本成功。边界：不改变取消语义，只修正观测点。
 
 ## 2026-11-10 10:10（Asia/Shanghai）· 删除遗留开发树
 - `_LegacyDevelopmentTreeView` 已无引用，删除 479 行和 5 个只服务它的导入；当前 QML `DevelopmentTreeView` 不变。client/UI 124 项测试通过。

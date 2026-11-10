@@ -2,7 +2,7 @@
 
 ## 2026-11-10 10:30（Asia/Shanghai）· 取消延迟按请求时刻计算
 - 3.13 CI 失败：命令在慢 runner 上约 10s 才启动，原断言从 worker 启动计时，`elapsed=10.27 > 8`；这不是取消失效。
-- 改为从 `agent.request_cancel()` 时刻计时；定向 5 轮通过。全量/CI 待验证。
+- 改为从 `agent.request_cancel()` 时刻计时；定向 5 轮通过。Windows CI `42742566240` 三版本成功，含 479 行死代码删除后的全量回归。
 
 ## 2026-11-10 10:10（Asia/Shanghai）· 删除遗留开发树
 - `_LegacyDevelopmentTreeView` 已无任何引用，实际使用 `DevelopmentTreeView`（QML）；删除 479 行死代码及 5 个只服务它的 QtGui 导入。
