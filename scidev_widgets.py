@@ -1,7 +1,7 @@
 """Small reusable Qt widgets."""
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 
 
@@ -45,3 +45,15 @@ class ElidedLabel(QLabel):
         )
         if visible_text != self.text():
             QLabel.setText(self, visible_text)
+
+
+
+class ClickableLabel(ElidedLabel):
+    """Elided label that emits a click for lightweight navigation."""
+
+    clicked = Signal()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: ANN001 - Qt event signature.
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)

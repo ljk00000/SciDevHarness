@@ -89,7 +89,11 @@ from PySide6.QtQuickWidgets import QQuickWidget
 
 from scidev_planning import TaskPlan, planning_mode
 from scidev_provider import (
+    PROVIDER_PRESETS,
     ProviderConfigError,
+    detect_local_providers,
+    is_local_provider,
+    preset_for,
     format_capabilities,
     key_status as provider_key_status,
     load as load_provider_config,
@@ -122,7 +126,7 @@ from scidev_plan_ui import TaskPlanPanel
 from scidev_tree_ui import MAX_TREE_LAYOUT_BYTES as MAX_TREE_LAYOUT_BYTES, DevelopmentTreeView
 from scidev_shell_ui import ProjectFilterProxy, WindowTitleBar
 from scidev_editor import CodeEditor
-from scidev_widgets import ElidedLabel as ElidedLabel
+from scidev_widgets import ClickableLabel, ElidedLabel as ElidedLabel
 from scidev_worktree import WorktreeError, WorktreeManager
 from scidev_worktree_ui import WorktreeDialog
 from scidev_pty import PTYSession, PTYUnavailable
@@ -338,6 +342,9 @@ QLabel#AgentLogo {
 }
 QLabel#StateReady { color: #73c991; font-weight: 600; }
 QLabel#StateWorking { color: #e5c07b; font-weight: 600; }
+QLabel#StateUnconfigured { color: #ff8978; font-weight: 700; }
+QComboBox#ModelSelectorUnconfigured { color: #ff8978; border-color: #7a3b36; }
+QComboBox#ModelSelector { padding-right: 18px; }
 QLabel#StateError { color: #f48771; font-weight: 600; }
 QLineEdit, QTextEdit, QPlainTextEdit {
     background: #18212b;
@@ -737,6 +744,17 @@ class AppSignals(QObject):
     provider_check_finished = Signal(bool, str)
 
 
+class LocalProviderCheckThread(QThread):
+    checked = Signal(object)
+
+    def run(self) -> None:
+        try:
+            found = detect_local_providers()
+        except Exception:  # noqa: BLE001 - local probe failure is non-fatal
+            found = []
+        self.checked.emit(found)
+
+
 class ProviderCheckThread(QThread):
     checked = Signal(bool, str)
 
@@ -869,6 +887,9 @@ class ClientWindow(QMainWindow):
             self.provider_config = load_provider_config(self.project_root)
         except (ProviderConfigError, OSError, ValueError):
             self.provider_config = None
+        self._available_models: list[str] = []
+        self._detected_local_providers: list[dict[str, Any]] = []
+        self._local_provider_thread: LocalProviderCheckThread | None = None
         self.model_usage = ModelRequestUsage.empty()
         self._context_usage_estimated_tokens = 0
         self._context_usage_actual_tokens: int | None = None
@@ -2232,6 +2253,8 @@ class ClientWindow(QMainWindow):
         if hasattr(self, "context_usage_bar"):
             self.context_usage_bar.setVisible(not compact)
             self._render_context_meter()
+        if hasattr(self, "model_selector"):
+            self.model_selector.setMaximumWidth(160 if compact else 240)
         self._reflow_composer_meta(compact)
         self._adapt_summary_settings_layout()
         if hasattr(self, "task_plan_panel"):
@@ -3186,8 +3209,11 @@ class ClientWindow(QMainWindow):
         self.agent_title = title
         title.setObjectName("AppTitle")
         title.setToolTip(self._provider_model() if self._provider_configured() else "配置模型后开始编码")
-        self.chat_status = ElidedLabel("就绪 · 等待任务" if self._provider_configured() else "未配置模型")
-        self.chat_status.setObjectName("StateReady" if self._provider_configured() else "StateWorking")
+        self.chat_status = ClickableLabel("就绪 · 等待任务" if self._provider_configured() else "未配置模型")
+        self.chat_status.setObjectName("StateReady" if self._provider_configured() else "StateUnconfigured")
+        self.chat_status.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chat_status.setToolTip("点击配置模型接入")
+        self.chat_status.clicked.connect(self._open_agent_settings_from_preferences)
         title_box.addWidget(title)
         title_box.addWidget(self.chat_status)
         header_layout.addLayout(title_box, 1)
@@ -3495,7 +3521,29 @@ class ClientWindow(QMainWindow):
         provider = self.provider_config
         self.provider_title = QLabel("模型接入")
         self.provider_title.setObjectName("SectionTitle")
-        settings_layout.addWidget(self.provider_title, 22, 0, 1, 4)
+        self.provider_preset_combo = QComboBox()
+        self.provider_preset_combo.setObjectName("ProviderPreset")
+        self.provider_preset_combo.setMinimumContentsLength(12)
+        self.provider_preset_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        for preset in PROVIDER_PRESETS:
+            self.provider_preset_combo.addItem(preset.label, preset.key)
+        self.provider_preset_combo.setToolTip("选择服务商模板；只填入地址和模型，不会自动上传 Key")
+        self.provider_preset_combo.setMaximumWidth(260)
+        self.provider_local_button = QPushButton("检测本地")
+        self.provider_local_button.setObjectName("Quiet")
+        self.provider_local_button.setToolTip("探测 Ollama、LM Studio、llama.cpp 本机端口")
+        self.provider_local_button.clicked.connect(self._detect_local_providers)
+        provider_header = QWidget()
+        provider_header_layout = QHBoxLayout(provider_header)
+        provider_header_layout.setContentsMargins(0, 0, 0, 0)
+        provider_header_layout.setSpacing(6)
+        provider_header_layout.addWidget(self.provider_title)
+        provider_header_layout.addStretch(1)
+        provider_header_layout.addWidget(self.provider_preset_combo)
+        provider_header_layout.addWidget(self.provider_local_button)
+        settings_layout.addWidget(provider_header, 22, 0, 1, 4)
         self.provider_base_label = QLabel("API Base URL")
         settings_layout.addWidget(self.provider_base_label, 23, 0)
         self.provider_base_edit = QLineEdit(provider.base_url if provider else "https://api.openai.com/v1")
@@ -3533,6 +3581,8 @@ class ClientWindow(QMainWindow):
             else "输入 API Key（保存到 Windows 凭据管理器）"
         )
         self.provider_key_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        if provider is not None and is_local_provider(provider.base_url):
+            self.provider_key_edit.setPlaceholderText("本地服务通常无需 Key；如需可填写")
         settings_layout.addWidget(self.provider_key_edit, 26, 1)
         self.provider_fallback_label = QLabel("回退模型")
         settings_layout.addWidget(self.provider_fallback_label, 26, 2)
@@ -3562,7 +3612,11 @@ class ClientWindow(QMainWindow):
         )
         self.provider_status_label.setObjectName("Hint")
         self.provider_status_label.setWordWrap(True)
+        if provider is not None:
+            self.provider_status_label.setText(f"已保存：{provider.base_url} · {provider.model}")
         settings_layout.addWidget(self.provider_status_label, 28, 0, 1, 4)
+        self.provider_preset_combo.currentIndexChanged.connect(self._apply_provider_preset)
+        self._sync_provider_preset_selection()
         self._provider_check_thread: ProviderCheckThread | None = None
 
         self.budget_title = QLabel("任务预算")
@@ -3724,6 +3778,16 @@ class ClientWindow(QMainWindow):
         self.clear_image_button.clicked.connect(self._clear_image_attachments)
         bottom.addWidget(self.clear_image_button)
         bottom.addStretch(1)
+        self.model_selector = QComboBox()
+        self.model_selector.setObjectName("ModelSelector")
+        self.model_selector.setMinimumContentsLength(12)
+        self.model_selector.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.model_selector.setMaximumWidth(240)
+        self.model_selector.setToolTip("选择本次任务使用的模型")
+        self.model_selector.currentIndexChanged.connect(self._on_model_selector_activated)
+        bottom.addWidget(self.model_selector)
         send = QPushButton("发送")
         send.setObjectName("Primary")
         send.clicked.connect(self.submit_chat)
@@ -3736,6 +3800,7 @@ class ClientWindow(QMainWindow):
         bottom.addWidget(self.stop_task_button)
         composer_layout.addLayout(bottom)
         layout.addWidget(composer)
+        self._refresh_model_selector()
         return chat
 
     def _summary_status_text(self) -> str:
@@ -3865,6 +3930,174 @@ class ClientWindow(QMainWindow):
             return
         self._open_agent_settings_from_preferences()
 
+    def _sync_provider_preset_selection(self) -> None:
+        combo = getattr(self, "provider_preset_combo", None)
+        if combo is None:
+            return
+        config = getattr(self, "provider_config", None)
+        base_url = str(getattr(config, "base_url", "") or "").rstrip("/")
+        combo.blockSignals(True)
+        try:
+            index = -1
+            for preset in PROVIDER_PRESETS:
+                if preset.base_url.rstrip("/") == base_url and base_url:
+                    index = combo.findData(preset.key)
+                    break
+            if index < 0:
+                index = combo.findData("custom")
+            combo.setCurrentIndex(max(0, index))
+        finally:
+            combo.blockSignals(False)
+
+    def _apply_provider_preset(self, _index: int = -1) -> None:
+        combo = getattr(self, "provider_preset_combo", None)
+        if combo is None:
+            return
+        key = str(combo.currentData() or "")
+        if key.startswith("local-"):
+            for item in self._detected_local_providers:
+                if item.get("key") != key:
+                    continue
+                self.provider_base_edit.setText(str(item.get("base_url") or ""))
+                self.provider_model_edit.setText(str(item.get("model") or ""))
+                models = item.get("models")
+                if isinstance(models, list):
+                    self._available_models = [str(model) for model in models if str(model).strip()]
+                self.provider_status_label.setText(
+                    f"已填入 {item.get('label') or '本地模型'}；保存后下一次任务生效。"
+                )
+                break
+            return
+        preset = preset_for(key)
+        if preset.key == "custom":
+            self.provider_status_label.setText("自定义 OpenAI 兼容接口：填写地址、模型和 Key 后保存。")
+            return
+        self.provider_base_edit.setText(preset.base_url)
+        self.provider_model_edit.setText(preset.model)
+        if preset.local:
+            self.provider_key_edit.setPlaceholderText("本地服务通常无需 Key；如需可填写")
+        if preset.models:
+            self._available_models = list(preset.models)
+        note = preset.note or f"已填入 {preset.label}；填写 Key 后保存。"
+        self.provider_status_label.setText(f"{preset.label}：{note}")
+        if preset.local:
+            self._detect_local_providers()
+
+    def _detect_local_providers(self) -> None:
+        thread = self._local_provider_thread
+        if thread is not None and thread.isRunning():
+            return
+        self.provider_local_button.setEnabled(False)
+        self.provider_status_label.setText("正在探测本机 Ollama / LM Studio / llama.cpp…")
+        thread = LocalProviderCheckThread(self)
+        thread.checked.connect(self._on_local_providers_detected)
+        thread.finished.connect(self._on_local_provider_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._local_provider_thread = thread
+        thread.start()
+
+    def _on_local_provider_thread_finished(self) -> None:
+        self._local_provider_thread = None
+        if getattr(self, "_closing", False):
+            return
+        self.provider_local_button.setEnabled(True)
+
+    def _on_local_providers_detected(self, found: object) -> None:
+        if getattr(self, "_closing", False):
+            return
+        items = found if isinstance(found, list) else []
+        self._detected_local_providers = [item for item in items if isinstance(item, dict)]
+        combo = getattr(self, "provider_preset_combo", None)
+        if combo is not None:
+            for item in self._detected_local_providers:
+                key = str(item.get("key") or "")
+                if key and combo.findData(key) < 0:
+                    combo.addItem(str(item.get("label") or key), key)
+        if not self._detected_local_providers:
+            self.provider_status_label.setText(
+                "未检测到本地模型服务；可启动 Ollama (11434)、LM Studio (1234) 或 llama.cpp (8080) 后重试。"
+            )
+            return
+        first = self._detected_local_providers[0]
+        self.provider_base_edit.setText(str(first.get("base_url") or ""))
+        self.provider_model_edit.setText(str(first.get("model") or ""))
+        self.provider_key_edit.setPlaceholderText("本地服务通常无需 Key；如需可填写")
+        models = first.get("models")
+        if isinstance(models, list):
+            self._available_models = [str(model) for model in models if str(model).strip()]
+        if combo is not None:
+            index = combo.findData(str(first.get("key") or ""))
+            if index >= 0:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(index)
+                combo.blockSignals(False)
+        labels = "、".join(str(item.get("label") or "本地") for item in self._detected_local_providers)
+        self.provider_status_label.setText(f"检测到本地模型：{labels}。已填入第一项，保存后生效。")
+        self._refresh_model_selector()
+
+    def _refresh_model_selector(self) -> None:
+        selector = getattr(self, "model_selector", None)
+        if selector is None:
+            return
+        selector.blockSignals(True)
+        try:
+            selector.clear()
+            config = getattr(self, "provider_config", None)
+            configured = self._provider_configured()
+            current = str(getattr(config, "model", "") or "") if config is not None else ""
+            if configured and current:
+                selector.addItem(current, current)
+            else:
+                selector.addItem("未配置模型", "__configure__")
+            for model in self._available_models:
+                if model and model != current and selector.findData(model) < 0:
+                    selector.addItem(model, model)
+            selector.insertSeparator(selector.count())
+            selector.addItem("配置模型…", "__configure__")
+            selector.setToolTip(
+                f"当前模型：{current}\n点击选择模型或打开模型配置" if configured
+                else "尚未配置模型；点击打开模型配置"
+            )
+            selector.setObjectName("ModelSelector" if configured else "ModelSelectorUnconfigured")
+            selector.style().unpolish(selector)
+            selector.style().polish(selector)
+        finally:
+            selector.blockSignals(False)
+
+    def _on_model_selector_activated(self, index: int) -> None:
+        selector = getattr(self, "model_selector", None)
+        if selector is None:
+            return
+        model = str(selector.itemData(index) or "")
+        if not model or model == "__configure__" or model == self._provider_model():
+            if model == "__configure__":
+                self._open_agent_settings_from_preferences()
+            return
+        self.provider_model_edit.setText(model)
+        self._save_provider_settings()
+
+    def _sync_provider_identity(self) -> None:
+        configured = self._provider_configured()
+        model = self._provider_model()
+        title = getattr(self, "agent_title", None)
+        if title is not None:
+            title.setText(model if configured else "Coding Agent")
+            title.setToolTip(model if configured else "配置模型后开始编码")
+        status = getattr(self, "chat_status", None)
+        if status is not None:
+            status.setText("就绪 · 等待任务" if configured else "未配置模型")
+            status.setObjectName("StateReady" if configured else "StateUnconfigured")
+            status.setToolTip("点击配置模型接入" if not configured else f"当前模型：{model}")
+            status.style().unpolish(status)
+            status.style().polish(status)
+        label = getattr(self, "connection_label", None)
+        if label is not None:
+            label.setText(self._provider_state())
+            label.setObjectName("StateReady" if configured else "StateWorking")
+            label.setToolTip("已配置模型（尚未验证连接）" if configured else "尚未配置 LLM；打开 Agent 设置查看配置方式")
+            label.style().unpolish(label)
+            label.style().polish(label)
+
     def _save_provider_settings(self) -> None:
         api_key = self.provider_key_edit.text().strip() or None
         try:
@@ -3880,12 +4113,22 @@ class ClientWindow(QMainWindow):
             self.provider_status_label.setText(f"保存失败：{exc}")
             return
         self.provider_config = config
+        self._available_models = [config.model, *[
+            model for model in self._available_models if model != config.model
+        ]]
         self.provider_key_edit.clear()
         self.provider_key_edit.setPlaceholderText("已保存；留空表示不修改")
-        self.provider_status_label.setText(
-            f"已保存：{config.base_url} · {config.model}。"
+        key_note = (
             "API Key 已写入 Windows 凭据管理器；下一次任务生效。"
+            if config.api_key
+            else "本地服务不需要 API Key；下一次任务生效。"
         )
+        self.provider_status_label.setText(
+            f"已保存：{config.base_url} · {config.model}。{key_note}"
+        )
+        self._sync_provider_identity()
+        self._sync_provider_preset_selection()
+        self._refresh_model_selector()
 
     def _test_provider_connection(self) -> None:
         try:
@@ -4090,12 +4333,22 @@ class ClientWindow(QMainWindow):
     def _provider_state(self) -> str:
         return f"● {self._provider_model()}" if self._provider_configured() else "○ 配置 LLM"
 
-    @staticmethod
-    def _provider_configured() -> bool:
+    def _provider_configured(self) -> bool:
+        config = getattr(self, "provider_config", None)
+        if config is not None and config.source == "saved":
+            if is_local_provider(config.base_url):
+                return True
+            if config.api_key:
+                return True
+        base_url = str(getattr(config, "base_url", "") or "")
+        if is_local_provider(base_url):
+            return True
         return bool(os.getenv("SCIDEV_API_KEY") or os.getenv("OPENAI_API_KEY"))
 
-    @staticmethod
-    def _provider_model() -> str:
+    def _provider_model(self) -> str:
+        config = getattr(self, "provider_config", None)
+        if config is not None and config.source == "saved" and config.model:
+            return config.model
         return os.getenv("SCIDEV_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5"
 
     def _emit_agent(self, kind: str, data: dict[str, Any]) -> None:
@@ -4849,6 +5102,7 @@ class ClientWindow(QMainWindow):
         self.connection_label.style().unpolish(self.connection_label)
         self.connection_label.style().polish(self.connection_label)
         self.agent_title.setText(self._provider_model() if self._provider_configured() else "Coding Agent")
+        self._refresh_model_selector()
         self.refresh_task_history()
         self._refresh_development_tree()
 
@@ -7604,6 +7858,9 @@ class ClientWindow(QMainWindow):
         if resident_lsp is not None:
             resident_lsp.close()
             self._resident_lsp_bridge = None
+        local_thread = getattr(self, "_local_provider_thread", None)
+        if local_thread is not None and local_thread.isRunning():
+            local_thread.wait(2500)
         self.file_model.setRootPath("")
         app = QApplication.instance()
         windows = getattr(app, "_scidev_windows", []) if app is not None else []

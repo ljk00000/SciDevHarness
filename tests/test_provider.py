@@ -140,6 +140,28 @@ class ProviderSettingsTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("401", message)
 
+    def test_local_connection_probe_allows_an_empty_key(self) -> None:
+        config = provider.ProviderConfig(
+            base_url="http://127.0.0.1:11434/v1",
+            model="qwen2.5-coder:7b",
+            api_key="",
+        )
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return b'{"data":[{"id":"qwen2.5-coder:7b"}]}'
+
+        with patch.object(provider.urllib_request, "urlopen", return_value=Response()):
+            ok, message = provider.test_connection(config)
+        self.assertTrue(ok)
+        self.assertIn("1", message)
+
     def test_capability_probe_reports_tools_context_and_vision(self) -> None:
         config = provider.ProviderConfig(
             base_url="https://example.test/v1",
@@ -185,6 +207,63 @@ class ProviderSettingsTests(unittest.TestCase):
         self.assertFalse(CodingAgent._should_fallback_provider(
             PermanentError("HTTP 429: rate limited"),
         ))
+
+    def test_presets_cover_common_and_local_providers(self) -> None:
+        keys = {preset.key for preset in provider.PROVIDER_PRESETS}
+        self.assertTrue({"openai", "deepseek", "anthropic", "openrouter", "ollama", "lmstudio", "custom"} <= keys)
+        self.assertEqual(provider.preset_for("deepseek").base_url, provider.DEEPSEEK_BASE_URL)
+        self.assertTrue(provider.is_local_provider("http://127.0.0.1:11434/v1"))
+        self.assertFalse(provider.is_local_provider("https://api.openai.com/v1"))
+
+    def test_local_provider_allows_missing_api_key(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            with patch.object(credentials, "secure_storage_available", return_value=False):
+                provider.save(root, base_url="http://127.0.0.1:11434/v1", model="qwen2.5-coder:7b")
+                loaded = provider.load(root, require_key=True)
+            self.assertEqual(loaded.base_url, "http://127.0.0.1:11434/v1")
+            self.assertEqual(loaded.api_key, "")
+
+    def test_local_model_probe_uses_the_correct_root_path(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return b'{"models":[{"name":"qwen2.5-coder:7b"}]}'
+
+        class Opener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, request, timeout):
+                self.requests.append((request.full_url, timeout))
+                return Response()
+
+        opener = Opener()
+        with patch.object(provider.urllib_request, "build_opener", return_value=opener):
+            models = provider._local_models("http://127.0.0.1:11434/v1", 0.5)
+        self.assertEqual(models, ["qwen2.5-coder:7b"])
+        self.assertEqual(opener.requests[0][0], "http://127.0.0.1:11434/api/tags")
+
+        with patch.object(provider.urllib_request, "build_opener", return_value=opener):
+            provider._local_models("http://127.0.0.1:1234/v1", 0.5)
+        self.assertEqual(opener.requests[1][0], "http://127.0.0.1:1234/v1/models")
+
+    def test_local_detection_returns_available_models(self) -> None:
+        with patch.object(provider, "_local_models", side_effect=[
+            ["qwen2.5-coder:7b"],
+            provider.urllib_error.URLError("closed"),
+            [],
+        ]):
+            found = provider.detect_local_providers(timeout=0.1)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["key"], "local-ollama")
+        self.assertEqual(found[0]["model"], "qwen2.5-coder:7b")
+        self.assertEqual(found[0]["models"], ["qwen2.5-coder:7b"])
 
     def test_agent_builds_provider_from_saved_config(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:

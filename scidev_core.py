@@ -1323,6 +1323,9 @@ class OpenAICompatibleProvider:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
+        if (urlsplit(self._endpoint()).hostname or "").casefold() == "api.anthropic.com":
+            headers["x-api-key"] = self.api_key
+            headers["anthropic-version"] = "2023-06-01"
         if request_id:
             # The logical request ID stays stable across an identical retry, while
             # the body digest prevents one reused turn ID from deduplicating a

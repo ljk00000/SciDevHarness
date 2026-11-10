@@ -3473,6 +3473,8 @@ class SummarySettingsUiTests(unittest.TestCase):
                 self.assertEqual(save_provider.call_args.kwargs["fallback_model"], "fallback-x")
                 self.assertEqual(window.provider_key_edit.text(), "")
                 self.assertIn("已保存", window.provider_status_label.text())
+                self.assertGreaterEqual(window.model_selector.findData("model-x"), 0)
+                self.assertEqual(window.chat_status.text(), "就绪 · 等待任务")
 
                 window.resize(820, 600)
                 self.app.processEvents()
@@ -3553,6 +3555,101 @@ class SummarySettingsUiTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
 
+
+    def test_composer_model_selector_switches_the_pending_model(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-model-selector-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                window.provider_config = Mock(
+                    base_url="https://example.test/v1", model="model-a", api_key="secret",
+                )
+                window._available_models = ["model-a", "model-b"]
+                window._refresh_model_selector()
+                with patch.object(window, "_save_provider_settings") as save:
+                    index = window.model_selector.findData("model-b")
+                    self.assertGreaterEqual(index, 0)
+                    window.model_selector.setCurrentIndex(index)
+                    self.app.processEvents()
+                save.assert_called_once()
+                self.assertEqual(window.provider_model_edit.text(), "model-b")
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_saved_local_provider_marks_window_configured_without_a_key(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-local-provider-") as temp:
+            root = Path(temp)
+            window = ClientWindow(root)
+            try:
+                window.show()
+                self.app.processEvents()
+                window.provider_base_edit.setText("http://127.0.0.1:11434/v1")
+                window.provider_model_edit.setText("qwen2.5-coder:7b")
+                window.provider_key_edit.clear()
+                window._save_provider_settings()
+                self.app.processEvents()
+                self.assertIn("已保存", window.provider_status_label.text())
+                self.assertEqual(window.chat_status.text(), "就绪 · 等待任务")
+                self.assertGreaterEqual(window.model_selector.findData("qwen2.5-coder:7b"), 0)
+                self.assertTrue(window.provider_config is not None)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_model_status_opens_agent_settings(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-model-status-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                window.chat_status.clicked.emit()
+                self.app.processEvents()
+                self.assertIs(window.workspace_stack.currentWidget(), window.settings_page)
+                self.assertTrue(window.provider_base_edit.isVisible())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_provider_preset_fills_endpoint_and_model(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-provider-preset-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                index = window.provider_preset_combo.findData("deepseek")
+                self.assertGreaterEqual(index, 0)
+                window.provider_preset_combo.setCurrentIndex(index)
+                self.app.processEvents()
+                self.assertEqual(window.provider_base_edit.text(), "https://api.deepseek.com/v1")
+                self.assertEqual(window.provider_model_edit.text(), "deepseek-chat")
+                self.assertIn("DeepSeek", window.provider_status_label.text())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_detected_local_provider_populates_model_fields(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-provider-local-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                window._on_local_providers_detected([{
+                    "key": "local-ollama",
+                    "label": "Ollama 本地（qwen2.5-coder:7b）",
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "qwen2.5-coder:7b",
+                    "models": ["qwen2.5-coder:7b", "llama3.2:3b"],
+                    "local": True,
+                }])
+                self.assertEqual(window.provider_base_edit.text(), "http://127.0.0.1:11434/v1")
+                self.assertEqual(window.provider_model_edit.text(), "qwen2.5-coder:7b")
+                self.assertIn("qwen2.5-coder:7b", window._available_models)
+                self.assertGreaterEqual(window.provider_preset_combo.findData("local-ollama"), 0)
+            finally:
+                window.close()
+                self.app.processEvents()
 
 class StreamingAgentUiTests(unittest.TestCase):
     @classmethod

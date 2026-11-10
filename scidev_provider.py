@@ -9,6 +9,7 @@ import tempfile
 from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import urlsplit
 
 import scidev_credentials as credentials
 
@@ -16,6 +17,152 @@ import scidev_credentials as credentials
 CONFIG_NAME = "provider.json"
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-5"
+
+ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+@dataclass(frozen=True)
+class ProviderPreset:
+    key: str
+    label: str
+    base_url: str
+    model: str
+    note: str = ""
+    requires_key: bool = True
+    local: bool = False
+    models: tuple[str, ...] = ()
+
+
+PROVIDER_PRESETS: tuple[ProviderPreset, ...] = (
+    ProviderPreset(
+        "openai", "OpenAI", DEFAULT_BASE_URL, DEFAULT_MODEL,
+        models=("gpt-5", "gpt-5-mini", "gpt-4.1"),
+    ),
+    ProviderPreset(
+        "deepseek",
+        "DeepSeek",
+        DEEPSEEK_BASE_URL,
+        "deepseek-chat",
+        "官方 OpenAI 兼容接口；也支持 deepseek-reasoner。",
+        models=("deepseek-chat", "deepseek-reasoner"),
+    ),
+    ProviderPreset(
+        "anthropic",
+        "Anthropic Claude",
+        ANTHROPIC_BASE_URL,
+        "claude-sonnet-4-5",
+        "使用 Anthropic 的 OpenAI 兼容层；若账号未开放该层，可改用 OpenRouter。",
+        models=("claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"),
+    ),
+    ProviderPreset(
+        "openrouter",
+        "OpenRouter（多模型）",
+        OPENROUTER_BASE_URL,
+        "anthropic/claude-sonnet-4.5",
+        "一个 Key 路由 OpenAI/Claude/DeepSeek 等模型；模型名可在官网查询。",
+        models=("anthropic/claude-sonnet-4.5", "openai/gpt-5", "deepseek/deepseek-chat"),
+    ),
+    ProviderPreset(
+        "ollama",
+        "Ollama 本地",
+        "http://127.0.0.1:11434/v1",
+        "qwen2.5-coder:7b",
+        "本机 Ollama；选择后会自动探测已安装模型。",
+        requires_key=False,
+        local=True,
+        models=("qwen2.5-coder:7b",),
+    ),
+    ProviderPreset(
+        "lmstudio",
+        "LM Studio 本地",
+        "http://127.0.0.1:1234/v1",
+        "",
+        "LM Studio 的 OpenAI 兼容服务；选择后会自动探测模型。",
+        requires_key=False,
+        local=True,
+    ),
+    ProviderPreset(
+        "custom",
+        "自定义 OpenAI 兼容",
+        "",
+        "",
+        "填写任意兼容 /v1/chat/completions 的服务地址。",
+    ),
+)
+
+LOCAL_PROVIDER_CANDIDATES: tuple[tuple[str, str, str], ...] = (
+    ("ollama", "Ollama 本地", "http://127.0.0.1:11434/v1"),
+    ("lmstudio", "LM Studio 本地", "http://127.0.0.1:1234/v1"),
+    ("llamacpp", "llama.cpp 本地", "http://127.0.0.1:8080/v1"),
+)
+
+
+def preset_for(key: str) -> ProviderPreset:
+    for preset in PROVIDER_PRESETS:
+        if preset.key == key:
+            return preset
+    return PROVIDER_PRESETS[-1]
+
+
+def is_local_provider(base_url: str) -> bool:
+    try:
+        host = (urlsplit(str(base_url or "")).hostname or "").casefold()
+    except ValueError:
+        return False
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _local_models(base_url: str, timeout: float) -> list[str]:
+    opener = urllib_request.build_opener(urllib_request.ProxyHandler({}))
+    root = base_url.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[:-3].rstrip("/")
+    path = "/api/tags" if root.endswith(":11434") else "/v1/models"
+    request = urllib_request.Request(
+        root + path,
+        headers={"Accept": "application/json", "User-Agent": "SciDevHarness/local-detect"},
+    )
+    with opener.open(request, timeout=min(2.0, max(0.1, timeout))) as response:
+        payload = json.loads(response.read(500_000).decode("utf-8"))
+    if not isinstance(payload, dict):
+        return []
+    entries = payload.get("models") or payload.get("data") or []
+    if not isinstance(entries, list):
+        return []
+    models: list[str] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            name = entry
+        elif isinstance(entry, dict):
+            name = str(entry.get("name") or entry.get("id") or "")
+        else:
+            continue
+        name = name.strip()
+        if name and name not in models:
+            models.append(name[:160])
+    return models[:100]
+
+
+def detect_local_providers(timeout: float = 0.6) -> list[dict[str, Any]]:
+    """Probe loopback OpenAI-compatible servers without using a proxy."""
+    found: list[dict[str, Any]] = []
+    for key, label, base_url in LOCAL_PROVIDER_CANDIDATES:
+        try:
+            models = _local_models(base_url, timeout)
+        except (urllib_error.URLError, TimeoutError, OSError, ValueError, UnicodeError):
+            continue
+        if models:
+            found.append({
+                "key": f"local-{key}",
+                "label": f"{label}（{models[0]}）",
+                "base_url": base_url,
+                "model": models[0],
+                "models": models,
+                "local": True,
+            })
+    return found
 
 
 class ProviderConfigError(ValueError):
@@ -176,7 +323,7 @@ def load(project_root: Path, *, require_key: bool = False) -> ProviderConfig:
         api_key = str(values.get("api_key") or "").strip()
     if not api_key:
         api_key = (os.getenv("SCIDEV_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
-    if require_key and not api_key:
+    if require_key and not api_key and not is_local_provider(base_url):
         raise ProviderConfigError(
             "未配置 API Key：请在 Agent 设置的“模型接入”中保存，或设置 SCIDEV_API_KEY"
         )
@@ -268,6 +415,9 @@ def _provider_request(
         "Accept": "application/json",
         "User-Agent": "SciDevHarness/provider-check",
     }
+    if (urlsplit(config.base_url).hostname or "").casefold() == "api.anthropic.com":
+        headers["x-api-key"] = config.api_key
+        headers["anthropic-version"] = "2023-06-01"
     data = None
     if body is not None:
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -305,7 +455,7 @@ def _context_length(models: Any, model: str) -> int | None:
 
 
 def test_connection(config: ProviderConfig, timeout: float = 15.0) -> tuple[bool, str]:
-    if not config.api_key:
+    if not config.api_key and not is_local_provider(config.base_url):
         return False, "未配置 API Key"
     try:
         data = _provider_request(config, "models", timeout=timeout)
@@ -326,7 +476,7 @@ def probe_capabilities(config: ProviderConfig, timeout: float = 20.0) -> dict[st
     The tool probe intentionally sends a minimal request with a harmless
     ``ping`` schema. It costs a few tokens and only runs when the user asks.
     """
-    if not config.api_key:
+    if not config.api_key and not is_local_provider(config.base_url):
         raise ProviderConfigError("未配置 API Key")
     models_payload = _provider_request(config, "models", timeout=timeout)
     models = models_payload.get("data") if isinstance(models_payload, dict) else None
