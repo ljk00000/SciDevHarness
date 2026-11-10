@@ -89,6 +89,7 @@ files = [
     "scidev_errors.py",
     "scidev_lsp.py",
     "scidev_lsp_ui.py",
+    "scidev_patch_ui.py",
     "scidev_mcp_ui.py",
     "scidev_analytics.py",
     "scidev_analytics_ui.py",

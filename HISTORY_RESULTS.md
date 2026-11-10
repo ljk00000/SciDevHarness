@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-10 10:50（Asia/Shanghai）· 拆分补丁审核 UI
+- 补丁高亮、编辑器侧 diff 面板和聊天侧审核卡移入 `scidev_patch_ui.py`；客户端从约 9000 行降到约 8719 行，mypy 覆盖 34 个源文件。
+- PatchReviewUiTests 5 项通过。边界：diff 面板由 `CodeEditor` 改用只读 `QPlainTextEdit`，行为保持，但不再复用编辑器主题定制。
+
 ## 2026-11-10 10:30（Asia/Shanghai）· 取消延迟按请求时刻计算
 - 取消测试在慢 runner 上因命令启动耗时被误判失败；断言现在只测 `request_cancel()` 到 worker 结束的延迟，定向 5 轮通过；Windows CI `42742566240` 三版本成功；package run `42743986679` 验证删代码后 standalone/安装/卸载仍通过。边界：不改变取消语义，只修正观测点。
 
