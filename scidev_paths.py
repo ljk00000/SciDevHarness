@@ -2,6 +2,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+
+
+def application_base_dir() -> Path:
+    """Return the source or deployed app directory for bundled UI resources."""
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+        return Path(sys.argv[0]).resolve().parent
+    return Path(__file__).resolve().parent
 
 
 DEFAULT_EXCLUDED_PATH_NAMES = frozenset(
