@@ -3,7 +3,7 @@
 ## 2026-11-10 17:30（Asia/Shanghai）· 模型配置入口与多服务商预设
 - 顶栏“未配置模型”可点击打开 Agent 设置；输入框右下角新增模型下拉；设置页提供 OpenAI、DeepSeek、Anthropic Claude、OpenRouter、Ollama、LM Studio、llama.cpp 和自定义兼容接口。
 - 本地模型探测只走 127.0.0.1，不经过代理；Ollama 使用 `/api/tags`，其余使用 `/v1/models`；本地端点允许无 Key 保存与连接测试。
-- 修复保存配置后状态仍显示“未配置模型”的根因；provider/UI 目标测试通过；全量 788 项 0 失败；CI 42774447065 三版本绿。边界：Claude 使用 Anthropic 的 OpenAI 兼容端点，若账号未开放该兼容层应改用 OpenRouter。
+- 修复保存配置后状态仍显示“未配置模型”的根因；provider/UI 目标测试通过；全量 788 项 0 失败；CI 42778291731 三版本绿；Windows 打包 42779822389 绿（仍为未签名安装包）。边界：Claude 使用 Anthropic 的 OpenAI 兼容端点，若账号未开放该兼容层应改用 OpenRouter。
 
 ## 2026-11-10 16:45（Asia/Shanghai）· 明确调试器非目标
 - 确认 Codex CLI/IDE 没有内置 DAP 调试器；VS Code 调试器是宿主 IDE 能力，不应作为 Codex 对标项。
