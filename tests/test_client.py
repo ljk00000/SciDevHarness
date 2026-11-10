@@ -3458,7 +3458,9 @@ class SummarySettingsUiTests(unittest.TestCase):
                 self.assertEqual(saved["max_agent_turns"], 12)
                 self.assertEqual(saved["max_task_tokens"], 5000)
 
-                saved_provider = Mock(base_url="https://example.test/v1", model="model-x")
+                saved_provider = Mock(
+                    base_url="https://example.test/v1", model="model-x", api_key="secret", source="saved",
+                )
                 with patch("scidev_client.save_provider_config", return_value=saved_provider) as save_provider:
                     window.provider_base_edit.setText("https://example.test/v1")
                     window.provider_model_edit.setText("model-x")
