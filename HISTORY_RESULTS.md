@@ -2,7 +2,7 @@
 
 ## 2026-11-10 09:10（Asia/Shanghai）· 延迟滚动回调保护
 - `QTimer.singleShot(0, lambda: self.chat_scroll...)` 可能在窗口销毁后执行；改为带 RuntimeError 保护的 `_scroll_chat_to_bottom()`，覆盖全部 4 个调用点。
-- 全量 771 项 0 失败、14 跳过，日志中 `Internal C++ object (QScrollArea) already deleted` 消失；Windows CI `42733940665` 三版本成功。边界：只丢弃过期 UI 回调，不改变聊天滚动时机。
+- 全量 771 项 0 失败、14 跳过，日志中 `Internal C++ object (QScrollArea) already deleted` 消失；Windows CI `42733940665` 三版本成功；package run `42735373779` 验证新增 `scidev_lsp_ui.py` 能进入 standalone/installer。边界：只丢弃过期 UI 回调，不改变聊天滚动时机。
 
 ## 2026-11-10 08:45（Asia/Shanghai）· 拆分 LSP Qt 桥接
 - `ResidentLSPBridge` 移入 `scidev_lsp_ui.py`，客户端不再直接依赖 `ResidentLSP`/诊断线程；删除未使用的 `LSPDiagnosticsThread` 和无效的 `_lsp_thread` 关闭分支。

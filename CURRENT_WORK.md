@@ -2,7 +2,7 @@
 
 ## 2026-11-10 09:10（Asia/Shanghai）· 延迟滚动回调保护
 - 全量日志出现 `RuntimeError: Internal C++ object (QScrollArea) already deleted`：`QTimer.singleShot(0, lambda: self.chat_scroll...)` 在窗口销毁后执行。
-- 改为 `_scroll_chat_to_bottom()` 方法并捕获 RuntimeError；相关 client/settings 16 项测试通过。全量 771 项 0 失败、14 跳过，日志中不再出现该 RuntimeError；Windows CI `42733940665` 三版本成功。
+- 改为 `_scroll_chat_to_bottom()` 方法并捕获 RuntimeError；相关 client/settings 16 项测试通过。全量 771 项 0 失败、14 跳过，日志中不再出现该 RuntimeError；Windows CI `42733940665` 三版本成功；package run `42735373779` 在新增模块后仍全绿。
 
 ## 2026-11-10 08:45（Asia/Shanghai）· 拆分 LSP Qt 桥接
 - 把 `ResidentLSPBridge` 从 `scidev_client.py` 拆到 `scidev_lsp_ui.py`；删除从未实例化的 `LSPDiagnosticsThread` 和对应死清理分支，客户端只保留 LSP 调用。
