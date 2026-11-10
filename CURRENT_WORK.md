@@ -1,5 +1,9 @@
 # 当前工作
 
+## 2026-11-10 10:10（Asia/Shanghai）· 删除遗留开发树
+- `_LegacyDevelopmentTreeView` 已无任何引用，实际使用 `DevelopmentTreeView`（QML）；删除 479 行死代码及 5 个只服务它的 QtGui 导入。
+- `scidev_client.py` 从约 9480 行降到约 9000 行；client/UI 测试待跑，全量待验证。
+
 ## 2026-11-10 09:40（Asia/Shanghai）· 分离文档的布局
 - 关闭一个共享文档标签时，代码用裸 `QTextDocument` 替换视图，触发 `QPlainTextEdit::setDocument: Document set does not support QPlainTextDocumentLayout`。
 - PySide6 里只构造 `QPlainTextDocumentLayout` 不够，需显式 `setDocumentLayout`；修复后 split 7 项测试连续 2 轮 0 warning。
