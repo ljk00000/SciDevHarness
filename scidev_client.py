@@ -65,6 +65,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QPlainTextDocumentLayout,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -7461,7 +7462,9 @@ class ClientWindow(QMainWindow):
         group.removeTab(index)
         if shared_document is not None and widget.document() is shared_document:
             # A shared document must outlive its first editor view.
-            widget.setDocument(QTextDocument(widget))
+            replacement = QTextDocument(widget)
+            replacement.setDocumentLayout(QPlainTextDocumentLayout(replacement))
+            widget.setDocument(replacement)
             has_remaining_view = any(
                 other_path == path
                 and isinstance(other, CodeEditor)

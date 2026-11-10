@@ -1,5 +1,10 @@
 # 当前工作
 
+## 2026-11-10 09:40（Asia/Shanghai）· 分离文档的布局
+- 关闭一个共享文档标签时，代码用裸 `QTextDocument` 替换视图，触发 `QPlainTextEdit::setDocument: Document set does not support QPlainTextDocumentLayout`。
+- PySide6 里只构造 `QPlainTextDocumentLayout` 不够，需显式 `setDocumentLayout`；修复后 split 7 项测试连续 2 轮 0 warning。
+- 全量 771 项 0 失败、14 跳过，`Document set does not support` 消失；但有 1 个 `EditorSplitInteractionTests` 原生崩溃后重试通过，尚未达到“零重试”。
+
 ## 2026-11-10 09:10（Asia/Shanghai）· 延迟滚动回调保护
 - 全量日志出现 `RuntimeError: Internal C++ object (QScrollArea) already deleted`：`QTimer.singleShot(0, lambda: self.chat_scroll...)` 在窗口销毁后执行。
 - 改为 `_scroll_chat_to_bottom()` 方法并捕获 RuntimeError；相关 client/settings 16 项测试通过。全量 771 项 0 失败、14 跳过，日志中不再出现该 RuntimeError；Windows CI `42733940665` 三版本成功；package run `42735373779` 在新增模块后仍全绿。
