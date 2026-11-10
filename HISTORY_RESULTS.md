@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-10 15:10（Asia/Shanghai）· 支持粘贴剪贴板图片
+- `PromptEdit` 新增 `image_pasted`，`insertFromMimeData` 识别剪贴板/拖放图片；`image_from_bytes()` 复用附件校验与 MIME 探测。
+- UI 将 QImage 编码为 PNG 后走同一 4 张、5MB/张、12MB 总量限制。附件/目标测试 8 项通过。边界：仍需模型支持视觉输入。
+
 ## 2026-11-10 14:00（Asia/Shanghai）· 拆分代码编辑器
 - `LineNumberArea` / `CodeEditor` 移入 `scidev_editor.py`；客户端保留 `CodeEditor` re-export。
 - 客户端降至约 7583 行，mypy 覆盖 40 个源文件；编辑器持久化/分屏 10 项通过；全量 771 项 0 失败、14 跳过；Windows CI `42760497759` 三版本成功；package run `42761783374` 验证 `scidev_editor.py` 能进入 installer。边界：只移动代码与类型标注，行为不变。

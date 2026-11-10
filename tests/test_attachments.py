@@ -10,6 +10,7 @@ from scidev_attachments import (
     AttachmentError,
     MAX_IMAGES,
     image_content_parts,
+    image_from_bytes,
     load_image_file,
     normalize_images,
 )
@@ -21,6 +22,15 @@ PNG_BYTES = base64.b64decode(
 
 
 class AttachmentTests(unittest.TestCase):
+    def test_image_from_bytes_normalizes_clipboard_png(self) -> None:
+        image = image_from_bytes(PNG_BYTES, "clipboard.png")
+        self.assertEqual(image["mime"], "image/png")
+        self.assertEqual(image["name"], "clipboard.png")
+        self.assertEqual(image["size_bytes"], len(PNG_BYTES))
+        self.assertTrue(image["data_url"].startswith("data:image/png;base64,"))
+        with self.assertRaises(AttachmentError):
+            image_from_bytes(b"not an image", "clipboard.png")
+
     def test_load_and_normalize_png(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-image-") as temp:
             path = Path(temp) / "pixel.png"

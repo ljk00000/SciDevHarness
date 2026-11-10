@@ -25,8 +25,11 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 from PySide6.QtCore import (
+    QBuffer,
     QDir,
     QEvent,
+    QIODevice,
+    QMimeData,
     QModelIndex,
     QObject,
     QPoint,
@@ -40,7 +43,7 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QDesktopServices, QFont, QKeyEvent, QKeySequence, QShortcut, QTextCursor, QTextDocument
+from PySide6.QtGui import QDesktopServices, QFont, QImage, QKeyEvent, QKeySequence, QShortcut, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -123,7 +126,7 @@ from scidev_widgets import ElidedLabel as ElidedLabel
 from scidev_worktree import WorktreeError, WorktreeManager
 from scidev_worktree_ui import WorktreeDialog
 from scidev_pty import PTYSession, PTYUnavailable
-from scidev_attachments import AttachmentError, load_image_file
+from scidev_attachments import AttachmentError, image_from_bytes, load_image_file
 from scidev_crash import install_crash_reporter
 from scidev_analytics_ui import ErrorTrendDialog
 from scidev_pr_ui import PullRequestDialog
@@ -759,6 +762,7 @@ class ProviderCheckThread(QThread):
 
 class PromptEdit(QTextEdit):
     send_requested = Signal()
+    image_pasted = Signal(object)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -766,6 +770,14 @@ class PromptEdit(QTextEdit):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def insertFromMimeData(self, source: QMimeData) -> None:
+        if source.hasImage():
+            image = source.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                self.image_pasted.emit(image)
+                return
+        super().insertFromMimeData(source)
 
 
 
@@ -3680,6 +3692,7 @@ class ClientWindow(QMainWindow):
         self.chat_input.setFixedHeight(76)
         self.chat_input.textChanged.connect(self._render_context_meter)
         self.chat_input.send_requested.connect(self.submit_chat)
+        self.chat_input.image_pasted.connect(self._attach_pasted_image)
         composer_layout.addWidget(self.chat_input)
         bottom = QHBoxLayout()
         bottom.setContentsMargins(0, 0, 0, 0)
@@ -7195,6 +7208,33 @@ class ClientWindow(QMainWindow):
         self._append_log("已请求停止当前任务")
         if hasattr(self, "stop_task_button"):
             self.stop_task_button.setEnabled(False)
+
+    def _attach_pasted_image(self, image: QImage) -> None:
+        if len(self._pending_images) >= 4:
+            self._append_log("最多附加 4 张图片")
+            return
+        if not isinstance(image, QImage) or image.isNull():
+            self._append_log("剪贴板中没有可用的图片")
+            return
+        buffer = QBuffer()
+        if not buffer.open(QIODevice.OpenModeFlag.WriteOnly):
+            self._append_log("无法读取剪贴板图片")
+            return
+        try:
+            if not image.save(buffer, "PNG"):
+                self._append_log("无法编码剪贴板图片")
+                return
+            data = bytes(buffer.data())
+        finally:
+            buffer.close()
+        try:
+            attachment = image_from_bytes(data, "clipboard.png")
+        except AttachmentError as exc:
+            self._append_log(f"图片未附加：{exc}")
+            return
+        self._pending_images.append(attachment)
+        self._update_image_attachment_ui()
+        self._append_log(f"已附加剪贴板图片：{attachment['name']}")
 
     def _choose_image_attachment(self) -> None:
         paths, _selected = QFileDialog.getOpenFileNames(

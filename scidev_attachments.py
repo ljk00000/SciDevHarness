@@ -85,6 +85,23 @@ def normalize_images(raw: object) -> list[dict[str, Any]]:
     return images
 
 
+def image_from_bytes(data: bytes | bytearray, name: str = "image") -> dict[str, Any]:
+    """Build a normalized attachment from raw image bytes (for clipboard paste)."""
+    raw = bytes(data)
+    if not raw:
+        raise AttachmentError("图片为空")
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise AttachmentError(f"单张图片不能超过 {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
+    mime = _detect_mime(raw)
+    encoded = base64.b64encode(raw).decode("ascii")
+    return {
+        "name": _safe_name(name, "image"),
+        "mime": mime,
+        "size_bytes": len(raw),
+        "data_url": f"data:{mime};base64,{encoded}",
+    }
+
+
 def load_image_file(path: Path) -> dict[str, Any]:
     path = Path(path)
     try:
@@ -97,14 +114,7 @@ def load_image_file(path: Path) -> dict[str, Any]:
         data = path.read_bytes()
     except OSError as exc:
         raise AttachmentError(f"无法读取图片：{exc}") from exc
-    mime = _detect_mime(data)
-    encoded = base64.b64encode(data).decode("ascii")
-    return {
-        "name": _safe_name(path.name, "image"),
-        "mime": mime,
-        "size_bytes": len(data),
-        "data_url": f"data:{mime};base64,{encoded}",
-    }
+    return image_from_bytes(data, path.name)
 
 
 def image_content_parts(images: list[dict[str, Any]]) -> list[dict[str, Any]]:

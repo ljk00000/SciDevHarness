@@ -23,6 +23,7 @@ if os.name == "nt":
         os.environ["QT_QPA_FONTDIR"] = str(windows_fonts)
 
 from PySide6.QtCore import (
+    QMimeData,
     QObject,
     QPoint,
     QPointF,
@@ -33,7 +34,7 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )  # noqa: E402
-from PySide6.QtGui import QFontInfo, QIcon, QTextCursor, QWheelEvent  # noqa: E402
+from PySide6.QtGui import QFontInfo, QIcon, QImage, QTextCursor, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
 from shiboken6 import delete as delete_qt_object  # noqa: E402
@@ -47,6 +48,7 @@ from scidev_client import (  # noqa: E402
     PatchDiffPanel,
     PatchReviewCard,
     ProjectFilterProxy,
+    PromptEdit,
     TerminalOutputDecoder,
     _is_link_or_junction,
     default_sample_workspace,
@@ -3178,6 +3180,31 @@ class SummarySettingsUiTests(unittest.TestCase):
                 window._clear_image_attachments()
                 self.assertEqual(window._pending_images, [])
                 self.assertFalse(window.image_attachment_label.isVisible())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_pasted_clipboard_image_enters_pending_attachments(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-paste-image-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.show()
+                self.app.processEvents()
+                image = QImage(2, 2, QImage.Format.Format_RGBA8888)
+                image.fill(Qt.GlobalColor.red)
+                window._attach_pasted_image(image)
+                self.assertEqual(len(window._pending_images), 1)
+                self.assertEqual(window._pending_images[0]["name"], "clipboard.png")
+                self.assertEqual(window._pending_images[0]["mime"], "image/png")
+                self.assertTrue(window.image_attachment_label.isVisible())
+                prompt = PromptEdit()
+                pasted: list[QImage] = []
+                prompt.image_pasted.connect(pasted.append)
+                mime = QMimeData()
+                mime.setImageData(image)
+                prompt.insertFromMimeData(mime)
+                self.assertEqual(len(pasted), 1)
+                prompt.deleteLater()
             finally:
                 window.close()
                 self.app.processEvents()
