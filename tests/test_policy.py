@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_core import CodingToolbox, EventLedger, PermanentError, SummarySettings
-from scidev_policy import (
+from scidev.agent.core import CodingToolbox, EventLedger, PermanentError, SummarySettings
+from scidev.runtime.policy import (
     ExecutionMode,
     ExecutionPolicy,
     NetworkPolicy,
@@ -210,7 +210,7 @@ class ToolboxExecutionPolicyTests(unittest.TestCase):
                 toolbox.replace_in_file("a.txt", "hello", "bye")
             with self.assertRaisesRegex(Exception, "只读"):
                 toolbox.apply_patch("*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch\n")
-            with patch("scidev_core.subprocess.Popen") as process:
+            with patch("scidev.agent.toolbox.subprocess.Popen") as process:
                 with self.assertRaisesRegex(Exception, "只读"):
                     toolbox.run_command("pytest -q")
                 process.assert_not_called()
@@ -231,7 +231,7 @@ class ToolboxExecutionPolicyTests(unittest.TestCase):
                 def communicate(self, timeout=None):
                     return b"FAILED tests/test_a.py::test_x - AssertionError: boom\n", None
 
-            with patch("scidev_core.subprocess.Popen", return_value=FakeProcess()):
+            with patch("scidev.agent.toolbox.subprocess.Popen", return_value=FakeProcess()):
                 result = toolbox.run_command("pytest -q")
             self.assertEqual(calls, [])
             self.assertIn("结构化测试失败", result)
@@ -264,7 +264,7 @@ class ToolboxExecutionPolicyTests(unittest.TestCase):
                     return b"hi\n", None
 
             try:
-                with patch("scidev_core.subprocess.Popen", return_value=FakeProcess()):
+                with patch("scidev.agent.toolbox.subprocess.Popen", return_value=FakeProcess()):
                     result = toolbox.run_command("echo hi")
                 self.assertIn("hi", result)
                 self.assertEqual(approvals, [])
@@ -281,7 +281,7 @@ class ToolboxExecutionPolicyTests(unittest.TestCase):
                 ExecutionMode.WORKSPACE_WRITE,
                 approval=lambda command, timeout: calls.append(command) or False,
             )
-            with patch("scidev_core.subprocess.Popen") as process:
+            with patch("scidev.agent.toolbox.subprocess.Popen") as process:
                 with self.assertRaisesRegex(Exception, "命令未执行"):
                     toolbox.run_command("echo hi")
                 process.assert_not_called()
@@ -299,7 +299,7 @@ class ToolboxExecutionPolicyTests(unittest.TestCase):
                 def communicate(self, timeout=None):
                     return b"ok\n", None
 
-            with patch("scidev_core.subprocess.Popen", return_value=FakeProcess()) as process:
+            with patch("scidev.agent.toolbox.subprocess.Popen", return_value=FakeProcess()) as process:
                 result = toolbox.run_command("echo hi")
             process.assert_called_once()
             self.assertIn("执行状态：passed", result)

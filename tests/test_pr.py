@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from scidev_pr import (
+from scidev.integrations.pr import (
     PullRequestError,
     PullRequestPlan,
     build_plan,

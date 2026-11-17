@@ -8,12 +8,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_context import ProjectContext
-from scidev_core import (
+from scidev.workspace.context import ProjectContext
+from scidev.agent.core import (
     CodingAgent, CodingToolbox, EventLedger, GitManager, OpenAICompatibleProvider,
     PermanentError, RetryableError, SummarySettings,
 )
-from scidev_patching import PatchError
+from scidev.workspace.patching import PatchError
 
 
 class ProjectContextTests(unittest.TestCase):
@@ -244,7 +244,7 @@ class ProjectContextTests(unittest.TestCase):
 
             context = self.context(root)
             snapshot = context.build("private-wheel")
-            with patch("scidev_context.subprocess.run", side_effect=AssertionError("must not execute commands")):
+            with patch("scidev.workspace.context.subprocess.run", side_effect=AssertionError("must not execute commands")):
                 environment = context._environment_snapshot({
                     "pyproject.toml", "requirements-dev.txt", "uv.lock",
                 })
@@ -782,12 +782,12 @@ class ProjectContextRepositoryRegressionTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         context = ProjectContext(root, CodingToolbox.is_protected_path)
         cases = (
-            ("review approved patch hunks", "scidev_patching.py", []),
-            ("retry after HTTP 429 server delay", "scidev_core.py", []),
-            ("project memory index summaries", "scidev_memory.py", []),
-            ("task planning update statuses", "scidev_planning.py", []),
-            ("nested test command discovery", "scidev_verification.py", []),
-            ("responsive theme QML version tree", ("scidev_client.py", "scidev_tree_ui.py"), []),
+            ("review approved patch hunks", "scidev/workspace/patching.py", []),
+            ("retry after HTTP 429 server delay", "scidev/integrations/model.py", []),
+            ("project memory index summaries", "scidev/agent/memory.py", []),
+            ("task planning update statuses", "scidev/agent/planning.py", []),
+            ("nested test command discovery", "scidev/agent/verification.py", []),
+            ("responsive theme QML version tree", ("scidev/desktop/client.py", "scidev/desktop/tree_ui.py"), []),
             (
                 "俄罗斯方块网页画布键盘控制",
                 "examples/tetris/index.html",

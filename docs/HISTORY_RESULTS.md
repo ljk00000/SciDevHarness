@@ -1,0 +1,1883 @@
+# 历史与结果
+
+## 2026-11-17 17:22（Asia/Shanghai）· 项目目录整理完成
+- 根目录 Python 文件由 83 个减至 2 个兼容启动入口；81 个实现模块按 `agent`、`desktop`、`workspace`、`integrations`、`runtime`、`evaluation` 归入 `scidev/`。三份维护文档归入 `docs/`，两份冒烟脚本归入 `scripts/`，20 个遗留测试/缓存目录可逆归档到 `.tmp-tests/legacy-root-20261117`。
+- 16:57—17:05：保存完整迁移前快照并验证 156 个 Python 文件与上一轮验收指纹一致；前后同组 59 项基线（55 通过/4 跳过）一致，路径相关 14 项通过。同步导入、mock 注入、项目清单、覆盖率、CI、发布暂存及 README 导航；保持根目录批处理、Python 启动命令及 `scidev_client.exe` 文件名。Ruff/mypy/pytest 缓存定向至 `.tmp-tests/cache`。
+- 17:08—17:14：独立发布暂存 109 个文件逐项核对无缺失/多余；暂存客户端在可写隔离工作区加载 Qt/QML 正常退出，CLI/模型冒烟帮助入口和部署 dry-run 通过，未实际安装/编译。复核修正自动替换误改的 exe/dist 名称，启动配置/安装器/打包清单 23 项重新通过。
+- 17:17：原有 94 个分组全量 837 项（823 通过/14 跳过），零失败、零错误、零崩溃、零重试，覆盖率 80%；正式结果在 `.research/test_result.json`。随后新增 1 项公共入口回归，其所在 4 项边界组另行通过，实际验证 `python -m scidev --help`、`python -m scidev.cli --help` 和启动器只读预检。原有全量与新增回归分开记录，不冒充再跑一次全量。
+- 验收：全仓 Ruff、40 模块 mypy、167 个 Python 文件内存编译、diff 空白检查及完整依赖冒烟通过；96 张后台截图覆盖 720p/1080p/2K/4K、布局阈值和主题，抽查布局正常。截图与日志在 `.tmp-tests/structure-*`。
+- 差异复核：78 个实现模块与机械路径迁移结果逐字一致，另 3 个仅调整应用根/资源定位；测试除导入迁移外，仅适配检索目标、发布清单、截图助手位置并新增公共入口回归。资源本体、业务规则和全部此前改动保留，文档旧证据的 10 个相对链接已同步。
+- 追溯：快照 `.tmp-tests/structure-before`；路径映射 `.tmp-tests/structure-map.json`；本轮独立差异 `.tmp-tests/structure-this-turn.patch`；最终汇总 `.tmp-tests/structure-verification.json`。未提交、未下载/更改依赖、未运行真实模型/Docker/完整二进制打包或安装器 E2E；原有最小 Qt 环境待办保留。
+
+## 2026-11-17 16:48（Asia/Shanghai）· 六组缺陷修复完成
+- 已先复现并修复六组问题：① 测试报告写成功后进程异常退出仍被当作成功、旧/损坏报告误用，以及超时/重试丢失已有失败；② Qt 两参数设置构造器忽略指定 INI 格式，导致隔离保存/读取失败；③ 命令取消后继续做 Git/指纹扫描；④ 排队时点停止的标记在任务启动时被清掉；⑤ 关闭窗口后分析定时器未停、仍可重建语言服务；⑥ 计划行替换后旧控件仍可见，造成文字重叠，截图也未处理延迟销毁。
+- 修复方式：核验退出码并保存重试原因，禁止重试覆盖断言失败；统一设置构造并同步保存，冒烟读取同一显式 INI 后端；取消后保留工具结果再终止；按任务 ID 保留停止请求、串行化停止与下一任务启动；关闭时停定时器并忽略迟到的分析/LSP 回调；计划旧行立即隐藏、截图前交付延迟销毁事件。测试运行器在每例结束后释放已关闭的原生工作区，真实对象有效性回归确认不会删除仍在使用的窗口。
+- 15:50—16:08：保存修复前快照，补回归并验证前五组缺陷；设置/取消/进程/汇总 44 项、关闭/分屏/补全/LSP/界面 42 项、任务身份隔离 2 项通过，范围重叠不累计。之前稳定失败的完整依赖冒烟已通过。
+- 16:22—16:36：第一轮完整验收 834 项（820 通过/14 跳过），如实保留 3 个 Qt 原生退出后的重试；加入已关闭原生窗口释放后，第二轮 836 项（822 通过/14 跳过）零失败、零重试。随后实际复现并修复计划旧行重叠，3 项相关专项通过，冻结最终源码。
+- 16:46：最终正式运行 `scripts/run_tests_coverage.py` 正常退出，94 个目标共 837 项（823 通过、14 跳过），零失败、零错误、零崩溃、零重试；分支覆盖率汇总 80%。新增 16 项回归，最终运行器专项共 9 项。结果在 `.research/test_result.json`，汇总及源码指纹在 `.tmp-tests/bugfix-verification.json`，日志在 `.tmp-tests/bugfix-coverage-frozen.log`。
+- 16:44—16:48：最终 Ruff、40 模块 mypy、156 个 Python 文件内存编译、diff 空白检查通过；启动预检、pip check、QML lint 已通过。96 张后台截图覆盖 720p/1080p/2K/4K、布局阈值与主题，存于 `.tmp-tests/bugfix-ui-clean`；抽查确认旧计划文字重叠消失。严格最小 Qt 检查仍因已有 Addons 6.11.2 不通过，依赖未变。
+- 差异复核：任务为排查并修复已确认缺陷；相对修复前快照，13 个 Python 文件、39 个差异块、+430/-21 行全部对应上述修复或回归验证，另更新两份过程文档；无额外重构、格式整理或功能扩展，范围问题 0。完整本轮差异在 `.tmp-tests/bugfix-this-turn.patch`，此前改动保持不变。
+- 更正上一轮结论：原始 JSON 显示 UI 模块复验虽然写出 16 项通过，进程仍以 `3221225477` 退出；上一轮运行器漏查退出码，不能把“807 通过/14 跳过”视为进程验收通过。本轮已修复判定，以本节正式运行器的新结果为准，保留原始证据。
+- 所有先前未提交改动保留，修复前快照在 `.tmp-tests/bugfix-20261117-before`；本轮未卸载 Addons、安装/下载依赖、运行真实模型或修改网络策略，暂未提交。
+
+## 2026-11-17 15:44（Asia/Shanghai）· 大模块持续拆分完成
+- 15:02–15:27：按完整职责应用 R1 设置、R2 窗口/面板/布局、R3 Git/资源管理/终端、R4 聊天/上下文、R5 验收/收尾/总结、R6 工具/任务推进、R7 主循环阶段；新增 12 个职责模块。client 6222→929 行，core 3746→834 行，主循环 917→101 行；已有状态和生命周期仍由窗口/Agent 管理，阶段状态只属于单次任务。
+- 行为核对：264 个其余原方法源码/AST、装饰器、签名与类常量一致；主循环的三个阶段在共享变量替换与重试返回还原后，展开 AST 与原控制流一致，注释保留。旧导出继续兼容，清理 101 项迁移产生的未使用导入；壳层导入直接指向工具所属模块，避免工作流反向加载核心。PySide 打包清单同步。
+- 回归：R1 51 项、R2 53 项、R4 34 项、R5 285 项、R6 368 项均无失败；范围交叉，不累计为独立题数。R7 368 项首次有 1 项既有取消超时，取消组在阶段拆分前后各 8 项通过，不能记为修复。边界与关联 UI 20 项通过。最终全仓主跑 805 项：791 通过、14 跳过，另 1 个 Qt 进程在 welcome 测试中以 `3221225477` 原生退出、未产出结果；该模块独立复验 16 项通过。按最终覆盖计 821 项、807 通过/14 跳过，保留首败，不能称为零重试全绿。
+- 原始扫描 814 项有 1 个外部菜单超时、14 跳过：旧 mock 漏拦此前迁出的编辑器菜单；R3 的新菜单也需迁移注入位置，仅修改注入、不改原断言，当前测试对前后产品源码均 4 项通过。R3 快速打开组首次 1 项时序失败，原组 12 项复测及前快照对照均通过，首败保留。
+- 静态/运行检查：Ruff、配置内 40 个 mypy 模块、156 个 Python 文件内存编译、启动预检、pip check、QML lint 与 diff 检查通过。最小 Qt 检查因已有 Addons 6.11.2 失败；依赖冒烟的工作区设置断言在前快照/当前源码均失败，未改环境或业务逻辑。96 张后台截图覆盖四档分辨率、附近尺寸、主题、设置与版本树，已抽看 720p/4K 编辑器及 1080p 版本树。计划栏截图重影在前后版本均可复现，处理延迟销毁事件后均消失，两组控件截图哈希分别一致；未改 UI 逻辑。
+- 停止继续拆分的依据：入口已只保留装配/生命周期/协调，工作流按改变原因分离，推进循环已分阶段；工具箱、编辑器、模型协议解析、上下文构建、验证发现、样式和工具 schema 各有集中职责，保留现状，不为行数增加转发层。
+- 审查与追溯：按本轮前未提交快照核对全部改动，迁移、状态整理、导入/打包清单、测试注入及维护文档均对应任务，未发现额外业务逻辑修改；原有其他源文件/测试改动保留。基于 HEAD `778dbff`，近 90 天 client/core 分别 86/71 次改动，排除 1 个超过 30 文件的提交后共变更 23 次，fix 消息启发计数 30/35。逐步快照/契约在系统 Temp 的 `karpathy-refactor/SciDevHarness/20261117-maintainability`，日志、等价脚本、截图与本轮补丁在 `.tmp-tests/maintainability-*`。未提交，未运行真实模型、Docker、DeepSWE、覆盖率门槛、完整打包或安装器 E2E。
+
+## 2026-11-17 14:56（Asia/Shanghai）· 项目用途梳理
+- 对照 README、能力说明与源码确认：SciDevHarness 是 Python/PySide6 原生 Windows AI 编程工作台，核心是项目检索、改码、执行检查、Git 差异/提交和过程留痕；桌面与 CLI 共用 Agent，目前未包含自动科研实验流程。
+- 核对本地启动入口：`start_qwen_local.bat` 检查 Ollama 和已有模型，默认使用 `scidev-qwen2.5-coder-7b:q4_k_m`，连接本机 11434 端口并启用流式响应、文本工具调用兼容；不负责下载或训练模型。
+- 已有模型接入、工具/策略、会话/记忆、评测及编辑器模块；近期开发记录显示正在拆分大型 core/client，DeepSWE v1.1 尚待环境与适配。本轮仅阅读与更新过程文档，未运行模型、测试或 UI，未修改业务代码；原有后续工作保留在“当前工作”。
+
+## 2026-11-17 13:09（Asia/Shanghai）· 第四轮拆分：研究委派与编辑器工作流
+- core 4152→3746 行；两个委派函数迁入无状态的 `scidev_research.py`（495 行），原方法保留签名作薄适配，三个研究辅助导出保持对象身份。保存、事件、快照和用量回调调用时绑定，兼容绕过构造函数；并行工作线程只返回数据，持久化与记账留在调用线程。
+- client 7398→6222 行；64 个方法原样迁入 `scidev_editor_workspace.py`（1211 行）的普通 `EditorWorkspaceMixin`，承接标签、分屏、导航、文件、查找/替换及代码诊断。mixin 无 QObject、构造函数或新增状态；窗口初始化、Qt 生命周期与代码诊断常量留在 client，动态 self 调用和仓库使用的旧导出保留。
+- 本轮快照 `.tmp-tests/round4-snapshot` 为对照：两个研究函数依赖归一化后的源码/AST、64 个编辑器方法的源码/AST、原签名和其余保留语句一致。测试仅将六个编辑器 mock 指向实际实现模块，断言未改；PySide 清单只增加两个模块。
+- 前基线：研究 23 项（22 通过/1 真实模型跳过），编辑器 57 项全部通过。迁移后研究原组加五项边界测试共 28 项（27/1）；新增覆盖独立导入、旧对象身份、动态适配、初始保存失败及并行调用线程。测试代码一次编辑错位已修正、回读并重跑通过。
+- 扩展回归：核心/策略/进程/沙箱/验证/会话等 320 项，316 通过/4 项 Windows 符号链接权限跳过；辅助/UI/设置/CLI/发布暂存 70 项，66 通过/4 项外部暂存目录限制跳过。客户端先运行同组编辑器 57 项，其余类独立进程执行，共 115 项全部通过、无回调错误；不重复累计前基线和交叉复验。
+- 28 个已改/新增 Python 文件 Ruff 和内存编译、19 个 core/15 个 client 旧导入名称、导入边界及 `git diff --check` 通过。720p、1080p、2K、4K 实际文件打开与分屏的后台渲染、控件几何、共享文档及截图尺寸检查通过，截图在 `.tmp-tests/round4-ui`；未作逐像素人工审阅。
+- 既有问题仍保留：完整 client 单进程在迁移前后均有隐藏审批框残留干扰；先前一次缩放原生崩溃未复现、根因未知。取消线程超时本轮通过，但拆分前已有间歇失败，未改相关生产逻辑或放宽断言，不能宣称修复。
+- 收尾：未发现本轮测试进程或回归日志临时目录残留，诊断快照和必要日志保留，未触碰其他项目进程；全部改动未提交。未运行全量、真实模型、Docker、完整打包、安装器 E2E 或 DeepSWE 任务；后续准备拆分窗口布局/设置及 Agent 推进职责，DeepSWE v1.1 仍待环境恢复和适配。
+
+## 2026-11-17 12:46（Asia/Shanghai）· 第三轮拆分：配置、工具箱与客户端辅助
+- core 5974→4152 行，client 7944→7398 行；新增 project_settings（185 行）、toolbox（1443 行）、svg（253 行），主题、工作区路径及终端解码归入已有共享模块，旧入口和对象身份保留。一次遗漏的 `PatchError` 导出已恢复并补断言。
+- 11 个迁移定义、3 个保护常量和完整主题与迁移前快照一致；core 69 个、client 287 个保留定义及周边非导入语句一致。25 个已改 Python 文件 Ruff/内存编译、paths/process 的 mypy、`git diff --check` 通过；新增边界测试通过。
+- 核心同组 240 项：迁移前 236 通过/3 跳过/1 个既有取消超时失败，迁移后 237 通过/3 跳过。扩展 200 项：194 通过/6 项环境跳过（符号链接及外部发布暂存限制）；未运行全量、真实模型、Docker 或打包。
+- 完整 client 迁移前后均在第 42 项环境审批测试遇到隐藏浏览器审批框残留，回调断言 `2 != 1`；单独运行该项通过。后续目标组在缩放测试出现过原生崩溃且无汇总；独立复验该单测与完整缩放类（11 项）在前后版本均通过，其他受影响客户端分组 29 项通过。原生崩溃未复现、原因未知，不能记为已修复或完整 client 通过。
+- 720p、1080p、2K、4K 四档后台渲染、控件几何及截图尺寸检查通过，未作逐像素人工审阅。工具箱/SVG 无 core/client 反向依赖，仍保留原有 Qt 间接依赖。全部修改未提交，既有取消不稳定记录保留。
+
+## 2026-11-16 23:21（Asia/Shanghai）· Terminal-Bench 与 DeepSWE 适用性核对
+- 用户补充两个候选；本轮 DeepSWE 指 Datacurve 的软件工程基准。官方基准为 113 个新编真实仓库工程任务，91 个仓库、5 种语言，其中 Python 34 题；不是全部取自历史真实用户 issue。
+- DeepSWE v1.1 保持 113 题，先让 Agent 在工作容器完成任务，再提取已提交补丁，放入独立干净容器应用并运行隐藏裁判，输出 CTRF 逐项测试报告。官方发布基线使用 mini-SWE-agent；若评 SciDevHarness，必须适配本项目代理执行，官方代理仅作为对照。
+- Terminal-Bench 公开任务与程序验收，覆盖代码、系统、数据和专业工具工作；与纯代码开发要求部分重合。官方当前主页为 4.1，加强验收可靠性与防奖励投机；旧 2.1 为 89 题，不能混用题量和榜单版本。
+- 建议优先将 DeepSWE v1.1 的全部 Python 34 题作为小型代码主评测候选，按公开语言规则筛选并冻结 ID；Terminal-Bench 可补充预先固定的终端/调试/工具链任务。所有子集成绩单独标明范围，不等同官方全量榜单；用户尚未选定。
+- 本轮仅查阅官方主页、发布说明与仓库，更新两份文档；未下载任务/镜像、未运行模型或测试、未改业务代码，本机环境与实际费用未验证。最终复核已删除误配的无关论文链接，并校正 DeepSWE 版本页与仓库入口。
+- 官方来源：`https://deepswe.datacurve.ai/blog/deepswe`；`https://deepswe.datacurve.ai/blog/deepswe-v1-1`；`https://github.com/datacurve-ai/deep-swe`；`https://www.tbench.ai/news/terminal-bench-4-1`；`https://www.tbench.ai/news/terminal-bench-2-1`；`https://github.com/harbor-framework/terminal-bench`。
+
+## 2026-11-16 23:06（Asia/Shanghai）· 真实任务评测候选方案
+- 已按官方资料筛选三套真实仓库任务：SWE-bench Lite 开发集 23 题（正式测试集 300 题）；Scale AI SWE-Bench Pro V2 HARD-51（完整集 642 题）；微软 SWE-bench-Live Windows 66 题（48 个仓库、9 种语言）。分别适合接入校准、正式高难度小型评测及 Windows 专项；HARD-51 难度偏高，开发集分数不等于正式榜单分数。
+- 选型依据更新：OpenAI 于 2026-02-23 说明停止报告 SWE-bench Verified；Scale AI 于 2026-09-22 发布修订测试/题目和环境的 Pro V2。公开题库仍需披露潜在训练污染，不能单凭名称认定题目有效或未见过。
+- 建议冻结清单、仓库提交、镜像和模型/预算；先验证空补丁与官方参考补丁，再按每题一次完整 Agent 尝试计分；答案/隐藏测试与 Agent 隔离，干净环境官方裁判复验，记录补丁、轨迹、token/时间与环境失败，禁止静默删题或只保留重跑成功。
+- 已查看 `scidev_eval.py` 的临时工作区、任务执行和命令验收入口；后续若选定题库，需接入其官方裁判与任务环境。本轮仅方案研究及两份文档更新，未下载题库/镜像、未运行模型或测试、未修改业务代码；选型待用户决定。
+- 官方来源：`https://www.swebench.com/lite.html`；`https://labs.scale.com/blog/swe-bench-pro-v2`；`https://huggingface.co/datasets/ScaleAI/SWE-bench_Pro`（V2 的 `hard` 配置为 HARD-51，需固定 revision）；`https://github.com/microsoft/SWE-bench-Live`；`https://huggingface.co/datasets/SWE-bench-Live/Windows`；`https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/`。
+
+## 2026-11-16 22:45（Asia/Shanghai）· 核心职责拆分第二轮：会话持久化与恢复
+- 22:25–22:40：将会话路径、原子保存、加载、工具调用中断恢复和图片补挂迁入无状态的 `scidev_session.py`；core 保留 5 个原方法及签名作为薄适配，保存/事件/提示词回调调用时绑定，兼容实例覆写和绕过构造函数的附件测试。新模块不反向导入 core、model 或 Qt/UI，Git/ledger 类型仅在 `TYPE_CHECKING` 中依赖。
+- 行数：core 6134 → 5974（减少 160 行），session 238 行；client 未改，仍为 7944 行。同步迁移原子替换失败的测试注入位置，并将会话模块加入 PySide 文件清单；工具执行、主循环、摘要与完成门槛保持原位。
+- 22:40–22:44：新增 7 项边界测试全部通过，覆盖独立导入、已有/新建/无效会话、动态回调、恢复保存顺序、保存失败及已有工具结果。AST 校验确认 5 个迁移函数依赖参数化后逻辑一致，其余 130 个 core 定义及周边语句与本轮迁移前快照一致，前轮验证历史保留修复仍在。
+- 22:42–22:45：core/会话记忆/附件/验证/新会话测试共 224 项，220 通过、3 因符号链接权限跳过、1 失败；锁/模型边界/provider/CLI/发布暂存/策略/验收/异常共 96 项，92 通过、4 因暂存目标必须位于源码目录外而跳过。合计 320 项：312 通过、7 跳过、1 失败，不能记为全绿。
+- 唯一失败仍为 `test_agent_cancel_interrupts_an_approved_command` 的线程退出超时；本轮迁移前扩大基线已复现，同一取消组独立运行也曾通过。扩大基线推翻了仅由 PowerShell 日志捕获造成的猜测，根因未定位；未改生产取消逻辑、未放宽断言。
+- 静态与清理检查：全部已改 Python 文件 Ruff 通过；core/session 与新会话测试内存编译、`git diff --check` 通过。无遗留旧网络模拟位置，发布脚本仍按 `scidev_*.py` 自动收集。结束时无残留测试启动器进程或回归日志目录；改动未提交，保留全部前轮改动和既有文档内容。
+- 边界：未运行全量、真实模型、Docker、完整打包或安装器 E2E；4 项外部发布暂存测试仍未验证。后续准备拆分任务推进职责，本轮尚未实施。
+
+## 2026-11-16 22:22（Asia/Shanghai）· 核心职责拆分第一轮：模型通信
+- 22:01–22:14：将 OpenAI 兼容 Provider、HTTP/代理、流式解析、工具调用解析与本地上下文限制原样迁入 `scidev_model.py`；`RetryableError` 归入 `scidev_errors.py`，core 保留类、异常和 Ollama 默认上下文常量的兼容导出。新模块只依赖标准库、errors/runtime，不反向导入 core 或 Qt/UI。
+- 行数：`scidev_core.py` 7219 → 6134（减少 1085 行）；新增 `scidev_model.py` 1096 行；`scidev_client.py` 本轮未改，仍为 7944 行。同步迁移测试/三个观测脚本的网络模拟位置及 PySide 模块清单；发布暂存脚本原有 `scidev_*.py` 收集逻辑无需修改。
+- 22:14–22:18：拆分前后相同的 44 项模型基线均通过，新增旧导入对象身份、独立导入不加载 core/UI 两个边界测试。扩大核心、服务商、会话记忆、上下文、冒烟脚本、异常和验证模块回归 334 项：329 通过、4 因符号链接权限跳过、1 个命令取消用例失败。相邻发布/策略/验收 38 项：34 通过、4 因暂存目标必须在源码目录外而跳过。合计 372 项，363 通过、8 跳过、1 失败。
+- 22:18–22:22：取消测试组单独运行 8 项，7 通过、同一项失败；在独立测试进程加载拆分前 core（保留前轮验证修复）也复现 `test_agent_cancel_interrupts_an_approved_command` 的线程退出超时，拆分后独立对照同样复现。线程快照分别落在事件台账 SQLite 写入与验证快照 Git 进程创建处；确认为拆分前已有失败，根因未定位，未放宽断言或修改取消实现。
+- 静态与入口检查：9 个迁移定义和 15 个保留 core 定义的 AST 一致，前轮验证门槛修复仍在；无旧网络模拟引用。所有改动 Python 文件的 Ruff、三个脚本 `--help`、`git diff --check` 通过。
+- 边界：未运行全量、真实模型、Docker、完整打包或安装器 E2E；发布暂存相关 4 项未验证。未提交改动，保留此前验证修复及两份文档已有内容；当前回归不能记为全绿。后续顺序为任务推进与会话生命周期 → 工具执行 → 窗口交互，尚未实施。
+
+## 2026-11-16 21:47（Asia/Shanghai）· 修复验证完成门槛
+- 21:30–21:42：先补回归，确认 pytest 失败后 lint 成功、仅 `git diff --check` 成功均会错误放行并自动提交；最近 100 条截断会丢失旧失败。
+- 21:42–21:46：按具体命令跟踪未解除的失败/超时/启动失败，仅完整、稳定的同命令成功重跑可解除；代码变化后仍需补验。仅测试、lint、类型检查、编译或构建的有效成功可满足代码验证门槛；报告新增 `blocking_checks`。
+- 历史保留最近 100 条，额外保留仍有阻塞作用的旧失败；成功解除后可正常淘汰，不会因解除记录截断而恢复旧失败。生产改动限于验证汇总与一处历史保留调用，新增 10 个回归测试。
+- 验证：`tests.test_verification` 42 项（39 通过、3 因 Windows 符号链接权限跳过）；核心完成门槛/提交归属/无改动检查、`tests.test_policy`、`tests.test_acceptance` 共 41 项全部通过。Ruff 检查三个改动的 Python 文件及 `git diff --check` 均通过。
+- 环境处理：scratch 无法新建目录，测试启动器仅在测试进程中指定工作区临时目录和 `GIT_CEILING_DIRECTORIES`，保持生产父仓库保护；测试已结束，无残留测试目录或进程。
+- 边界：未运行全量测试、真实模型、Docker、打包或安装器 E2E；未提交改动，无实施阻塞。保留此前两份过程文档的已有改动。
+
+## 2026-11-16 21:21（Asia/Shanghai）· 项目缺口评估
+- 首要问题已最小复现：相同代码指纹/版本下，pytest 失败后 ruff 成功会被 `VerificationTracker.summarize()` 汇总为 passed；仅 `git diff --check` 成功也可通过完成门槛。建议按必需检查及各检查最新有效结果判定，保留未消除的失败。
+- 评测：仓库 2026-11-01 的 Qwen2.5-Coder 7B 标准基线为 2/20，不能外推其他模型；未发现强模型对照。部分验收未覆盖提示要求（CLI 默认值、协程并发），应先完善断言再补真实多文件任务。
+- 工程与发布：默认 local 无 OS 隔离，Docker 需用户准备；Release 仅依赖打包，未显式绑定同 SHA 的完整 CI；测试汇总会用重试结果覆盖首次未完成结果。建议补隔离实测、严格发布门槛及已安装产物的编程/恢复 E2E。
+- 可维护性：核心与桌面入口分别 7219/7944 行，建议随上述修复逐步抽离职责。实施顺序：验证判定 → 评测 → 隔离 → 发布验收 → 结构收敛。
+- 本次检查：验证器单元测试 4 通过、1 因符号链接权限跳过；未跑全量、真实模型、Docker 或安装器 E2E。仅更新两份记录，未修改业务代码；无评估阻塞，发现的问题尚未修复。
+
+## 2026-11-16 21:08（Asia/Shanghai）· 项目用途梳理
+- 结论：SciDevHarness 是 Python/PySide6 编写的 Windows 桌面 Coding Agent，提供编辑器、Agent 对话、项目检索、代码修改、验证、Git 追溯与无界面 CLI；科研实验执行不在当前范围。
+- 已静态核对 README、pyproject、能力说明，以及桌面入口、Agent 模型调用循环和模型服务预设；启动入口为 `start_client.bat` / `scidev_client.py`，无界面入口为 `scidev_cli.py`。
+- 本次仅补充过程记录，未修改业务代码、运行应用/测试或调用模型；未验证本机运行环境与真实模型效果，无阅读阻塞。
+
+## 2026-11-10 17:30（Asia/Shanghai）· 模型配置入口与多服务商预设
+- 顶栏“未配置模型”可点击打开 Agent 设置；输入框右下角新增模型下拉；设置页提供 OpenAI、DeepSeek、Anthropic Claude、OpenRouter、Ollama、LM Studio、llama.cpp 和自定义兼容接口。
+- 本地模型探测只走 127.0.0.1，不经过代理；Ollama 使用 `/api/tags`，其余使用 `/v1/models`；本地端点允许无 Key 保存与连接测试。
+- 修复保存配置后状态仍显示“未配置模型”的根因；provider/UI 目标测试通过；全量 788 项 0 失败；CI 42778291731 三版本绿；Windows 打包 42779822389 绿（仍为未签名安装包）。边界：Claude 使用 Anthropic 的 OpenAI 兼容端点，若账号未开放该兼容层应改用 OpenRouter。
+
+## 2026-11-10 16:45（Asia/Shanghai）· 明确调试器非目标
+- 确认 Codex CLI/IDE 没有内置 DAP 调试器；VS Code 调试器是宿主 IDE 能力，不应作为 Codex 对标项。
+- 保留现有 pdb 终端入口，不建设图形断点、变量/调用栈面板；后续资源转向安全沙箱、签名发布、真实模型评测。
+
+## 2026-11-10 16:20（Asia/Shanghai）· 编辑器内联差异标记
+- `CodeEditor` 使用 `difflib` 对比磁盘与缓冲区，以整行底色标记新增/修改；`save_current_file()` 成功后清除标记。
+- 编辑器标签右键菜单提供显示/清除差异；4 个单元测试 + 1 个 UI 流程通过。边界：只标记当前缓冲区相对磁盘的差异，不提供逐行接受/拒绝。
+
+## 2026-11-10 15:45（Asia/Shanghai）· 支持拖入/粘贴图片文件路径
+- `PromptEdit` 新增 `image_file_pasted`，识别剪贴板/拖放文件 URL 中的图片扩展名；UI 走 `load_image_file()`，不绕过大小、MIME 与数量限制。
+- 剪贴板位图与文件路径两种入口共用同一附件列表。目标测试 7 项通过；Windows CI `42766254901` 三版本成功；package run `42767574275` 验证新入口能进入 installer。边界：仍需模型支持视觉输入。
+
+## 2026-11-10 15:10（Asia/Shanghai）· 支持粘贴剪贴板图片
+- `PromptEdit` 新增 `image_pasted`，`insertFromMimeData` 识别剪贴板/拖放图片；`image_from_bytes()` 复用附件校验与 MIME 探测。
+- UI 将 QImage 编码为 PNG 后走同一 4 张、5MB/张、12MB 总量限制。附件/目标测试 8 项通过；Windows CI `42763474797` 三版本成功；package run `42764776533` 验证新入口能进入 installer。边界：仍需模型支持视觉输入。
+
+## 2026-11-10 14:00（Asia/Shanghai）· 拆分代码编辑器
+- `LineNumberArea` / `CodeEditor` 移入 `scidev_editor.py`；客户端保留 `CodeEditor` re-export。
+- 客户端降至约 7583 行，mypy 覆盖 40 个源文件；编辑器持久化/分屏 10 项通过；全量 771 项 0 失败、14 跳过；Windows CI `42760497759` 三版本成功；package run `42761783374` 验证 `scidev_editor.py` 能进入 installer。边界：只移动代码与类型标注，行为不变。
+
+## 2026-11-10 13:10（Asia/Shanghai）· 拆分项目过滤器与标题栏
+- `ProjectFilterProxy`、`WindowTitleBar` 移入 `scidev_shell_ui.py`；`_is_link_or_junction` 归入 `scidev_paths.py`。
+- 客户端降至约 7775 行，mypy 覆盖 39 个源文件；快速打开/搜索 12 项通过；Windows CI `42757809639` 三版本成功；package run `42759011980` 验证 `scidev_shell_ui.py` 能进入 installer。边界：只移动代码与 re-export，行为不变。
+
+## 2026-11-10 12:30（Asia/Shanghai）· 拆分 QML 开发树
+- `DevelopmentTreeView`、布局偏移辅助函数/常量移入 `scidev_tree_ui.py`；`application_base_dir` 移入 `scidev_paths.py`。
+- 客户端降至约 7974 行，mypy 覆盖 38 个源文件；开发树交互测试通过。CI 暴露上下文回归测试硬编码旧文件名，现接受 `scidev_client.py` 或 `scidev_tree_ui.py`；Windows CI `42755325779` 三版本成功；package run `42756506069` 验证 `scidev_tree_ui.py` 能进入 installer。边界：只移动代码与 re-export，行为不变。
+
+## 2026-11-10 11:50（Asia/Shanghai）· 拆分任务计划与通用控件
+- `TaskPlanPanel` → `scidev_plan_ui.py`，`ElidedLabel` → `scidev_widgets.py`；客户端再减 260 行至约 8249 行，mypy 覆盖 37 个源文件。
+- UI polish/通知 13 项通过；Windows CI `42751399374` 三版本成功；package run `42752665347` 验证 `scidev_plan_ui.py`/`scidev_widgets.py` 能进入 installer。边界：仅移动与类型标注，行为不变。
+
+## 2026-11-10 11:20（Asia/Shanghai）· 拆分聊天与通知 UI
+- `MessageBubble`、`ExecutionGroup`、`NotificationToast` 移入 `scidev_chat_ui.py`；客户端降至约 8507 行，mypy 覆盖 35 个源文件。
+- 通知/补丁/UI polish 18 项通过；Windows CI `42748304193` 三版本成功；package run `42750102071` 验证 `scidev_chat_ui.py` 能进入 standalone/installer。边界：仅移动与类型标注，行为不变。
+
+## 2026-11-10 10:50（Asia/Shanghai）· 拆分补丁审核 UI
+- 补丁高亮、编辑器侧 diff 面板和聊天侧审核卡移入 `scidev_patch_ui.py`；客户端从约 9000 行降到约 8719 行，mypy 覆盖 34 个源文件。
+- PatchReviewUiTests 5 项通过；Windows CI `42745635924` 三版本成功；package run `42746749314` 验证 `scidev_patch_ui.py` 能进入 standalone/installer。边界：diff 面板由 `CodeEditor` 改用只读 `QPlainTextEdit`，行为保持，但不再复用编辑器主题定制。
+
+## 2026-11-10 10:30（Asia/Shanghai）· 取消延迟按请求时刻计算
+- 取消测试在慢 runner 上因命令启动耗时被误判失败；断言现在只测 `request_cancel()` 到 worker 结束的延迟，定向 5 轮通过；Windows CI `42742566240` 三版本成功；package run `42743986679` 验证删代码后 standalone/安装/卸载仍通过。边界：不改变取消语义，只修正观测点。
+
+## 2026-11-10 10:10（Asia/Shanghai）· 删除遗留开发树
+- `_LegacyDevelopmentTreeView` 已无引用，删除 479 行和 5 个只服务它的导入；当前 QML `DevelopmentTreeView` 不变。client/UI 124 项测试通过。
+
+## 2026-11-10 09:40（Asia/Shanghai）· 分离文档的布局
+- 关闭共享文档视图时，裸 `QTextDocument` 缺少 `QPlainTextDocumentLayout`；PySide6 需显式 `setDocumentLayout` 才消除 `QPlainTextEdit::setDocument` 警告。
+- split 7 项测试连续 2 轮 0 warning；全量 771 项 0 失败、14 跳过，警告消失；Windows CI `42738524760` 三版本成功。边界：有 1 个 `EditorSplitInteractionTests` 原生崩溃后重试通过，尚未做到零重试。
+
+## 2026-11-10 09:10（Asia/Shanghai）· 延迟滚动回调保护
+- `QTimer.singleShot(0, lambda: self.chat_scroll...)` 可能在窗口销毁后执行；改为带 RuntimeError 保护的 `_scroll_chat_to_bottom()`，覆盖全部 4 个调用点。
+- 全量 771 项 0 失败、14 跳过，日志中 `Internal C++ object (QScrollArea) already deleted` 消失；Windows CI `42733940665` 三版本成功；package run `42735373779` 验证新增 `scidev_lsp_ui.py` 能进入 standalone/installer。边界：只丢弃过期 UI 回调，不改变聊天滚动时机。
+
+## 2026-11-10 08:45（Asia/Shanghai）· 拆分 LSP Qt 桥接
+- `ResidentLSPBridge` 移入 `scidev_lsp_ui.py`，客户端不再直接依赖 `ResidentLSP`/诊断线程；删除未使用的 `LSPDiagnosticsThread` 和无效的 `_lsp_thread` 关闭分支。
+- 新模块纳入 mypy（33 个源文件）；全量 771 项 0 失败、14 跳过，`scidev_lsp_ui` 覆盖率 100%；Windows CI `42730916986` 三版本成功。边界：只做移动/删除，不改诊断行为。
+
+## 2026-11-10 08:20（Asia/Shanghai）· 含空格路径重装与取消测试
+- 安装 E2E 目录改为含空格路径并重复安装；`Start-Process -ArgumentList` 数组不会自动引用空格参数，改为 `/DIR="..."` 后 run `42725771804` 全绿，覆盖安装后 smoke/卸载通过。
+- 3.12 CI 的批准命令取消测试在慢 runner 上等待 `tool_called` 超时；现在同时观察 `_active_command` 进程，定向测试 5 轮通过。边界：测试更稳，不改变取消语义。
+- 全量 771 项 0 失败、14 跳过；Windows CI `42727312933` 三版本成功。
+
+## 2026-11-10 08:00（Asia/Shanghai）· 安装/卸载 E2E 通过
+- package workflow 在干净 Windows runner 上完成真实静默安装 → 已安装 exe 的 `--smoke-test` → 静默卸载 → 确认 exe 已删除，run `42722815742` 全绿。
+- 本机无法启动 unsigned 安装包的环境阻塞因此不再影响结论；CI 证明 per-user 安装包可安装、可运行、可卸载。
+- 安装包仍是 unsigned，未验证代码签名信任链、管理员安装或升级路径。全量 771 项 0 失败、14 跳过；Windows CI `42722814737` 三版本成功。
+
+## 2026-11-10 07:50（Asia/Shanghai）· 安装包安装/卸载 E2E
+- 新增 CI 步骤：静默安装、运行已安装 exe 的 smoke、静默卸载、检查残留。
+- 验证：run `42722815742` 安装/卸载步骤通过；Windows CI `42722814737` 通过。边界：仅 per-user、无签名、无升级/回滚场景。
+
+## 2026-11-10 07:30（Asia/Shanghai）· 可重试的 Qt 临时目录
+- `TemporaryDirectory` 在 Windows 上会与 Qt 延迟释放的文件句柄竞争；新增 `tests/qt_temp.py`，`test_client` 和 `test_settings` 使用最多 8 次退避重试，仍失败才忽略残留。
+- 验证：4 项受影响测试连续 3 轮通过；全量 771 项 0 失败、14 跳过、无重试目标；远端 Windows CI run `42721031393` 三版本成功。边界：这是测试清理容错，不改变应用运行时的文件监视器。
+
+## 2026-11-10 06:50（Asia/Shanghai）· LSP 回调与安装器实测
+- resident LSP 线程可能在窗口销毁后 deliver 诊断；桥接层现在吞掉仅由对象销毁引起的 RuntimeError，避免线程噪声，不改变正常诊断。
+- 真实 unsigned 安装包已下载并尝试静默安装；本机没有启动安装进程，也没有生成目标目录或日志，属于环境阻塞，未记录为通过。边界：安装/卸载 E2E 仍未完成。
+- 全量 771 项 0 失败、14 跳过。
+
+## 2026-11-10 06:25（Asia/Shanghai）· 测试临时目录清理
+- 全量回归出现两个 `PermissionError [WinError 32]`；原因是窗口局部引用未释放，Qt 文件监视器仍在临时目录上。测试改为 close 后 `deleteLater()` 并处理事件，再让 `TemporaryDirectory` 清理。
+- 验证：两项定向测试连续 5 轮通过；全量 771 项 0 失败、14 跳过、覆盖率 78%，无重试目标；远端 Windows CI run `42712635724` 三版本成功。边界：修的是测试生命周期，不是文件监视器本身；真实应用关闭窗口仍由 Qt 管理。
+
+## 2026-11-10 06:10（Asia/Shanghai）· 首次真实 Windows 安装包产出
+- `Windows Package Verification` run `42707785249` 全绿：Nuitka standalone 构建、打包后 smoke、build manifest、Inno Setup 安装包。
+- 产物：`SciDevHarness-Windows-x64-installer`，48,997,525 bytes；manifest 记录 `SciDevHarness.dist/scidev_client.exe` 27,584,000 bytes、SHA-256 `86e2cadf…28d3`、432 个 runtime binaries。
+- 该安装包未使用可信证书（`signed` 为 false），不能当作已签名发布物；它证明的是构建/打包链路可产出并自检。
+- 全量 771 项 0 失败、14 跳过。边界：安装包未做真实安装/卸载 E2E，也未验证代码签名信任链。
+
+## 2026-11-10 04:20（Asia/Shanghai）· 打包显式设置 VIRTUAL_ENV
+- 真实打包验证第一次失败在 `pyside6-deploy` 的交互提示，而不是 Nuitka：它只通过 `VIRTUAL_ENV` 判断虚拟环境，CI 没有设置，导致 EOF。
+- 修复 VIRTUAL_ENV 后真实 Nuitka 构建可以开始，但非交互环境拒绝 Dependency Walker 下载，导致 `deployment` 不存在。spec 增加 `--assume-yes-for-downloads`，这是构建工具链的下载开关，不是应用运行时的网络权限。
+- 构建随后完成，但 `pyside6-deploy` 默认清理生成目录；CI 需要 `--keep-deployment-files` 才能 smoke 和打安装包。
+- 保留目录后又发现两个同名 exe，smoke 改为直接使用 `deployment\SciDevHarness.dist\scidev_client.exe`。
+- GUI 子系统 exe 用 `&` 启动时 PowerShell 不等待，`$LASTEXITCODE` 为空；改用 `Start-Process -Wait` 并记录 stdout/stderr/exit code。
+- smoke 通过后，审计脚本又把中间产物算作第二个 exe；实际存在 `scidev_client.dist` 和 `SciDevHarness.dist` 两个直接子目录，现在优先使用与标题一致的 `SciDevHarness.dist`，并列出冲突路径。新增审计测试。
+- installer 步骤仍把 deployment 根目录当源码目录，根目录没有 exe；现在把 `SciDevHarness.dist` 传给构建脚本。全量 771 项 0 失败、14 跳过。边界：仍需 package workflow 实际产出安装包并做 smoke，dry-run 不能替代。
+
+## 2026-11-10 04:10（Asia/Shanghai）· doctor 扫描排除受保护目录
+- 静态测试入口发现现在复用明确的 protected 判定，跳过 `.git`、`.research`、`.venv`、`venv`、`node_modules`、`secrets`；减少无意义扫描和敏感目录暴露面。
+- 验证：CLI 30 项测试、ruff、mypy 通过；全量回归见本轮结果。边界：规则是名称级，不替代完整的路径/凭据策略。
+
+## 2026-11-10 03:35（Asia/Shanghai）· showEvent 不再假定窗口句柄可提供屏幕
+- offscreen/PySide 下窗口句柄偶尔不是带 `screen()` 的 QWindow；`showEvent` 之前无条件向句柄要屏幕，导致 UI 测试间歇性 `QWidgetItem has no attribute 'screen'`。现在先取 `QWidget.screen()`，句柄只作为兜底。
+- 验证：`tests.test_ui_polish` 连续 10 轮通过；新增回归测试覆盖无 `screen()` 的 handle；全量 770 项 0 失败、14 跳过、无重试目标；远端 Windows CI run `42687016853` 三版本成功。边界：不同平台/窗口系统仍可能有别的句柄差异，但不再依赖句柄提供屏幕。
+
+## 2026-11-10 03:15（Asia/Shanghai）· 命令补全惰性创建
+- 窗口启动不再立即构造命令补全器；只有输入以 `>` 开头时创建，避免无交互窗口承担 QCompleter 的 Qt 对象和潜在原生崩溃。
+- 验证：定向 UI 测试、ruff、mypy 通过；全量 769 项 0 失败、14 跳过、覆盖率 78%，`tests.test_ui_polish` 重试通过；远端 Windows CI run `42683199600` 三版本成功。边界：输入命令时仍会创建补全器，不能完全消除 Qt/PySide 的原生崩溃风险。
+
+## 2026-11-10 02:55（Asia/Shanghai）· 取消等待时间阈值
+- CI 在 3.13 上耗时 5.25s 才完成流式取消，说明功能可用但 5s 断言不适合共享 runner；放宽到 8s，避免把慢环境误报为功能失败。
+- 验证：定向测试连续 3 轮通过；全量 769 项 0 失败、14 跳过、覆盖率 78%，`EditorSplitInteractionTests` 自动重试通过；远端 Windows CI run `42679272212` 三版本成功。边界：阈值放宽会少捕获 5–8s 的性能回退，取消正确性仍由异常/状态断言保证。
+
+## 2026-11-10 02:15（Asia/Shanghai）· `doctor --tests` 静态入口发现
+- doctor 增加可选 `--tests`：静态扫描项目路径并报告可识别的测试/lint/typecheck 命令候选，不执行、不安装依赖，也不把候选当成已通过。
+- 验证：CLI 30 项测试、ruff、mypy 通过；全量 769 项 0 失败、14 跳过、覆盖率 78%，`scidev_cli` 64%。边界：受 Git 忽略规则影响，位于仓库外或被忽略目录的项目可能扫描不到；候选仍需用户授权后逐条执行。
+
+## 2026-11-10 01:50（Asia/Shanghai）· 显式保存指定编辑器
+- 保存分栏中的编辑器不再依赖“当前活动组”这一全局状态；`_save_editor` 把具体 editor 传给 `save_current_file`，避免关闭原标签/切换分栏时的焦点竞态。
+- 验证：定向测试连续 3 轮通过；全量 768 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `42670148888` 三版本成功。边界：没有在 Python 3.13 本机复现，只能通过显式状态传递降低竞态窗口。
+
+## 2026-11-10 01:20（Asia/Shanghai）· 强化补丁提示
+- schema 和系统提示同时强调占位符不能复制；错误反馈再给真实行，形成三层提示。
+- 验证：prompt 长度/内容测试通过；本地 Qwen 仍失败，说明提示不是万能药，弱模型需要更强模型或更结构化的补丁生成；全量 768 项 0 失败、14 跳过、覆盖率 78%。边界：系统提示仍是自然语言，不能保证模型遵守。
+
+## 2026-11-10 00:55（Asia/Shanghai）· 补丁失败反馈实际行
+- 弱模型会原样复制工具 schema 里的 `old line/new line`；错误现在直接指出占位符，并把目标文件前 3 行作为修复线索。
+- 验证：patch 测试（含新增断言）通过；本地 Qwen 在 fallback + 实际行提示后仍追问/耗尽步数，未完成单行修改；全量 768 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `42660336418` 三版本成功。边界：错误预览只含目标文件前 3 行，仍可能包含项目内容；不改变补丁严格匹配语义。
+
+## 2026-11-10 00:30（Asia/Shanghai）· 本地 Qwen 探针与 fallback 提示
+- 本机 Qwen 7B 的 `/models` 声明支持 tools，但实际返回文本 JSON；原生工具探针为 no。doctor 不再只给笼统告警，而是显示 fallback 状态并对本地 endpoint 给出具体开关建议。
+- 真实 CLI E2E（fallback 开启）仍未能完成单行修改：模型生成补丁上下文不匹配，最终 `no_changes`。这证明当前 harness 不会把“模型说完成”误报为成功，但也说明弱模型任务完成率仍低。
+- 验证：CLI 29 项测试、ruff、mypy 通过；全量 767 项 0 失败、14 跳过、覆盖率 78%，`scidev_cli` 64%；远端 Windows CI run `42656127420` 三版本成功。边界：只测了一个本地 7B 模型和一个简单任务，不能外推到其他模型/复杂仓库。
+
+## 2026-11-09 23:40（Asia/Shanghai）· `doctor --online` 能力探针
+- 把“本机配置是否存在”和“模型是否真的支持工具调用”分开：默认离线，显式 `--online` 才花费少量 token 探测。
+- 验证：CLI 28 项测试、ruff、mypy 通过；全量 766 项 0 失败、14 跳过、覆盖率 78%（`UIResolutionScalingTests` 自动重试通过），`scidev_cli` 64%；远端 Windows CI run `42651881950` 三版本成功。边界：探针只发一次极小的 ping tool-call，不证明复杂任务能力，也不代表上下文/视觉字段在所有 provider 上都准确。
+
+## 2026-11-09 23:00（Asia/Shanghai）· CLI `doctor` 环境诊断
+- 把分散的启动/模型/沙箱/工具链检查汇总为一个离线命令，明确报告“local 不是 OS 沙箱”，不输出 API Key 值。
+- 验证：CLI 26 项测试、ruff、mypy 通过；全量 764 项 0 失败、14 跳过、覆盖率 78%（`WorkspaceSearchTests` 自动重试通过），`scidev_cli` 64%；远端 Windows CI run `42644493899` 三版本成功。边界：只做本地静态/进程检查，不调用模型、不启动 Docker、不验证 LSP 请求；Git 检查可能受父仓库影响；CI 无 PySide6 时只告警。
+
+## 2026-11-09 22:20（Asia/Shanghai）· 拆分 GitManager 与路径策略
+- Git 状态/差异/暂存/自动提交从 Agent 单体独立；路径安全判定独立为可复用模块，Git 模块不再依赖 `scidev_core`。
+- 验证：core 159 项测试、ruff、mypy（32 个源文件）通过；全量 761 项 0 失败、14 跳过、覆盖率 78%，`scidev_git` 85%、`scidev_paths` 100%；远端 Windows CI run `42636505682` 三版本成功。边界：Git 行为和锁语义未改；仍未在真实大型仓库上测并发。
+
+## 2026-11-09 21:45（Asia/Shanghai）· 拆分 RetryQueue 与稳定异常
+- 任务队列 worker 从 Agent 单体中独立，稳定异常放进错误分类模块；旧导入路径继续可用，避免破坏调用方。
+- 验证：core/errors 162 项测试、ruff、mypy（30 个源文件）通过；全量 761 项 0 失败、14 跳过、覆盖率 78%，`scidev_queue` 覆盖 90%；远端 Windows CI run `42629420605` 三版本成功。边界：仅拆分代码，队列协议和重试语义未变；仍未做真实长任务压力测试。
+
+## 2026-11-03 01:20（Asia/Shanghai）· 修复 Authenticode 时间戳端点
+- 真实自签证书测试暴露：本机 `signtool` 拒绝 HTTPS 时间戳 URL，导致签名在时间戳阶段失败；默认改为 `http://timestamp.digicert.com`，仍可由 `signtool` 校验 TSA 签名。
+- 验证：签名阶段成功；自签证书未加入受信任根，`/pa` 验证按预期失败；全量 761 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `41490858500` 三版本成功。边界：未在真实受信证书和远端 runner 上验证；HTTP 时间戳请求可被观察，但 TSA 响应有签名。
+
+## 2026-11-03 01:10（Asia/Shanghai）· 测试超时清理进程树
+- 超时后不只杀直接子进程：Windows 用 `taskkill /T` 清理整棵树，再等待 10 秒，必要时 `kill()`。
+- 验证：超时单元测试通过；全量 761 项 0 失败、14 跳过、覆盖率 78%（`UIProfileTests` 自动重试后通过）；远端 Windows CI run `41486206537` 三版本成功。边界：`test_ui_polish` 的原生 Qt 卡死原因未定位，只是被隔离并重试。
+
+## 2026-11-03 00:45（Asia/Shanghai）· 测试运行器单目标超时
+- 之前 `test_ui_polish` 在输出 OK 后未退出，父进程无限等待；现在单目标超时后按不完整目标处理并重试一次。
+- 验证：超时单元测试通过；全量 761 项 0 失败、14 跳过、覆盖率 78%；`test_ui_polish` 命中 300 秒超时后重试通过，证明超时保护生效；远端 Windows CI run `41482318437` 三版本成功。边界：超时只杀直接子进程，不保证清理其全部孙进程；`test_core` 接近 125 秒，默认 300 秒不能降到 120。
+
+## 2026-11-02 23:50（Asia/Shanghai）· 修复命令取消竞态
+- 取消信号在审批后、进程启动前到达时，原实现仍会启动命令并等待其自然结束；现在 spawn 前后各检查一次，并在启动后立即终止进程树。
+- 验证：取消测试改为等待 `tool_called` 事件，连续 5 轮通过；全量 760 项 0 失败、14 跳过、覆盖率 78%、无重试目标；远端 Windows CI run `41478009195` 三版本成功。边界：无法原子化“检查+Popen”，依赖启动后立即终止兜底；极端情况下子进程可能短暂存在。
+
+## 2026-11-02 23:20（Asia/Shanghai）· CLI `sandbox-check`
+- 启动任务前可以显式检查 local/docker 后端；local 不再让用户误以为有 OS 隔离，Docker 不可用时 fail closed。
+- 验证：2 项 CLI 测试通过；全量 760 项 0 失败、14 跳过、覆盖率 78%（1 个 GUI 目标自动重试后通过）。边界：只检查 CLI/daemon/工具链入口，不实际启动容器；Docker 仍依赖用户本机环境；`test_ui_polish` 子进程在 OK 后未退出，已手动终止，待加运行器超时。
+
+## 2026-11-02 22:50（Asia/Shanghai）· 编辑器补全器懒加载
+- 补全器从编辑器构造期延后到首次 `Ctrl+Space`/输入触发，避免每个只读 diff 编辑器都创建 popup 模型。
+- 验证：懒加载测试通过；`tests.test_client` 连续 3 轮通过；全量 758 项 0 失败、14 跳过、覆盖率 78%（1 个 GUI 目标自动重试后通过）；远端 Windows CI run `41466839750` 三版本成功。边界：仍不能证明彻底消除 Qt 原生崩溃。
+
+## 2026-11-02 22:10（Asia/Shanghai）· 拆分 EventLedger 与 runtime helpers
+- 审计日志/会话索引与进程级辅助函数从核心单体拆出，核心保留同名导入以兼容 CLI/客户端。
+- 验证：`scidev_core`、`scidev_ledger`、`scidev_runtime` 可导入；core/context/cli 190 项测试通过；全量 757 项 0 失败、14 跳过、覆盖率 78%、无重试目标；远端 Windows CI run `41459680128` 三版本成功；mypy 覆盖 29 个源文件。边界：`scidev_client.py` 仍是 7k 行级单体；只在 Windows CI 验证。
+
+## 2026-11-02 21:40（Asia/Shanghai）· 更细的下载分块
+- 下载读取块从 1 MiB 降到 64 KiB，提升进度刷新和取消检查的响应速度。
+- 验证：更新/下载 22 项测试通过；全量 757 项 0 失败、14 跳过、覆盖率 78%、无重试目标；远端 Windows CI run `41455453012` 三版本成功。边界：阻塞中的单次 `read()` 仍不可取消。
+
+## 2026-11-02 21:20（Asia/Shanghai）· 下载进度回传
+- 下载过程中向 UI 回传已下载字节和总字节，状态栏可显示百分比；回调异常不影响下载/校验。
+- 验证：更新测试与 UI 测试通过；全量 757 项 0 失败、14 跳过、覆盖率 78%（1 个 GUI 目标自动重试后通过）；远端 Windows CI run `41451760796` 三版本成功。边界：只有块读取后才有更新，阻塞读取期间界面不跳动；取消仍不中断底层读取。
+
+## 2026-11-02 20:50（Asia/Shanghai）· 跨进程任务锁
+- 同一项目现在有跨进程任务互斥；第二个进程收到明确错误，不再与第一个进程并发写同一工作区。
+- 验证：3 项测试覆盖锁路径、子进程持锁拒绝、成功释放；全量 756 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）；远端 Windows CI run `41448043884` 三版本成功。边界：锁不阻止用户手动编辑；worktree 仍是并行任务的推荐方式。
+
+## 2026-11-02 20:30（Asia/Shanghai）· 异步更新对话框路径测试
+- 覆盖 `show_for_workspace_async` 的 worker 启动、事件循环处理和结果对话框打开，验证主线程不被网络检查阻塞。
+- 验证：全量 753 项 0 失败、14 跳过、覆盖率 78%、无重试目标；远端 Windows CI run `41444157509` 三版本成功。边界：测试中替换了 `exec()`，不显示真实模态窗口。
+
+## 2026-11-02 19:45（Asia/Shanghai）· 后台检查更新
+- 更新检查移入 QThread，主线程只显示进度和结果；取消进度只忽略迟到结果。
+- 验证：2 项 worker 测试通过；全量 752 项 0 失败、14 跳过、覆盖率 78%、无重试目标；远端 Windows CI run `41439594662` 三版本成功。边界：取消不中断底层 HTTP；未测试窗口在检查中被销毁的极端情况。
+
+## 2026-11-02 19:20（Asia/Shanghai）· Pdb 控制命令测试
+- 新增 2 项测试覆盖控制命令的 PTY 写入和无 pdb 提示。
+- 验证：全量 750 项 0 失败、14 跳过、覆盖率 78%；首次全量在 `test_settings` 触发 Qt 原生崩溃（exit 3221225477），单测与全量重跑通过；远端 Windows CI run `41435693025` 三版本成功。边界：未启动真实 pdb 进程。
+
+## 2026-11-02 18:45（Asia/Shanghai）· 本机 fixture 安装器重建
+- 当前暂存脚本产出 63 个文件，包含 `scidev_sandbox/debug/tool_schema/tool_registry/mcp_server/update_ui/filelock`；用 dummy exe 构建 Inno Setup 安装器成功。
+- 产物 2,381,679 字节，SHA-256 `99b76372d423744a188f8fe555b2a37c049491e5880f280d224a860a5c3f7fb0`，unsigned。边界：dummy exe，不是实际 Nuitka 可执行文件，未安装/未运行。
+
+## 2026-11-02 18:30（Asia/Shanghai）· Release tag/版本一致性
+- 打包 workflow 在 tag 上下文校验 tag 与 `APP_VERSION`；不一致时在构建前失败。
+- 验证：静态断言通过；全量 748 项 0 失败、14 跳过、无重试目标；远端 Windows CI run `41430517645` 三版本成功；未创建真实 tag。边界：只校验字符串完全相等，要求 `v` 前缀。
+
+## 2026-11-02 18:00（Asia/Shanghai）· Tag 触发的 Release workflow
+- 新增 tag 发布的 Release workflow，复用打包 job 并上传 installer/manifest；没有 tag 时不触发。
+- 验证：静态 workflow 断言通过；全量 748 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）；远端 Windows CI run `41427247710` 三版本成功；未在真实 tag/远端仓库上发布。边界：无签名证书时 Release 仍是 unsigned；`gh run download`/`gh release create` 未实际执行。
+
+## 2026-11-02 17:20（Asia/Shanghai）· Pdb 控制菜单
+- 编辑器菜单增加 pdb 控制项，复用 PTY 写入；没有 pdb 时提示先按 F5。
+- 验证：全量 747 项 0 失败、14 跳过（1 个 GUI 目标自动重试后通过）；未新增自动化测试；远端 Windows CI run `41422215761` 三版本成功。边界：仍无图形断点/变量/调用栈，不解析 pdb 输出。
+
+## 2026-11-02 17:00（Asia/Shanghai）· 下载线程成功/失败测试
+- 新增 2 项 `_DownloadWorker` 测试：成功发出保存路径，失败发出错误文本。
+- 验证：全量 747 项 0 失败、14 跳过、覆盖率 78%；无崩溃/重试目标；远端 Windows CI run `41417336773` 三版本成功。边界：未启动真实 QThread，只直接调用 `run()`。
+
+## 2026-11-02 16:35（Asia/Shanghai）· 稳定关闭确认测试
+- 关闭确认测试的定时器在用户取消关闭后继续轮询，可能在下一轮误点确认框；加入 `active` 标志，窗口关闭返回后立即停止。
+- 验证：`UnsavedCloseTests` 连续 3 轮通过；全量 745 项 0 失败、14 跳过；远端 Windows CI run `41413999895` 三版本成功。边界：Qt 原生层的其他间歇崩溃不能由这个测试修复完全排除。
+
+## 2026-11-02 15:50（Asia/Shanghai）· 可取消的更新下载
+- 下载循环支持取消回调，取消时清理临时文件；桌面端按钮可中止下载线程。
+- 验证：取消清理测试通过；全量 745 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `41410933383` 三版本成功。首次全量在 `UnsavedCloseTests` 触发 Qt 原生崩溃（exit 3221225477），单独运行 5 项通过、全量重跑通过。边界：阻塞中的网络 `read` 不能立即打断；取消不是强制终止线程。
+
+## 2026-11-02 15:30（Asia/Shanghai）· 桌面端后台下载更新包
+- 更新对话框可后台下载并校验 Release 资产，完成后只报告路径；下载中阻止关闭，未执行安装包。
+- 验证：按钮状态测试通过；全量 744 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `41407215712` 三版本成功。下载复用已有 `download_asset`。边界：未做真实大文件下载/取消 UI；下载线程不能中途取消。
+
+## 2026-11-02 14:30（Asia/Shanghai）· 跨进程 Git 写锁
+- 写命令通过 `.git/scidev-git.lock`（worktree fallback `.research/locks`）串行化，防止两个客户端进程同时操作同一仓库索引；读命令保持并发；`commit_paths` 用可重入 session 覆盖整段 add+commit。
+- 验证：子进程持锁超时、命令分类和 session 可重入测试通过；全量 743 项 0 失败、14 跳过、覆盖率 78%；远端 Windows CI run `41404577147` 三个 Python 版本全部 success。边界：其他多命令 Git 序列不保证原子；未在双进程真实任务中 E2E。
+
+## 2026-11-02 14:10（Asia/Shanghai）· 修复 Windows CI 发布暂存失败
+- 根据 GitHub check-run 注解定位：stage_release 漏拷 `scidev_sandbox.py`，导致 staged UI/本地模型/部署 dry-run 失败；改为自动收集所有 `scidev_*.py`，release staging 期望同步动态化。
+- debug 测试改为按解析后的解释器路径比较，修复 CI 路径形式差异；CI 编译改为动态收集，防止新模块漏编译。
+- 验证：本机手工暂存 63 个文件，确认 6 个新模块均在；动态 `py_compile` 113 个文件通过；远端 run `41397606334` 的 3.12/3.13/3.14 三个 job 全部 success。
+
+## 2026-11-02 14:00（Asia/Shanghai）· 工具注册表
+- 新增工具绑定表，`execute_tool` 不再维护局部 14 项 handler 字典；只读集合与 MCP 服务端共用。
+- 验证：注册表测试通过；全量 740 项 0 失败、14 跳过、覆盖率 78%。边界：仍是内置绑定，不是动态插件系统。
+
+## 2026-11-02 13:45（Asia/Shanghai）· Docker 超时清理与 Windows-only 声明
+- 容器带唯一 name；超时/取消时 `docker rm -f` 清理，normal path 继续用 `--rm`；cleanup 失败只忽略。
+- 验证：cleanup 测试通过。边界：未在真实 Docker daemon 上触发超时；仅清理最后一个已启动容器。包装元数据明确 Windows-only。
+
+## 2026-11-02 13:30（Asia/Shanghai）· 只读 MCP stdio 服务端
+- 新增 MCP 服务端：只读暴露项目检索/读取工具，写文件和命令调用返回 `isError`；支持 initialize/tools/list/tools/call/ping/shutdown。
+- 验证：3 项 MCP 服务端测试通过；CLI `mcp-serve` 管道实测 initialize。边界：只读、无认证、仅 stdio；未接入 GUI。
+
+## 2026-11-02 13:12（Asia/Shanghai）· 内置工具 schema 拆分
+- 工具 schema 从 `scidev_core.py` 移到 `scidev_tool_schema.py`，`CodingToolbox.definitions` 只做委托；浏览器/视觉工具仍按显式参数追加。
+- 验证：新增 schema 完整性、去重和条件开关测试；全量 735 项 0 失败、14 跳过、覆盖率 78%。边界：参数校验/执行仍耦合在 `CodingToolbox`。
+
+## 2026-11-02 13:20（Asia/Shanghai）· 桌面端检查更新对话框
+- 新增只读 Release 检查对话框和命令面板入口；只打开 Release 页面，不下载或执行安装包；检查失败显示警告。
+- 验证：4 项 Qt 测试通过。边界：同步网络检查可能阻塞 UI；未做真实 GitHub 网络 E2E。
+
+## 2026-11-02 13:00（Asia/Shanghai）· CI 可选 PFX 签名
+- workflow 支持 secrets 提供的 PFX：导入证书、签名安装器、输出 `signed=true`，并在 job 结束前删除证书；没有 secrets 时继续 unsigned 构建。
+- 验证：静态 workflow 断言通过。边界：未用真实证书/远端 runner 跑过；PFX 密码只通过 step env 传给 PowerShell。
+
+## 2026-11-02 12:45（Asia/Shanghai）· Pdb 光标行断点
+- F5 启动 pdb 后自动向终端写入 `b <file>:<cursor line>` 和 `c`，直接停在当前行；空路径/非法行号拒绝。
+- 验证：断点命令单元测试通过。边界：延迟写入依赖 pdb 已启动；没有图形断点/变量/调用栈；未做 GUI 端到端停点验证。
+
+## 2026-11-02 12:20（Asia/Shanghai）· F5/Pdb 调试入口
+- 新增项目解释器选择、工作区/`.py` 校验和 `python -m pdb` 启动；F5、菜单和命令面板均可进入集成终端调试。
+- 验证：3 项纯逻辑测试通过；全量 729 项 0 失败、14 跳过、覆盖率 78%。边界：终端式 pdb，无图形断点、变量/调用栈或 DAP；未保存文件需先保存。修复 `showEvent` 对缺失 `screenChanged` 的 handle 直接抛错的问题。
+
+## 2026-11-02 12:00（Asia/Shanghai）· CLI 结果原子落盘
+- 新增 `exec --result-file`：最终 JSON 原子写入工作区内文件，成功/失败/取消都写；越界路径拒绝，成功任务也会返回 1。
+- 验证：CLI 测试覆盖正常写入、临时文件清理和越界拒绝。边界：结果文件限制在工作区内，不支持直接写到工作区外。
+
+## 2026-11-02 11:35（Asia/Shanghai）· 沙箱设置进入桌面前端
+- `SummarySettings` 持久化 `sandbox_backend`/`sandbox_image`，Agent 构造和设置保存时应用；桌面端新增命令沙箱/镜像控件，Docker 镜像为空拒绝保存。
+- 验证：新增 1 项设置往返/非法后端回退测试。边界：未做 Docker 真实项目 E2E；设置切换只影响后续命令。
+
+## 2026-11-01 15:25（Asia/Shanghai）· CLI 任务预算参数
+- 新增 `exec --max-turns`/`--max-tokens`，直接覆盖 `SummarySettings` 的本次任务上限，不持久化。
+- 验证：CLI 预算贯通测试通过。边界：仍是 token 估算/轮次硬限，不是货币计费。
+
+## 2026-11-01 15:10（Asia/Shanghai）· 可选 Docker 命令沙箱
+- 新增 Docker 后端：工作区唯一 bind mount、默认无网络、cap-drop/no-new-privileges、pids/内存/CPU/tmpfs 限制；daemon/镜像不可用时 fail closed，不回退本机。
+- CLI `exec --sandbox docker --sandbox-image ...` 与 `SCIDEV_SANDBOX_BACKEND`/`SCIDEV_SANDBOX_IMAGE` 已贯通；默认 local 不变。
+- 验证：7 项 sandbox 测试 + 1 项 CLI 贯通测试通过；全量 723 项 0 失败、14 跳过、覆盖率 78%。边界：未在本机 Docker daemon 上做真实项目 E2E；镜像需自备工具链；容器超时只终止 Docker CLI，容器清理依赖 `--rm`。
+
+## 2026-11-01 14:50（Asia/Shanghai）· 下载后显式启动安装器
+- 新增 `launch_installer()` 与 CLI `update --install`：启动前重新验证 SHA-256，只启动 `.exe/.msi` 安装器 UI，不静默安装、不提权；MSI 通过 `msiexec /i`。
+- 验证：新增启动前校验测试与 CLI `--install` 测试。边界：仍需用户走安装器 UI；非 Windows 拒绝；签名/证书仍是发布前步骤。
+
+## 2026-11-01 14:25（Asia/Shanghai）· Inno Setup 安装器脚本
+- 新增 per-user Inno Setup 配置与构建脚本：完整 deployment、开始菜单/可选桌面快捷方式、卸载信息、安装日志、可选 Authenticode 签名和 SHA-256 输出。
+- 验证：3 项静态测试通过，PowerShell 语法解析 0 错误；全量 715 项 0 失败、14 跳过、覆盖率 78%。本机 Inno Setup 6.7.1 以 notepad fixture 实际构建出 2,182,836 字节安装器（SHA-256 `0b1f39a0…bb838`，未签名）；只证明脚本链路，fixture 不代表正式程序。Windows Package Verification workflow 已加入安装器构建/上传，尚未在远端触发。
+
+## 2026-11-01 14:10（Asia/Shanghai）· 可校验的更新包下载
+- 新增 `download_asset()` 与 CLI `update --download`：HTTPS、大小上限、Release 声明值、SHA-256 和空文件检查全部通过后才原子落盘；下载后只报告摘要，不执行安装包。
+- 验证：新增下载与 CLI 测试；`test_update` 9 项通过。边界：仍无签名证书/Inno Setup 安装器/自动安装，摘要依赖 Release 提供或用户显式提供。
+
+## 2026-11-01 13:55（Asia/Shanghai）· TypeScript LSP 与双语言常驻
+- 新增 `LanguageSpec` 与后缀路由：Python 继续用 Ruff，TypeScript/JavaScript 使用 `typescript-language-server`；可用 `SCIDEV_TYPESCRIPT_LSP` 指定命令。
+- `ResidentLSP` 按语言维护多个客户端，Python 与 TS 互不重启；编辑器 `.py/.pyi/.ts/.tsx/.js/.jsx/.mjs/.cjs` 统一进入诊断调度。
+- 验证：LSP 专项 7 项通过（含 TS 命令解析、双语言客户端、Ruff 真实诊断）；全量 709 项 0 失败、14 跳过、覆盖率 78%。未安装 TS 服务器时静默跳过。边界：未做真实 TS 项目 E2E，仍无重命名/引用/调试器。
+
+## 2026-11-01 13:30（Asia/Shanghai）· 无头补丁与多类验证闭环
+- CLI `exec` 新增 `--patch-approval auto|reject`，默认在无审核界面时应用全部已校验补丁块；修复 eval/CI 对已有文件只能写新文件的问题。
+- 自动验证按 test/lint/typecheck 各选一个安全候选，输出结构化诊断后进入修复轮次；仍受执行策略、网络策略、命令白名单和当前代码指纹约束。
+- 标准 20 项本地 Qwen2.5-Coder-7B 基线 1/20 → 2/20（自动补丁开启后），平均 4.0 轮、464.5 秒；摘要基线 `evals/baselines/standard-20-qwen2.5-coder-7b.json`，完整报告 `.research/evals/standard-20-auto-patch.json`。这是弱模型基线，不代表强模型或 Harness 上限。
+- 验证：全量 707 项 0 失败、14 跳过、覆盖率 78%；ruff/mypy 通过。新增文本补丁恢复：弱模型只打印完整 `*** Begin Patch` 时转为 `apply_patch` 工具调用，仍走原有路径校验与审核；不完整补丁返回可修复错误。修复覆盖率合并无新数据时的退出码误报。
+- 边界：CLI 无逐块人工审核，`auto` 是显式无头策略而非交互审批；20 项任务仍受本地 7B 模型能力限制。
+
+## 2026-11-01 21:00（Asia/Shanghai）· PR diff 与 review 桌面联动
+- `scidev_pr.py` 新增 `pull_request_diff()`：有界 `gh pr diff`（默认 30 万字符、最多 100 万）、网络策略门控。
+- CLI 新增 `pr-diff`；桌面 `> pr` 打开 PR 对话框，可加载元数据/diff、填写备注并提交 approve/comment/request-changes。
+- 新增 1 项 PR diff 核心测试、2 项 PR UI 测试、1 项 CLI 测试；全量套件 704 项 0 失败、14 跳过、覆盖率 78%。
+- 标准 20 项本地模型基线在后台运行。
+- 边界：本机 `gh` 未认证，未做真实 PR 联网验证；diff 是纯文本，不支持逐行评论或本地 hunk 联动。
+
+## 2026-11-01 20:00（Asia/Shanghai）· 发布签名与安装包校验
+- 新增 `scripts/sign_release.ps1`：显式 40 位证书指纹、HTTPS RFC 3161 时间戳、SHA-256 Authenticode 签名、`/pa` 复验；不接受密码/pfx。
+- `scidev_update` 只报告 HTTPS 安装包，并返回名称/大小/`digest`；新增 `verify_downloaded_asset()` 按 SHA-256 和大小上限校验。
+- 新增 2 项签名脚本测试与 6 项更新/校验测试；全量套件 700 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：没有证书和安装器，脚本未在本机实际签名；未接入 CI；未实现自动下载/安装；zip 内二进制未单独签名。
+
+## 2026-11-01 19:00（Asia/Shanghai）· 错误趋势面板
+- 新增 `scidev_analytics.py`：只读 `.research/runs.db`，统计 1–90 天任务开始/完成/失败、成功率、按 `error_kind` 分布、可重试标记和每日失败。
+- 新增 `scidev_analytics_ui.py`；命令面板 `> errors` 打开面板，含 sparkline 与表格。
+- 新增 4 项 analytics/UI 测试；mypy 扩到 19 个文件；全量套件 696 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：只统计本地事件；旧事件无分类时按文本重分类；无导出/告警/远程遥测；成功率按“完成/(完成+失败)”计算，不含仍在运行的任务。
+
+## 2026-11-01 18:00（Asia/Shanghai）· 无 usage 模型的 token 预算
+- 服务端不返回 usage 时（Ollama 等），按任务内请求/响应字节数 `/4` 估算 token，并让 `max_task_tokens` 继续生效。
+- `task_token_budget_exhausted` 事件新增 `estimated` 标记；新增 1 项估算测试；全量套件 692 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：估算不是计费；中英文比例不同；预算用尽只停止任务，不自动回滚已改文件。
+
+## 2026-11-01 17:00（Asia/Shanghai）· MCP 图形浏览器
+- 新增 `scidev_mcp_ui.py`：树形显示工具/资源/提示词，读取资源、渲染 prompt、预览并显式插入输入框。
+- 命令面板新增 `> mcp`；管理器随对话框启动，关闭时释放；资源/prompt 不自动进入模型上下文。
+- 新增 2 项 fake-manager UI 测试；mypy 扩到 17 个文件；全量套件 691 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：提示词参数用 JSON 输入框；二进制资源只显示标记；不自动注入模型；无 MCP 配置编辑。
+
+## 2026-11-01 16:00（Asia/Shanghai）· 常驻 Python LSP
+- `scidev_lsp.py` 新增 `ResidentLSP`：每个窗口复用一个 Ruff 进程，合并连续输入，首次 didOpen、后续 didChange，回调可携带 generation。
+- 桌面端用 `ResidentLSPBridge` 把后台诊断转成 Qt 信号；关闭窗口时停止 worker 和 Ruff 进程。
+- 新增 1 项 fake-client 测试（复用单进程、didOpen→didChange、关闭）；mypy 扩到 16 个文件；全量套件 689 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：LSP 进程按窗口而非全局共享；连续输入会被合并，较早版本不保证回调；Ruff 未安装时仍静默失败；不是 TypeScript 语言服务。
+
+## 2026-11-01 15:00（Asia/Shanghai）· CLI 无改动语义
+- CLI `exec` 默认把“完成但 `no_changes_detected`”判为失败：`success=false`、`status=no_changes`、`error_kind=no_changes`、退出码 1。
+- 新增 `--allow-no-changes`，供问答/分析类任务显式放行。
+- 新增 CLI 测试：默认失败与显式放行；修复弱模型只回复计划却被当成成功的问题。全量套件 688 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：只改 CLI 语义，桌面聊天仍可无改动完成；只依据 `no_changes_detected`，不判断任务是否真的要求改代码。
+
+## 2026-11-01 14:00（Asia/Shanghai）· 真实本地模型基线
+- 用本机 Ollama `scidev-qwen2.5-coder-7b:q4_k_m` 跑 3 项 smoke：无 fallback 0/3，开启 `SCIDEV_TEXT_TOOL_CALL_FALLBACK=1` 后 1/3（`create-notes` 通过），平均 4.33 轮。
+- eval suite 新增受限 `environment`（只允许 `SCIDEV_*`），任务子进程会继承；新增 `evals/local/suite.json`（fallback + 8 轮）和 `evals/baselines/local-qwen2.5-coder-7b.json`。
+- 新增 1 项 suite 环境测试；全量套件 687 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：本地 7B 基线不代表强模型；Ollama 不返回 usage，token/成本为 0；标准 20 项已在 13:30 节补跑（1/20 → 2/20）；基线是合成小任务，不是完整仓库。
+
+## 2026-11-01 13:00（Asia/Shanghai）· 结构化错误分类
+- 新增 `scidev_errors.py`：把失败分为 auth/rate_limit/timeout/network/tool/verification/workspace/internal，附用户消息、是否可重试和有界 detail。
+- RetryQueue 的 `task_failed`/`task_retry` 事件、CLI 失败 JSON 都带 `error_kind`、`user_message`、`retryable`、`detail`；桌面失败气泡显示分类前缀。
+- 新增 3 项分类测试；mypy 扩到 15 个文件；全量套件 686 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：分类基于异常类型和消息词法，可能误判；不改写 provider 原始错误；不改变重试策略；detail 仍可能包含路径。
+
+## 2026-11-01 12:00（Asia/Shanghai）· MCP 资源与提示
+- `MCPClient`/`MCPHTTPClient` 新增 `resources/list`、`resources/read`、`prompts/list`、`prompts/get`。
+- `MCPManager` 聚合多 server 的 resources/prompts，按 server 读取资源、渲染 prompt；结果有界。
+- CLI 新增 `mcp`：默认列出 tools/resources/prompts，`--read SERVER URI`、`--prompt SERVER NAME --arg key=value`、`--json`。
+- 新增 manager 与 CLI 测试；全量套件 683 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：resources/prompts 只在 CLI 检查和后续 UI 中使用，不自动注入模型；不实现 sampling；二进制资源只标记类型；结果上限 80k 字符。
+
+## 2026-11-01 11:30（Asia/Shanghai）· Worktree 管理 UI
+- 新增 `scidev_worktree_ui.py`：列表显示分支、路径、HEAD，支持打开、删除、强制删除。
+- 命令面板新增 `> worktrees` / `> worktree list` / `工作树`；打开选中 worktree 会切到独立窗口。
+- 删除默认拒绝未提交改动；强制删除忽略改动并清理分支；当前窗口所在 worktree 不允许删除。
+- 新增 1 项对话框测试；mypy 扩到 14 个文件；全量套件 681 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：对话框只管理 `.research/worktrees` 里的 worktree；不显示普通 `git worktree`；删除分支失败会被忽略；当前窗口自己所在的 worktree 由 UI 阻止删除。
+
+## 2026-11-01 11:05（Asia/Shanghai）· 本地崩溃报告
+- 新增 `scidev_crash.py`：安装未捕获异常/线程异常钩子，写 `.research/crashes/crash-*.json`，含版本、Python、平台、线程、异常类型、有界 traceback。
+- 写盘前脱敏主目录和 API key/token/password；保留最近 20 份；不联网、不收集局部变量；KeyboardInterrupt/SystemExit 不记录。
+- 桌面 `main` 启动后安装；新增 3 项测试；mypy 扩到 13 个文件；全量套件 680 项 0 失败、14 跳过、覆盖率 79%。
+- 同时移除 LSP 线程内重复的 `ast.parse`：语法状态由主线程 code-intel 缓存复用，避免一次输入触发两次解析；outline 防抖测试连续 3 次稳定通过。
+- 边界：只覆盖 Python 异常，不捕获 native crash/Qt 致命错误；不生成 minidump；不上传；不收集局部变量；报告是明文 JSON。
+
+## 2026-11-01 10:45（Asia/Shanghai）· GUI 隔离 worktree
+- 命令面板新增 `> new worktree` / `新建 worktree` / `隔离工作区`：从当前 Git 仓库创建 `scidev/agent-gui-*` 分支，并自动打开独立窗口。
+- 多窗口可并行跑任务；每个窗口有自己的仓库副本、编辑器、Git 面板和 Agent；worktree 默认保留。
+- 新增 GUI 测试：创建 worktree、打开非原窗口的子窗口、清理测试 worktree；全量套件 677 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：worktree 只隔离文件/Git，不隔离进程、网络或凭据；同名分支/目录冲突会报错；不自动清理；不自动合并回主分支。
+
+## 2026-11-01 10:20（Asia/Shanghai）· 更新检查
+- 新增 `scidev_update.py`：从 `origin` 或 `--repo`/`SCIDEV_UPDATE_REPO` 推断仓库，读取 GitHub latest Release 的 tag、页面、说明、安装包 URL；只提示，不下载/安装。
+- 语义版本比较、`--json`、`--fail-if-available`；CLI `--version` 改用统一 `APP_VERSION`。
+- 新增 5 项模块测试和 CLI 测试；mypy 扩到 12 个文件；全量套件 676 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：本机直连 GitHub API 当前超时，已正确报错不崩溃；只查 latest Release，不查 prerelease/tag；无自动下载、签名校验、安装或 GUI 启动检查。
+
+## 2026-11-01 10:00（Asia/Shanghai）· 扩大 mypy 覆盖
+- `pyproject.toml` 的 mypy 文件从 2 个扩到 11 个：process、usage、policy、pr、migrations、eval、worktree、mcp、settings、intel、credentials。
+- 修复新增类型错误：PR 编号解析、eval usage 字典/回归计算、MCP HTTP/stdio client 联合类型、settings 滚动区与 spinbox 值。
+- `python -m mypy` 对 11 个文件通过；全量套件 670 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：`scidev_core.py`/`scidev_client.py` 仍未纳入 mypy；`follow_imports = skip` 只看显式文件。
+
+## 2026-11-01 09:35（Asia/Shanghai）· PR 查询与审查
+- `scidev_pr.py` 新增 `view_pull_request`、`review_pull_request`：调用已登录 `gh` 读取 PR 元数据，提交 approve/comment/request-changes。
+- CLI 新增 `pr-view`、`pr-review`；支持 `--json`、`--allow-network`，comment/request-changes 强制 body，校验编号与 action。
+- 网络 deny 默认拒绝；新增测试覆盖查询、审查命令、空 body 和非法 action；全量套件 670 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：需要 GitHub 写权限；不做自动 review 修复；不合并 PR；仍是 gh CLI 凭据，不是 GitHub App/OAuth。
+
+## 2026-11-01 09:15（Asia/Shanghai）· Eval 并行与成本
+- `EvalRunner` 新增 `jobs`（1–8），用线程池并行跑隔离任务；CLI `eval` 新增 `--jobs`。
+- 结果记录 prompt/completion token，按 suite `pricing` 或 `SCIDEV_EVAL_INPUT_PRICE`/`SCIDEV_EVAL_OUTPUT_PRICE` 估算美元成本。
+- 报告新增 `jobs`、`total_prompt_tokens`、`total_completion_tokens`、`estimated_cost_usd`、`pricing`。
+- 新增并行与成本测试；全量套件 669 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：成本是用户定价的估算，不是供应商账单；并行任务共享 provider 限流，可能触发 429。
+
+## 2026-11-01 08:55（Asia/Shanghai）· 20 项固定 eval 套件
+- 新增 `evals/standard/suite.json`：20 个固定任务，覆盖 bug 修复、文件创建/重命名、unittest/pytest、JSON/CSV/配置解析、dataclass、argparse、正则、排序/去重/二分、类型标注、async gather。
+- 每个任务有独立 setup 和确定性 check；新增 `tests/test_eval_suite.py` 验证 id 唯一、check 非空，并确认每个任务在修复前确实失败；全量套件 668 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：任务仍是小型合成仓库，不是完整真实项目；check 只验证目标行为，不证明代码质量；未提供参考解自动复核。
+
+## 2026-11-01 08:30（Asia/Shanghai）· MCP HTTP 传输
+- `scidev_mcp.py` 新增 Streamable HTTP 客户端：POST JSON-RPC，支持 JSON/SSE 响应、`Mcp-Session-Id`、超时和 4 MB 响应上限。
+- `.research/mcp.json` 可用 `url`/`transport=http` 配置 HTTP 服务；网络策略 deny 时拒绝 HTTP 服务；stdio 行为不变。
+- 新增本地 HTTP server 测试：工具发现、tools/call、会话头和网络 deny；全量套件 666 项 0 失败、14 跳过、覆盖率 78%。
+- 边界：HTTP 只实现 POST 请求/响应，不是完整流式会话；无 WebSocket；无 MCP 资源/提示/采样。
+
+## 2026-11-01 08:00（Asia/Shanghai）· 设置/会话 schema 迁移
+- 新增 `scidev_migrations.py`：把 `.research/settings.json`、`sessions/*.json`、`events.db` 迁移到 schema v2。
+- 规范化 execution/network/allowed_commands/turn/token 字段；补全会话 `messages`/`attachments`/`status`；设置 SQLite `user_version`。
+- 修改前备份到 `.research/backups`，每个文件最多 5 份；dry-run 不写盘；坏 JSON 只报错不覆盖；幂等。
+- CLI 新增 `migrate --workspace ... [--dry-run] [--json]`；新增 `tests/test_migrations.py` 2 项；全量套件 664 项 0 失败、14 跳过、覆盖率 79%。
+- 边界：只迁移已知字段，不迁移旧二进制/数据库结构；备份保留 5 份；尚未在 GUI 启动时自动执行。
+
+## 2026-11-01 07:45（Asia/Shanghai）· GitHub PR
+- 新增 `scidev_pr.py`：解析 GitHub `origin`（SSH/HTTPS），确认仓库根和功能分支，默认 base 为 `origin/HEAD` 或 `main`，拒绝从 `main`/`master` 直接建 PR。
+- CLI 新增 `pr`：`--base/--title/--body/--draft/--dry-run/--json/--allow-network`；先 push 当前分支，再调用已登录的 `gh pr create`。
+- 项目网络策略为 deny 时，PR 创建默认拒绝，需显式 `--allow-network`。
+- 新增 `tests/test_pr.py` 4 项和 CLI dry-run 测试；全量套件 662 项 0 失败、14 跳过、覆盖率 79%。
+- 边界：需要本机 `gh` 已认证和推送权限；不创建 GitHub App/OAuth；不自动 review/合并；失败后不自动清理远端分支。
+
+## 2026-11-01 06:35（Asia/Shanghai）· Worktree 隔离
+- 新增 `scidev_worktree.py`：校验 Git 仓库根，按任务 id 创建 `.research/worktrees/<id>` 与 `scidev/agent-<id>` 分支，返回路径/分支/base SHA；支持列表、dirty 检查、force 删除和 prune。
+- CLI `exec` 新增 `--worktree`、`--worktree-id`；Agent 在隔离 worktree 内运行，JSON/人类输出包含 worktree 路径和分支。
+- 新增 `tests/test_worktree.py` 3 项和 CLI 隔离运行测试；全量套件 657 项 0 失败、14 跳过、覆盖率 79%。
+- 边界：worktree 只隔离文件/Git 状态，不隔离网络、进程或用户权限；默认保留，需要手动合并/清理；同一 id 不能并发创建。
+
+## 2026-11-01 05:55（Asia/Shanghai）· 命令白名单
+- `scidev_policy.py` 新增命令前缀规范化与白名单：`;`/换行分隔，最多 50 条，每条最长 200 字符，拒绝 shell 组合、命令替换、环境变量赋值、绝对路径和上级目录。
+- 白名单命中采用精确前缀/空格边界匹配，仅在工作区可写/完全访问下自动批准；手动审批仍逐条确认，网络 deny 优先于白名单。
+- Agent 设置新增“命令白名单”；随项目设置持久化；`SCIDEV_ALLOWED_COMMANDS` 可覆盖。
+- 新增白名单解析、边界、网络优先、Agent 自动执行、设置持久化测试；全量套件 653 项 0 失败、14 跳过、覆盖率 79%。
+- 边界：前缀匹配不做参数级解析；用户需自行确认前缀范围；不是 OS 沙箱。
+
+## 2026-11-01 04:55（Asia/Shanghai）· 网络策略
+- `scidev_policy.py` 新增 `NetworkPolicy`（deny/ask/allow），`curl/wget/ssh/scp` 等命令归类为 `network`，默认不会自动批准。
+- `deny` 在审批前硬阻断，即使完全访问也不执行；`ask` 仅允许手动批准；`allow` 允许工作区可写/完全访问自动执行。
+- Agent 设置新增“网络策略”，随项目设置持久化；`SCIDEV_NETWORK_POLICY` 可覆盖；CLI/Agent 复用同一策略。
+- 新增网络策略解析、自动批准、硬阻断、设置持久化测试；全量套件 651 项 0 失败、14 跳过、覆盖率 79%。
+- 修复取消竞态：`run_command` 不再在开始时清空取消标记，改为新任务启动时统一重置；停止发生在命令启动前也不会再睡满超时。
+- 边界：网络识别基于命令词法，测试代码、包管理器等间接联网无法拦截；策略层不是 OS 网络沙箱。
+
+## 2026-11-01 03:40（Asia/Shanghai）· Python 补全与跳转
+- 新增 `scidev_intel.py`：基于本机 Jedi 的 Python 补全/定义查找，限制候选数量，定义只返回工作区内路径；缓存目录放 `.research/jedi-cache`，不可写时回退临时目录。
+- 编辑器新增 `Ctrl+Space` 补全弹窗和 `F12` 跳转；补全只对 `.py` 文件生效，插入当前候选；无候选/不可用时写入日志。
+- 依赖新增 `jedi>=0.19`；新增 `tests/test_intel.py` 2 项和 UI 补全测试；全量套件 649 项 0 失败、14 跳过、覆盖率 79%。退出时显式终止 Jedi 编译子进程，避免解释器退出崩溃。
+- 边界：Jedi 只支持 Python；补全同步执行，首次可能较慢；不是常驻 LSP；无重命名/引用/调用层级/调试器。
+
+## 2026-11-01 03:10（Asia/Shanghai）· 真实仓库 eval
+- 新增 `scidev_eval.py`：读取 suite JSON，把 workspace 模板复制到临时目录，应用 setup 文件，运行 CLI/自定义 runner，再用确定性 check 命令判定成功。
+- 报告包含 total/passed/failed、pass rate、平均轮数、总/平均 token、耗时、相对上次 pass rate 的 regression；可指定稳定 `--output` 比较。
+- Agent/CLI 返回新增 `turn_count` 和 `usage`；新增 `scidev_cli.py eval --suite ... --output ... [--json]`；示例 `evals/smoke/suite.json` 3 个任务。
+- 新增 `tests/test_eval.py` 2 项和 CLI 缺失 suite 测试；全量套件 646 项 0 失败、14 跳过、覆盖率 79%。
+- 边界：默认调用真实 CLI/模型，需要 provider；check 是外部命令，不证明语义完全正确；suite 是 JSON，无 Web UI/并行执行。
+
+## 2026-11-01 02:40（Asia/Shanghai）· 图片任务附件
+- 新增 `scidev_attachments.py`：校验 PNG/JPEG/GIF/WebP 魔数、MIME、大小和数量；单张 5 MB、最多 4 张、总计 12 MB；文件名去路径。
+- Agent 会话创建时把图片作为 `image_url` 内容块加入用户消息；已有会话的新任务附加到最后一条用户消息；会话保存附件元数据。
+- 聊天输入区新增“图片/清除”；CLI `exec` 支持重复 `--image`；无效图片在启动 Agent 前拒绝。
+- 新增 `tests/test_attachments.py` 5 项、UI 附件 chip 测试和 CLI 无效图片测试；全量套件 643 项 0 失败、14 跳过、覆盖率 79%。
+- 边界：只支持图片，不支持 PDF/音频/视频；模型必须支持视觉；会话 JSON 保存 base64 图片；无缩放/压缩/OCR。
+
+## 2026-11-01 02:00（Asia/Shanghai）· ConPTY 终端
+- 新增 `scidev_pty.py`：Windows 优先用 `pywinpty` 的 ConPTY 启动命令，后台线程读取输出，非阻塞 `drain`，支持 `write` 交互输入、`setwinsize` 和退出码。
+- 终端命令写入临时 `.cmd` 文件后再由 `cmd.exe /d /c` 执行，保留用户命令中的引号；输出清理 ANSI/OSC 和异常长空白；命令结束删除临时文件。
+- 客户端终端优先 ConPTY；运行中再次回车会作为 stdin 发送；ConPTY 不可用或启动失败时回退隐藏窗口管道。
+- `pywinpty>=3.0` 加入 Windows 运行依赖；终端 UI 测试改为同时等待 pipe/PTY 结束，UTF-8 分片测试固定走 pipe 解码器。
+- 新增 `tests/test_pty.py` 4 项：ANSI 清理、命令执行/退出码、stdin、不可用显式报错；全量套件 636 项 0 失败、14 跳过、覆盖率 79%。新增测试文件触发的项目上下文排序回归，已让 `tests/` 同分时权重降为 0.8。
+- 边界：每条命令一个 ConPTY，不是持久 shell；无完整 VT 仿真/颜色/光标；不是 OS 沙箱；pywinpty 缺失时回退管道。
+
+## 2026-11-01 01:35（Asia/Shanghai）· 生命周期 hooks
+- 新增 `scidev_hooks.py`：读取 `.research/hooks.json`（必须显式 `"enabled": true`），支持 `task_start`、`before_tool`、`after_tool`、`before_commit`。
+- 命令不经 shell，限制在工作区内，超时 0.5–60s、输出 8KB；事件和 16KB 上下文通过环境变量传入；`task_start`/`before_tool`/`before_commit` 非零退出阻止继续，`after_tool` 只记录。
+- Agent 在任务开始、每次工具调用前后、自动提交前触发 hooks；`before_commit` 阻止提交时任务失败并保留改动。
+- 新增 `tests/test_hooks.py` 4 项：禁用不运行、上下文传递、阻塞失败、after_tool 非阻塞；全量套件 632 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：只有固定四个事件；无异步/并行 hooks；无 UI 配置；hooks 命令由项目配置文件信任，不是 OS 沙箱。
+
+## 2026-11-01 00:50（Asia/Shanghai）· MCP stdio 工具
+- 新增 `scidev_mcp.py`：读取 `.research/mcp.json`（必须显式 `"enabled": true`），启动 stdio server，完成 initialize/tools/list；把工具以 `mcp__<server>__<tool>` 加入模型工具列表，tools/call 返回文本内容。
+- `CodingToolbox.all_definitions()` 在静态工具后追加 MCP 工具；`execute` 对 MCP 调用要求命令审批，只读模式禁用；server 启动失败只记录错误，不阻塞内置工具。
+- 新增 `tests/test_mcp.py` 4 项：禁用不启动、工具列表/调用、Toolbox 审批执行、无审批回调拒绝；全量套件 628 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：只支持 stdio，不支持 SSE/HTTP/WebSocket、resources/prompts/sampling；无 UI 配置向导、无 hooks；MCP 服务命令由项目配置文件信任。
+
+## 2026-11-01 00:00（Asia/Shanghai）· 编辑器补丁 diff
+- 新增 `PatchDiffPanel`：编辑器标签内显示彩色 unified diff，左侧逐 hunk 勾选，可应用已选或拒绝全部；决定后关闭标签并解析原补丁审核请求。
+- `PatchReviewCard` 新增“在编辑器中审核”；`UnifiedDiffHighlighter` 区分新增/删除/hunk 头；拒绝或部分批准仍停止任务。
+- 清理逻辑：聊天清理、任务结束或窗口关闭时移除待审核 diff 标签，避免留下无主审核面板。
+- 验证：PatchReviewUiTests 5 项通过（卡片逐块选择、编辑器标签解析、清理）；全量套件 624 项 0 失败、13 跳过、覆盖率 79%。CI #134 暴露 LSP UI 测试的时序依赖，已改为直接渲染缓存诊断，重跑全量通过。
+- 边界：diff 标签只读，不是主编辑器内联逐行编辑；没有逐行接受/拒绝；终端仍是管道。
+
+## 2026-10-31 23:10（Asia/Shanghai）· Ruff LSP 诊断
+- 新增 `scidev_lsp.py`：最小 JSON-RPC stdio 客户端，启动本机 `ruff server`，完成 initialize/initialized/didOpen，等待 `textDocument/publishDiagnostics`，再 shutdown/exit；读取线程与队列实现超时，关闭时清理管道和进程。
+- 编辑器对 Python 文件做防抖后台诊断；结果写入“问题”面板，双击跳转；语法错误仍由 AST 即时显示。
+- LSP 失败/超时/未安装时静默跳过，不阻塞编辑器；关闭窗口时等待后台诊断线程。
+- 验证：新增 `tests/test_lsp.py` 4 项（真实 Ruff LSP 语法诊断、干净文件、后缀拒绝、URI）；UI 诊断渲染测试；全量套件 622 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：一次性按文件诊断，不是常驻 LSP；无补全/定义跳转/重命名/引用；无 tsserver/调试器。
+
+## 2026-10-31 22:50（Asia/Shanghai）· 回退模型
+- `ProviderConfig` 新增 `fallback_model`，保存到 `.research/provider.json`，支持 `SCIDEV_FALLBACK_MODEL`；Agent 设置新增“回退模型”输入框。
+- 主模型返回 HTTP 404、`model_not_found` 或模型不存在的 HTTP 400 时，Agent 用 `with_model` 切换到回退模型重试一次；只回退一次，认证/限流/网络错误不回退。
+- 新增 `provider_fallback_started/completed` 事件；回退请求 ID 加 `-fallback`，避免与主请求复用幂等键。
+- 验证：provider 配置往返、回退触发条件、Agent 读取回退配置测试；全量套件 617 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：只覆盖模型解析错误；回退模型必须使用同一 endpoint/凭据；不保证回退模型能力足够。
+
+## 2026-10-31 22:25（Asia/Shanghai）· 推理强度与能力探测
+- `ProviderConfig` 新增 `reasoning_effort`（空/none/low/medium/high/max），保存到 `.research/provider.json`；Agent 编码请求把该值传给 provider。
+- Agent 设置模型接入新增“推理强度”下拉框；保存时校验并持久化。
+- 新增“探测能力”：`probe_capabilities` 请求 `/models`，再发送一次极小的 `ping` 工具调用；解析工具调用支持、上下文长度、视觉元数据和模型数，UI 异步显示。
+- 验证：provider 测试新增能力探测（工具/上下文/视觉）；UI 测试覆盖推理强度保存、探测按钮可见；全量套件 616 项 0 失败、13 跳过、覆盖率 79%。
+- 边界：能力探测依赖 endpoint 报告并消耗少量 token；视觉元数据缺失时显示“未报告”，不代表不支持；未实现失败自动回退。
+
+## 2026-10-31 21:30（Asia/Shanghai）· 会话恢复
+- Agent 设置新增“会话恢复”：从 `EventLedger.list_sessions` 读取最近会话，显示任务摘要和状态；恢复后设置 `current_session_id`，下一条消息复用原 session id/messages，不自动重放已完成的工具调用。
+- `EventLedger.list_sessions` 改为按 `updated_at` 倒序，最近会话优先。
+- CLI 新增 `sessions` 子命令（`--workspace`、`--json`、`--limit`）；`exec --session-id` 可继续指定会话。
+- 验证：新增 UI 恢复测试和 CLI sessions 测试；全量套件 615 项 0 失败、13 跳过、覆盖率 80%。
+- 边界：恢复会话上下文，不做完整 UI 消息回放；不自动恢复中断的命令/进程；会话 JSON 损坏时拒绝恢复。
+
+## 2026-10-31 20:55（Asia/Shanghai）· 任务轮次与 token 预算
+- `SummarySettings` 新增 `max_agent_turns`（1–64，默认 32）和 `max_task_tokens`（0 = 不限）；支持 JSON 持久化和 `SCIDEV_MAX_AGENT_TURNS` / `SCIDEV_MAX_TASK_TOKENS` 覆盖。
+- Agent 循环使用配置轮次上限，仍受内置 32 轮硬上限；新任务/重试按 `task_id`/prompt 维护 `task_usage_baseline`，token 预算只统计本任务新增的服务端 usage。
+- 预算用尽时记录 `task_token_budget_exhausted` 并抛 `PermanentError`，改动保留在工作区、不自动提交。
+- Agent 设置新增“任务预算”区（最多轮次、最多 token、说明）；UI 持久化测试补充。
+- 验证：新增 `tests/test_budget.py` 4 项（配置往返/环境覆盖、非法值钳制、任务 token 差值、配置轮次生效）；全量套件 613 项 0 失败、13 跳过、覆盖率 80%。
+- 边界：token 预算只统计 endpoint 实际返回的 usage；未返回 usage 时无法执行 token 硬限；没有货币成本换算。
+
+## 2026-10-31 20:10（Asia/Shanghai）· 应用内模型接入与密钥链
+- 新增 `scidev_credentials.py`：Windows Credential Manager 的 set/get/delete，目标 `SciDevHarness/provider/<profile>`；非 Windows 明确报告不可用，不落明文。
+- 新增 `scidev_provider.py`：`.research/provider.json` 只存 base URL、模型、超时、temperature、presence_penalty、流式/兼容开关和凭据 profile；API Key 从凭据管理器读取，环境变量作为后备；保存前校验 URL/模型/超时/temperature/penalty；异步测试 `/models`。
+- `CodingAgent._build_provider` 在保存配置存在时使用保存配置，否则保持 `from_env`；CLI 显式 provider 参数强制环境变量覆盖。
+- Agent 设置新增“模型接入”区（Base URL、模型、API Key、保存、测试连接），Key 输入框保存后清空。
+- 验证：新增 `tests/test_provider.py` 10 项（配置往返、不落明文 Key、环境变量、后备 Key、校验、状态、连接探测、Agent 构建、凭据管理器真实往返）；UI/CLI 测试补充；全量套件 609 项 0 失败、13 跳过、覆盖率 80%。
+- 边界：不是账号登录/OAuth；Key 对同一 Windows 用户下进程仍可读；只支持 OpenAI-compatible 接口；未做模型能力探测和多 provider 路由。
+
+## 2026-10-31 19:15（Asia/Shanghai）· 任务检查点与回滚
+- 新增 `WorkspaceCheckpoint`：在 Agent 写文件前把原始字节保存到 `.research/checkpoints/<id>/files/`，manifest 记录路径、是否存在、备份文件；新文件记录为任务前不存在。
+- 集成到 `CodingToolbox` 的 write_file/replace_in_file/replace_many_in_file/apply_patch；`CodingAgent` 每次任务创建检查点，失败或取消后保留，最近 10 个自动清理。
+- 新增 `CodingAgent.restore_last_checkpoint()`：恢复原文件、删除新文件、记录失败路径和 `checkpoint_restored` 事件；任务运行中拒绝回滚；Agent 设置增加回滚按钮；CLI 增加 `--restore-on-failure`。
+- 验证：新增 `tests/test_checkpoint.py` 7 项（已有/新文件、幂等 capture、manifest/prune、toolbox 写捕获、agent 恢复、无检查点报错、运行中拒绝回滚）；CLI 新增 2 项恢复测试；UI 测试确认按钮可见；全量套件 599 项 0 失败、13 跳过、覆盖率 80%。
+- 边界：检查点只覆盖 Agent 写过的文件，不替代 Git；回滚会覆盖任务开始后的人工修改；只保留最近 10 个检查点。
+
+## 2026-10-31 18:55（Asia/Shanghai）· Harness 自动验证
+- 目标：模型说“完成”时，若代码有改动但没有当前代码的通过检查，由 Harness 主动跑一次发现的测试/lint，而不是只提示模型自己找命令。
+- 实现：
+  1. `_auto_verification_candidate` 从 `ProjectContext.test_discovery` 中按 test > lint > typecheck 选择第一个 `assess_command` 可自动批准的命令。
+  2. `_run_auto_verification` 在 `workspace-write`/`full-access` 下直接调用 `run_command`，记录 before/after 指纹和正式 verification run；通过则返回完成，失败则把退出码与结构化诊断加入后续修复提示。
+  3. 同一编辑版本同一命令只跑一次，每任务最多 3 次；用户拒绝过命令、只读/手动审批、单轮提示模式跳过。
+  4. 新增 `verification_auto_started/completed/failed/passed` 事件；`VerificationTracker.record` 增加 `approval_source`。
+- 验证：新增 workspace-write 无审批回调自动跑 pytest 的回归测试；全量套件 590 项 0 失败、13 跳过、覆盖率 80%；ruff/mypy 通过。
+- 边界：自动选择的是静态发现的第一个安全候选，不保证是最相关/最完整检查；不是 OS 沙箱，也不自动安装依赖。
+
+## 2026-10-31 17:55（Asia/Shanghai）· 无界面 CLI
+- 新增 `scidev_cli.py`，提供 `exec` 子命令；不导入 Qt/PySide6，复用核心 Agent、执行策略、Git 自动提交和事件账本。
+- 支持 JSON 单对象输出、退出码 0/1/2/130、`--execution-mode`、`--no-verify`、`--session-id` 和临时 `--api-base/--api-key/--model/--request-timeout` 覆盖；不把密钥写入项目设置。
+- CLI 中 `command_approval=None`：工作区可写自动批准验证命令，完全访问自动批准全部命令；手动审批模式无法批准命令，会按验证门失败关闭。
+- 发布 staging 与测试期望加入 `scidev_cli.py`；新增 `tests/test_cli.py` 6 项。
+- 验证：全量套件 589 项 0 失败、13 跳过、覆盖率 80%；CLI 本地 Qwen 烟测成功（创建 `hello.py`、自动提交、JSON 输出）；CI #120 仅 3.13 的项目锁测试启动超时，放宽等待后 #121 三套 Python 全绿（9 分 30 秒）。
+
+## 2026-10-31 17:15（Asia/Shanghai）· 执行策略与结构化验证诊断
+- 背景：此前所有 shell 命令逐条审批，批准后拥有当前用户全部权限；既不安全也无法让 Agent 自主完成“测试→修复→重跑”闭环。
+- 实现：
+  1. 新增 `scidev_policy.py`，提供 `ExecutionMode`（read-only / manual / workspace-write / full-access）、`ExecutionPolicy`、`assess_command` 和诊断解析。
+  2. 自动批准只接受单条、无 `; & | < >`、无命令替换、无绝对路径/上级目录、无 curl/wget/ssh 等网络命令的 pytest/unittest、npm/pnpm/yarn test、ruff/eslint、mypy/pyright、`tsc --noEmit` 等验证命令。
+  3. 只读模式在 `CodingToolbox` 写入口和 `run_command` 前置拒绝；工作区可写自动批准验证命令；完全访问自动批准其他命令，但破坏性命令和手动 Git 操作仍拦截。
+  4. `run_command` 记录审批来源、命令类别和诊断数量；pytest FAILED/文件行号、ruff/mypy 的 `file:line:col: code`、tsc 的 `file(line,col): error TSxxxx` 解析为结构化诊断，附加在工具结果中。
+  5. UI 增加执行策略下拉框并持久化到 `.research/settings.json`；切换后同步当前 toolbox。验证门按策略判断是否真的没有命令通道。
+- 验证：新增 `tests/test_policy.py` 12 项；全量套件 583 项 0 失败、13 跳过、覆盖率 83%；ruff/mypy 通过；真实 7B 探针 36 场景 + 并发 `flagged=[]`（manual-commit 与 patch-review 各因模型未触发留下覆盖缺口，不是断言失败）。
+- CI：#115/#117 因 release staging 的显式文件清单漏掉 `scidev_policy.py` 失败；补入脚本和测试期望后 #118 三套 Python 全绿（9 分 35 秒）。
+- 已知边界：策略层不是 OS 沙箱，无法阻止已批准命令访问网络或项目外文件；完全访问模式必须由用户显式选择。
+
+## 2026-10-31 11:50（Asia/Shanghai）· 本地 Qwen 第七轮（工具参数与文件名边界）
+- 方法：对 CodingToolbox 全部文件/检索/命令工具做参数类型 fuzz（search_code、get_project_context、list_files、read_file、write_file、replace_in_file、apply_patch、git_diff、run_command），并跑官方 Ollama smoke。
+- 修复：
+  1. 零参数工具校验缺口：`inspect.signature` 返回空参数时 `if parameters` 直接跳过，`git_diff({"unexpected":1})` 抛 `TypeError`；改为基于 `parameters is not None` 校验，允许参数提示为“（无）”。
+  2. 假值参数静默回退：`read_file(start_line=[])`、`list_files(depth={})` 被 `or` 当成默认值；现在显式区分 None/空串与非法类型，bool 也拒绝。
+  3. 命令参数：`run_command(command=123)` 会执行字符串化命令，`timeout_seconds=True` 变 1 秒、`[]` 变 120 秒；现在非字符串命令、bool/非法超时在审批前拒绝并记录 rejected。
+  4. 批量编辑错误本地化：`Do not mix...`、`Batch edits must...`、`Each batch edit...`、`replace_all must...`、`Combined batch edit...` 全部改为中文。
+  5. NUL 路径双重异常：`a\x00b` 在 atomic_write_bytes 的 finally unlink 再抛 ValueError 掩盖原始错误；finally 现在捕获 ValueError，`_resolve` 对所有工具统一返回“路径不能包含 NUL 字节”。
+  6. 文件名/写盘边界：300 字符文件名、NUL、磁盘错误会抛裸 OSError/ValueError；新增 `_write_file_bytes`（文件名上限、异常转 PermanentError），write_file 的直接创建分支和父目录创建也给出明确中文错误。
+- 验证：fuzz 工具无未捕获异常；官方 smoke `status=passed`（hello_qwen.py 提交、4 个编码任务、first_duplicate 修复、总结）；真实 7B 探针 36 场景 + 并发 `flagged=[]` 且无覆盖缺口；全量隔离套件 571 项 0 失败、0 错误、13 跳过、覆盖率 79%；ruff 通过。
+- CI：push 后 #111 只有 Python 3.12 失败，两个 RetryQueue 测试在断言通过后清理临时 `runs.db` 报 WinError 32；给 5 个队列测试加 `ignore_cleanup_errors=True`（仅忽略清理竞争），#112 三套 Python 全绿，9 分 26 秒。
+
+## 2026-10-31 02:25（Asia/Shanghai）· Windows CI 3.12/3.13 时序失败修复
+- 现象：push `abeabe9` 后 Windows CI #106 中 3.13/3.14 成功，3.12 失败；注解为 `test_cancel_interrupts_an_in_flight_model_stream` 的 `8.265 not less than 8`。
+- 根因：测试在固定 0.6 秒后取消，并断言整体 8 秒内结束；CI 上 worker 线程/流启动偶发晚到，取消本身仍生效，总时长超阈值即误报。
+- 修复：测试等待 `SlowStream.__iter__` 真正开始（`threading.Event`），再记录取消请求时间，只断言取消后 5 秒内停止；总时长上限放宽到 20 秒。CI #107 随后在 3.13 暴露第二个竞争：被杀子进程短暂占用临时目录 cwd，`TemporaryDirectory` 清理抛 `WinError 32`；`test_agent_cancel_interrupts_an_approved_command` 与 `test_cancel_terminates_a_running_command` 改用 `ignore_cleanup_errors=True`，只忽略清理竞争，不动取消断言。
+- 验证：CI #108（清理修复）与 #109（两项都含）三套 Python 3.12/3.13/3.14 全部成功；#109 用时 10 分 19 秒。本地全量 569 项 0 失败、13 跳过、覆盖率 79%，ruff 通过。
+- 说明：没有降低断言强度来掩盖功能缺陷；取消后会话状态、错误信息、事件账本断言保持不变。
+
+## 2026-10-31 01:05（Asia/Shanghai）· 本地 Qwen 第六轮（审批/审核取消、参数与错误回声）
+- 探针 `scripts/probe_weak_model.py` 扩到 36 个场景：越界行号、额外参数、真实命令超时、.env 读取、补丁删除、审批中停止、审核中停止、非 Git 目录、非 Git 且不提交、既有脏改动、覆盖已有文件、Add File 已存在、拒绝补丁、部分批准；并发场景仍单列。
+- 修复：
+  1. 命令审批期间停止：`run_command` 在审批返回、启动子进程前检查 `_command_cancel`，已停止则把执行记录标记 cancelled 并抛 TaskCancelled，不再产生副作用；7B 实测审批延迟 3 s、取消后 4.1 s 内结束，命令未执行。
+  2. 补丁审核期间停止：`CodingToolbox.cancel_event` 与 `CodingAgent._cancel` 共享；审核返回后若已停止，记录 `patch_cancelled_before_apply` 并取消，补丁不落盘。
+  3. 工具参数：`CodingToolbox.execute` 用 `inspect.signature` 校验未知/缺少的必填参数；write_file 的 content、replace_in_file 的 old_text/new_text、apply_patch 的 patch 必须是字符串，数组等不再被 `str()` 成 Python repr 静默写入。
+  4. read_file 越界：起始行超过总行数时返回“起始行 N 超出文件总行数 M”，不再显示“空文件”；start_line/end_line 非整数、list_files depth 非整数给出明确错误。
+  5. 补丁行号提示：`apply_patch` 捕获准备阶段的 PatchError 时，若补丁含 `1: ` 这类 read_file 行号前缀，附加“去掉行号和冒号”的提示；7B 多次复制行号后得到可操作反馈。
+  6. 工具错误回声：模型把工具失败结果原样作为最终答复时，记录 `model_tool_error_echo`，追问一次；仍复述则 failed，避免把错误显示成完成。
+  7. 提交意图误判：`不需要提交测试报告` 之类不再被当成“不要提交代码”；英文示例/禁止工具提示也纳入写操作保护。
+- 探针修复：非 Git 目录按既有契约预期“自动初始化 Git 并提交”，不再误报 `.git/config` 改写；空基线用 `HEAD` 统计提交；patch 拒绝/部分批准、cancel-during-patch-review 的覆盖缺口单独归类；补回被编辑覆盖丢失的 patch-add-existing/patch-rejected 场景。
+- 验证：真实 7B 全场景探针（36 + 并发）flagged=[]；`manual-commit` 仍因模型只给文本、不实际运行 git 记为覆盖缺口（拦截逻辑由单测覆盖）；`cancel-during-patch-review` 已实测 `patch_previewed` → 取消 → `patch_cancelled_before_apply`，文件未变、无提交。全量隔离套件 569 项 0 失败、13 跳过、覆盖率 79%；ruff/mypy/编译通过。过程中本机 Ollama 服务退出过两次，重启后复测，不是代码缺陷。
+
+## 2026-10-30 23:45（Asia/Shanghai）· 本地 Qwen 第五轮（停机、提示回声与用户否决）
+- 探针 `scripts/probe_weak_model.py` 扩到 23 个场景，并支持 `--only`、场景未触发时自动重试、原始被拒工具文本记录、覆盖缺口与行为异常分离（coverage_gaps）。
+- 修复 7 项：
+  1. 流式取消：provider 增加 `should_cancel` 回调，`_stream_message` 逐行检查；智能体把 TaskCancelled 转换为 cancelled 会话。真实 7B 生成中停止 2.1 s 生效，原实现要等整段生成结束。
+  2. 内部提示回声：工具调用被拒时插入的英文占位句会被弱模型复述；现在识别为 model_internal_prompt_echo，追问一次后仍复述则明确 failed，不再“completed”。
+  3. 多工具调用：同一 `<tool_call>`/`<tool_request>`/`<tool_response>` 或 json 代码块内的多个 JSON 对象，逐个校验后整批执行；任一非法则整体拒绝。真实 7B 一次创建 two_a.py/two_b.py，单提交收齐。
+  4. 示例保护：提示含“只要示例/不要调用工具”等明确否定时，write_file/replace_in_file/apply_patch/run_command/委派全部拒绝；第二次仍调用则 TaskAborted 停止，文件与提交均为零。
+  5. 用户否决提交：提示含“先不要提交/无需提交”等时跳过自动提交，改动保留在工作区并提示手动提交；completed 事件同时携带 git_auto_commit_warning，UI 不再显示“无新提交”；不再误报“未检测到文件改动”。
+  6. 命令输出编码：Windows 通过 cmd.exe + `chcp 65001` 启动，子进程注入 PYTHONIOENCODING/PYTHONUTF8；输出解码优先 UTF-8，失败回退 OEM/本地代码页。`echo 你好` 与 `python -c print(你好)` 均不再出现替换字符。
+  7. read_file 对目录返回“路径是目录，请用 list_files”，不再误导为文件不存在。
+- 测试：新增流式取消、并行文本工具调用、内部提示回声、示例保护（含重复调用停止）、用户否决提交、目录读取、命令非 ASCII 输出与 GBK 回退、多对象解析等回归；全量隔离套件 558 项 0 失败、13 跳过、覆盖率 79%；ruff/mypy/编译通过。
+- 官方本地模型 smoke：首次运行中 7B 在被拒 replace_in_file 后放弃、未改用 apply_patch（模型随机性），重跑通过（4 个编码任务 + 修复 + 自动提交 + 总结）；同时给 smoke 临时工作区设置 GIT_CEILING_DIRECTORIES，避免系统临时目录回退到 checkout 时被误判为嵌套仓库。
+- 真实模型证据：全场景探针 flagged=[]；阻塞命令取消 2.8 s、流式取消 2.1 s、越界写入被拒、拒绝命令未执行、.git/config 未变、超时 99999 收敛为 300、并行双文件单提交、示例请求零改动、不要提交请求零提交；manual-commit 场景模型两次都只在文本中请求确认、没有实际运行 git，因此记为覆盖缺口而非 Harness 缺陷（拦截由 GitCommitOwnershipTests 覆盖）。
+
+## 2026-10-30（Asia/Shanghai）· 本地 Qwen 第四轮（弱模型边界）
+- 新增 `scripts/probe_weak_model.py`：真实本地模型对抗探针，11 个场景（问答、子目录创建、路径越界、阻塞命令取消、改 bug、中文路径、手动 git 提交、删除已跟踪文件、超窗提示、4B 小窗口、同项目并发），输出 `.research/weak_model_probe.json`；7B 与 4B 均可跑。
+- 修复：
+  1. 原生工具参数不是合法 JSON 时触发 `UnboundLocalError`、会话直接 failed；现在作为工具错误回传模型继续对话。
+  2. Ollama 上下文探测误信架构上限：`qwen3.5:4b` 的 `/api/show` 无 `num_ctx`，架构 `context_length=262144`，实际运行时只有 4096，原有保护形同虚设。现在按“显式 `num_ctx` → `/api/ps` 已加载窗口 → 默认 4096”取值，且不再信任架构上限；切换模型会重新探测。
+  3. 中文提示按 `len//4` 估算 token 会低估约 4 倍；现在 CJK 按 1 字≈1 token 计算，中文超窗提示能在发请求前被拦住。
+  4. 输出预算超过剩余窗口时从 12000 自动收敛（4B/4096 实测约 600 tokens），避免“窗口 4096 却请求 12000 输出”导致的截断；提示词本身超窗仍显式失败。
+  5. 模型可手动 `git add/commit/reset` 绕过 Harness 的按路径提交与敏感/大文件过滤；现在直接拒绝（含 `--no-pager`、`-c` 变体），系统提示也明确提交归 Harness。运行期间出现外部提交时报告真实 HEAD SHA 并提示核对，而不是显示“无新提交”。
+  6. 模型创建文件后又删除时，未跟踪路径会让 `git add` 整次失败；现在跳过已消失的未跟踪路径，删除已跟踪文件仍正常提交；改了但无实际 diff 时提示“没有产生可提交的改动”。
+  7. 弱模型把工具错误以 `<tool_response>...</tool_response>` 文本回显时，原先被当成最终回答并“完成”；现在识别为无效工具标记，退回模型按声明工具重试。
+  8. 测试运行器为每个子进程隔离临时目录并设置 `GIT_CEILING_DIRECTORIES`；系统临时目录不可写时不再把测试仓库建进当前 checkout（此前会导致大批 Git 边界失败）。
+- 验证：真实 7B 探针 11/11 场景无 Harness 异常（阻塞命令取消 20.3 s 生效、越界写入被拒、4B 小窗口任务完成并提交、并发第二任务 0 s 被拒、删除已跟踪文件正常进入提交）；官方 Ollama smoke 通过（4 个编码任务 + 修 bug + 自动提交 + 总结）；全量隔离套件 546 项 0 失败、13 跳过、覆盖率 79%（1 个目标 Qt 重跑后通过）；`ruff`/`mypy`/编译通过。
+- 说明：探针中“纯问答”模型答非所问、“改 bug”模型把补丁当文本输出，属 7B 模型能力问题；Harness 均未误提交，并给出“未检测到文件改动”或拒绝提示。
+
+## 2026-10-29（Asia/Shanghai）· 第三轮遗留问题修复
+- 同项目并发任务：`CodingAgent.run` 现在按项目获取非阻塞任务锁；已有任务运行时第二个任务立即失败并提示“同一项目已有编码任务在运行”，避免两个任务混写、后完成者把两个文件一起提交。
+- 弱模型“口头完成”：任务结束但无任何文件改动、且提示词含创建/修改/修复等意图时，记录 `no_changes_detected`、会话与结果带警告，客户端显示“Harness · 未检测到文件改动”；解释/问答类提示不触发。
+- Ollama 上下文截断：本机回环端点会调用 `/api/show` 读取 `num_ctx`（或模型上下文上限）；请求估算超过窗口 95% 时直接失败并提示设置 `PARAMETER num_ctx`，不再让服务端静默截断后产生垃圾回复。
+- Qt 离屏崩溃：测试运行器改为按模块/按 `test_client` 测试类分别起子进程，记录每个目标的部分结果；单个目标原生崩溃自动在新进程重跑一次，仍失败才判失败。全量 535 项 0 失败、13 skip、225 秒、覆盖率 79%。
+- 回归：`ruff`/`mypy`/编译通过；本地隔离套件连续运行无崩溃（未触发 retry）。
+
+## 2026-10-29（Asia/Shanghai）· GitHub CI 失败邮件排查（已转绿）
+- 现象：每次 push 后收到 `[ljk00000/SciDevHarness] Run failed: Windows CI`，三个 Python 版本各 30 秒~7 分钟失败。
+- 根因链：① 提交版 `smoke_screenshot.py` 有未使用变量，ruff 失败（本地因未提交的工作区版本而通过）；② 测试依赖尚未提交的 UI/打包改动（`ACTIVITY_ICON_SIZE`、`stage_release.ps1` 新模块列表等），CI 检出即缺文件；③ 其余为 CI 特有差异：Windows 8.3 短路径导致路径比较失败、目录重命名后 `terminal_cwd` 未按规范化路径 rebase、staging 30 秒超时、截图脚本对设置页/自由拖拽的假设与产品不一致。
+- 处理：补齐必需的工作区改动；测试运行器记录失败测试名与部分结果、CI 失败时输出注解；路径比较统一 `resolve()`；重命名 rebase 先规范化；放宽/修正 CI 不稳定的测试与截图断言；staging 超时提高到 120 秒。
+- 结果：Windows CI #98 成功（7m26s），不再产生失败通知。若仍有邮件，属 GitHub 通知设置或 Dependabot 等其他工作流。
+
+## 2026-10-29（Asia/Shanghai）· 本地 Qwen 第三轮（命令取消/并发/边界）
+- 停止不杀命令（已修复）：任务运行中停止/关窗时，`run_command` 的进程树原先继续跑（最长到超时），可能留下孤儿进程。现在 `request_cancel()` 会终止当前命令树，工具结果标记 `cancelled`。真实 Qwen 实测：取消后 0.12 s 命令终止、会话 `cancelled`。
+- 同项目并发任务混提交（已记录，未改）：两个窗口同时对同一项目提交任务时，后完成的任务把两个文件一起提交到自己的说明下（实测 `alpha.py` 与 `beta.py` 同在一个 "[codex] Create beta.py" 提交）。界面正常路径会复用同一窗口，属边缘场景；建议后续按项目串行化任务或限制单项目单任务。
+- 无改动“完成”（观察）：弱模型对“修改已有文件”的请求不调用任何工具、只回复完成时，Harness 仍标记 completed（无 commit、无警告）。属模型能力/意图校验缺口，未做启发式拦截。
+- 已验证正常：危险命令（`git reset --hard`）即使审批通过也被策略拒绝且用户改动保留；中文文件名创建/提交正常；同一会话连续两个任务各自只提交自己的文件；无改动任务不会产生空提交；provider 不可达时 2.2 s 内会话标记 failed、审计事件一致；补丁审核未被模型触发（未覆盖）。
+- 回归：529 项测试 516 通过、4 失败、1 错误、8 跳过（5 项为沙箱限制）；另有一次离屏 Qt 原生崩溃（已知遗留）。ruff/mypy/编译通过。
+
+## 2026-10-28（Asia/Shanghai）· 本地 Qwen 第二轮（取消/空回复/循环）
+- 空回复：弱模型（或提示词超上下文）返回空消息时，原先直接“完成”且无内容。现在最多补问 2 次，仍空则会话标记 failed 并报错；单用户提示模式不追加提示，直接停止。
+- 传输失败：provider 抛错后会话文件停留在 `active`（重启像仍在运行）。现在 `run` 兜底将 active 会话标记 failed 并写 `coding_session_failed`。
+- 关窗不取消：任务运行中关闭窗口，Agent 仍继续写文件并自动提交（实测关闭后新增 commit）。现在 `closeEvent` 请求取消，Agent 在下一个模型返回/工具调用/提交前停止，改动保留但不提交。
+- 无停止入口：新增聊天区“停止”按钮（运行中可见），停止后状态显示“已停止”，不再误报“任务失败”。
+- 重复工具循环：同一工具同参数同结果连续调用原先会跑满 32 轮（32 次模型调用）。现在第 3 次触发熔断并记录 `tool_loop_detected`。
+- 取消后的新任务：同一会话继续沿用旧工具转录，弱模型会继续完成上一个任务，并把旧文件以新任务消息提交。现在取消后的新任务重置为干净系统提示+新用户消息（实测第二个任务只创建并提交自己的文件）。
+- 验证通过：脏工作区隔离（只提交 Agent 文件，用户改动保留）、`../` 路径穿越拦截、停止按钮/关窗取消、取消后重试。
+- 大提示词：49k 字符触发 Ollama 静默截断（195.9s 后回显 padding）；更大提示触发 `Provider stream ended before a completion marker`，现会话正确 failed。建议本地 Ollama 显式设置 `num_ctx`（如 Modelfile `PARAMETER num_ctx 32768` 或启动参数），否则 Harness 的 32k 上下文预算与服务器实际窗口不一致。
+- 回归：527 项测试 522 通过、4 失败、1 错误、8 跳过（5 项为沙箱限制）；ruff/mypy/编译通过。
+
+## 2026-10-28（Asia/Shanghai）· 本地 Qwen 弱模型实测
+- 环境：Ollama 0.35.0、`scidev-qwen2.5-coder-7b:q4_k_m`（RTX 4070，4.7 GB）、loopback `http://127.0.0.1:11434/v1`、流式 + 文本工具调用回退。
+- 失败 1：`scripts/smoke_local_ollama.py` 使用默认 `require_verification=True`，但没有 `command_approval`；`run_command` 永远被拒，代码任务必然停在“未运行项目检查”，白跑 2 次补验模型调用。修正：代理在无审批通道时立即失败并说明原因（不再补问），smoke 在“禁止 run_command”的任务上显式关闭验证门槛。
+- 失败 2：smoke 的修 bug 阶段需要改已有文件，但没有 `patch_review` 回调；`replace_in_file` 被策略拒绝后任务必然失败。修正：一次性临时工作区自动批准补丁块。
+- 界面问题：无参数工具（如 `git_diff`）的气泡正文显示 `{}`；已改为“无需参数”。自动提交被跳过时完成气泡仍显示“Git commit: 无新提交”；已改为“未自动提交”。
+- 实测通过：修正后 smoke 4 个编码任务全部通过（3 个新建 + 1 个修 bug 走 `read_file → replace_in_file(拒绝) → apply_patch`）、自动提交、最终总结、临时工作区清理；真实客户端单任务约 4.7 s，用量 4 次请求/↑35.3 KB/↓49.0 KB，上下文 3.5k/32.8k。
+- 观察（非缺陷）：弱模型不会主动执行项目检查，也会把“必须调用工具”理解成贴文本；验证门槛因此拦截，属于既定 fail-closed 行为。
+- 曾尝试“未初始化 Git 时不自动建仓/提交”，但与既有测试契约冲突（项目预期自动初始化并提交），已撤回。
+- 遗留问题：`tests.test_client` 约 1/3 的运行中出现一次 Qt 原生访问冲突（`scidev_client.py:831 QCompleter` 创建时，PySide6 6.11.2 + Python 3.14 + offscreen/software QML）；按测试类二分未能稳定复现单一来源，`WA_DeleteOnClose` 可降低频率但会破坏一个用例，需在 Qt/PySide 层进一步定位。
+- 回归：519 项测试 514 通过、4 失败、1 错误、8 跳过（5 项为沙箱限制）；ruff/mypy/编译通过。
+
+## 2026-10-28（Asia/Shanghai）· 第二轮 Bug 排查与修复
+- 并发 Git：多个 `GitManager`（界面刷新、`git_diff` 工具、自动提交）各自加锁，同一仓库并发 `add/status` 实测报 `Unable to create index.lock`（退出码 128）。改为按仓库路径共享进程内锁；`_run` 遇到 `index.lock` 最多重试 3 次，仍占用时抛明确错误。
+- 审计库并发：同一项目的多个 `EventLedger` 共享一把锁；SQLite 索引写入遇 `database is locked` 重试 3 次后降级返回 0，JSONL 仍是审计事实源，不再让编码任务失败。
+- 敏感重命名检测：临时索引操作失败（文件消失、索引锁、超时）原先直接抛错中断任务；现在“失败关闭”——把全部候选路径视为敏感并记录到 `last_rename_detection_degraded`，差异中绝不泄露，同时任务继续。
+- 内部状态误入库：应用会在任何工作区写 `.research/`；此前没有忽略规则时，Git 面板会显示 `runs.db/events.jsonl`，“全部暂存/提交”可能提交提示词与转录。`EventLedger` 现在首次运行时写入 `.research/.gitignore`（仅忽略运行时私有文件），测试验证其不会出现在 `git status`。
+- 版本树 HEAD 陈旧：提交后界面先渲染版本树、后收到异步快照，HEAD 标签会停留在旧值。`_apply_git_snapshot` 在快照 HEAD 变化时直接刷新标签。
+- 回归：515 项测试中 510 通过、4 失败、1 错误、8 跳过（5 项仍是沙箱限制）；ruff/mypy/编译通过。
+
+## 2026-10-28（Asia/Shanghai）· 十项关键问题修复（已完成）
+- Git（1）：`GitManager._run` 统一 10 s 读超时/60 s 写超时，超时返回 124 或抛 `PermanentError`；`snapshot()` 用一次 porcelain 查询同时产出文本与条目；UI 刷新改后台线程 + 序列号防旧结果覆盖，关闭窗口时等待并禁止信号，避免 Qt 销毁后崩溃。实测 `refresh_git_status` 在 Git 阻塞 2 s 时立即返回，等待接口随后应用。
+- 原子写（2）：新增 `atomic_write_bytes`（临时文件 + fsync + `os.replace`），`write_file`、两处批量替换与 `_save_session` 复用；失败时保留原文件并清理临时文件（含回归测试）。
+- 测试隔离（3）：新增 `tests/test_isolation_guard.py`，导入时把临时目录导离 VCS 工作树、必要时设置 `GIT_CEILING_DIRECTORIES`，并静态检查测试不得直接打开真实 `QSettings`；主题持久化测试改用临时 INI。零环境变量全量运行后 HEAD 与暂存区不变。
+- 入库（4）：新增 4 个提交（`fcad0f0` 服务层、`9c0bd96` 补丁/验收/多 Agent/浏览器、`fb1e979` 测试、`238ae76` 示例与工具），15 个源模块与 15 个测试文件进入版本库。
+- 性能（5）：`textChanged` 改为 250 ms 防抖，单次 `ast.parse` 同时驱动大纲与问题面板；文档超过 400k 字符时降级为正则扫描。回归测试证明连续 5 次输入只解析 1 次。
+- 结构（6，第一阶段）：抽出 254 行 `_prepare_coding_run`（会话、Provider、工具、运行标志），主函数 1383→1193 行；回合循环的进一步拆分与契约测试待下一轮。
+- 进程与命令（7）：超时用 `taskkill /T` 终止进程树；破坏性命令改为归一化匹配（空白/大小写/参数顺序），`git  reset --hard`、`git clean -xdf`、`del /q /s` 均被拦截。
+- Git 解析（8）：新增 `GitStatusEntry`/`parse_porcelain_z`，`status_entries`、`status_path_groups`、`_sensitive_rename_groups`、`snapshot` 共用一次解析。
+- 可观测性（9）：用量记录失败写入 `model_usage_recording_failed`；Provider 指标回调失败保留 `last_metrics_error`；环境检查记录器失败保留 `last_record_error`。
+- 门禁与仓库（10）：加入 ruff（E4/E7/E9/F，全绿）、mypy（`scidev_process.py`/`scidev_usage.py` 无问题）、覆盖率门禁（`scripts/run_tests_coverage.py` 父进程编排，实测总覆盖率 79%）；CI 改为 ruff → mypy → 覆盖率测试；清理 80 个不可达提交，`.git` 41.4→25.1 MB。
+- 回归：508 项测试中 503 通过、4 失败、1 错误、8 跳过；仍失败的 5 项均为沙箱限制（暂存目标必须在源码树外、符号链接需特权），CI 环境可用。编译、ruff、mypy 通过；未推送远端。
+
+- 结构（6，完成）：把回合流程拆成五个显式阶段——`_prepare_coding_run`（会话/Provider/工具准备，252 行）、`_execute_tool_calls`（工具执行与跨回合状态回传，360 行）、`_enforce_verification_gate`（93 行）、`_run_acceptance_stage`（83 行）、`_finish_coding_session`（提交与完成负载，77 行）；`_run_with_editor_context` 1383→705 行，仅保留编排与门禁判断。工具阶段显式传入/回传 12 个跨回合状态，避免隐式泄漏；227 项核心/验收/多 Agent/SVG/验证测试全绿。
+
+## 2026-10-28（Asia/Shanghai）· 关键问题体检（10 项）
+- 方法：AST 复杂度/异常统计、子进程与线程调用点追踪、真实 `git` 计时与打桩、仓库对象统计；复现脚本为临时探针，未改产品代码。
+- 1. Git 全在 UI 线程且无超时：`refresh_git_status` 每次刷新 4 个 git 进程，`GitManager._run` 不传 timeout；打桩 2 s/次时 `status()` 阻塞 4.0 s，锁文件或慢盘会持续假死。
+- 2. 覆盖写非原子：`write_file` 既有文件走 `write_bytes`（core:2593），崩溃/断电会留下截断文件；同文件 `_save_session`（core:4506）已有 temp+fsync+`os.replace` 可复用。
+- 3. 测试可污染真实仓库：`tempfile` 不可写时回退 CWD，曾向真实 master 写 80 个提交；`tests/test_client.py:605` 仍读写真实 QSettings。
+- 4. 15 个源模块与 13 个测试未纳入 Git（`??`），无历史、无审查、磁盘损坏即丢失。
+- 5. 每次按键两次 `ast.parse`：`_refresh_outline` + `_refresh_diagnostics` 直连 textChanged，8211 行文件单次 74 ms，约 150 ms/键；搜索过滤另有同步 `os.walk`。
+- 6. `_run_with_editor_context` 1383 行 / 252 分支 / 547 调用；`scidev_client.py` 8211 行、`scidev_core.py` 6405 行，重构与验证成本高。
+- 7. 超时只杀 shell 父进程（`Popen(shell=True)` + `kill()`），孙进程残留；破坏性命令黑名单为子串匹配，`git  reset --hard`（双空格）、`git clean -xdf`、`del /q /s` 均实测绕过。
+- 8. 四套 Git 状态解析：`status`/`status_entries`/`status_path_groups`/`_sensitive_rename_groups` 各自解析 porcelain，语义已出现漂移。
+- 9. 70 处静默异常处理（40 处宽泛 `except`），含 core:1977/3506/4433、multi_agent:438、environment:112 等静默返回，故障缺少可观测信号。
+- 10. 无静态门禁与仓库卫生：CI 仅 unittest/py_compile/smoke，无 ruff/mypy/覆盖率阈值；`.git` 41.25 MB 全为松散对象，含 80 个不可达提交（污染残留）。
+- 结论：数据安全与 UI 阻塞类（1–4）应优先；本轮仅体检，未改代码、未提交 Git。
+
+## 2026-10-28（Asia/Shanghai）· 审计缺陷修复与回归
+- 环境：Python 3.14.0、PySide6 6.11.2、Git 2.52.0。隔离临时目录（`GIT_CEILING_DIRECTORIES` + 工作区临时目录）后执行全量：493 项中 480 通过、4 失败、1 错误、8 跳过；剩余 5 项均为沙箱限制（发布暂存目标必须在源码树外、创建符号链接需特权）。暂存脚本经目录联接目标实测可用（27 个文件），确认失败仅由路径限制引起。
+- Git 边界：`GitManager` 改为以 `rev-parse --show-toplevel` 判定归属，只承认与工作区根一致的仓库；新增 `repo_toplevel`/`enclosing_repo_root`/`_require_own_repo`，`is_repo`、`status`、`init`、暂存与提交均在发现外层仓库时拒绝执行并给出明确提示，避免误改外层仓库。新增 2 项回归覆盖“嵌套目录不驱动外层仓库”和“自有仓库仍可用”。
+- 终端：PySide6 未暴露 `QProcess.setCreateProcessArgumentsModifier`，改为 `scidev_process.StreamingCommand`（`subprocess.Popen` + `CREATE_NO_WINDOW` + 管道读取线程 + 队列），保持引号命令与编码兼容；子进程控制台句柄由非零变为 0，结束后关闭管道消除 ResourceWarning。
+- 布局：紧凑窗口为编辑器保底 480px（含 QSplitter 取整补偿），899×620 实测编辑器 480px；用量/上下文芯片窄屏下移独立一行；版本树折叠详情时整块 dock 隐藏，画布可取回约 300px；Agent 设置面板按实际可用宽度切换单列/双列，修复 1210px 溢出 632px 视口。
+- 契约统一：`SettingsPage.COMPACT_BREAKPOINT=840` 由代码和测试共同引用；芯片紧凑文案只在 Agent 面板可见时按面板宽度判定，隐藏时保持完整文案。
+- 测试隔离：工作区生命周期测试改用临时 INI 设置；摘要/用量芯片测试显式触发一次用量；更正基于陈旧布局状态的断言。
+- 过程事故：首次全量运行时沙箱禁止写系统 TEMP，`tempfile` 回退到源码根目录，测试临时仓库被外层仓库吸收，向真实 master 写入 80 个 `baseline` 提交并暂存未跟踪文件。已从 `origin/master` 确认真实 HEAD `ee229b4`，用 soft/mixed reset 恢复历史与索引；逐文件比对确认工作区内容未变，最终 ahead=0、21 个原有修改与 32 个未跟踪项恢复。
+- 编译与 `git diff --check` 通过；未联网、未安装依赖、未调用真实 LLM、未提交 Git。日志：`.research/audit/unittest_after_fix.log`。
+
+## 2026-10-08（Asia/Shanghai）· Git 差异检查导致任务失败
+- 根因：受保护路径重命名检测把整个含大量既有改动的工作区暂存到临时 Git 索引；`.research` 等动态数据也被卷入。原错误没有保留 Git stderr，因此旧会话的 Git 128 子原因无法追溯；现改为仅检查“受保护路径删除 + 未跟踪新增”相关路径，并保留 Git 错误详情。
+- 修正：失败状态不再标成“已中断”，聊天直接显示失败原因；用隔离临时索引检查 Git 调用，没有触碰用户暂存区。源码语法与差异检查通过；未运行测试、未调用模型、未提交 Git。
+
+## 2026-10-08（Asia/Shanghai）— 对话内 Agent 思考与工具调用折叠
+- 每条用户任务建立独立“执行过程”卡片，默认收起；卡片归集工具前的 Agent 流式过程、工具参数/结果、计划与 Harness 状态，并实时显示模型轮次、工具数和当前状态。点击标题展开，再点收起；任务最终答复和用户消息始终单独显示。补丁审核、安全拦截等需用户留意或操作的消息不藏进折叠区。
+- 重试/中断时保留过程并更新状态；从开发树重试也会启用分组。合成消息流后台截图 4 张，覆盖展开、收起、窄屏及浅色主题，位于 `.research/collapsible-process-20261008/`；已检查双击切换结果。Python 编译与 `git diff --check` 通过；未运行测试、未调用真实 LLM/联网、未安装依赖、未提交 Git。
+
+## 2026-10-08（Asia/Shanghai）— 上下文用量实时显示与 Agent 默认半屏
+- 对话输入区常驻上下文计数、窗口占比与进度条：发请求前按实际消息/工具 JSON 字节数估算，打字时即时叠加草稿估值；接口提供 `prompt_tokens` 后显示该请求实报值。界面提示估算并非模型专用 tokenizer；Agent 设置新增可配置上下文窗口（默认 32K）。未保存提示内容，不新增网络调用。
+- Studio/Paper 默认三栏比例调整为资源栏 20%、编辑区 30%、Agent 50%；可拖动调整，窄屏按已有最小宽度规则收缩，Focus 专注配置保留宽编辑区。截图检查又修复缩窄窗口时模型用量文案未同步紧凑的问题。
+- 生成并人工检查 6 张后台 Qt 截图，含 720p、1080p、780×480 紧凑布局、估算/接口实报及滚动到上下文窗口项的 Agent 设置页，位于 `.research/context-usage-20261008/`。`py_compile` 和 `git diff --check` 通过；未运行测试、未调用真实 LLM/联网、未安装依赖、未提交 Git。截图为 Qt 后台渲染，不是 Windows 桌面捕获。
+
+## 2026-10-08（Asia/Shanghai）— 十二项客户端界面优化
+- 完成聊天栏与资源栏自适应、浅色状态对比、版本树卡片字级/画布减噪/详情区主题色与“适应全图”、固定 Git 提交区、宽屏搜索和项目名布局、快捷键整行显示、设置专注布局、Agent 多行指令、紧凑输入区、非编辑页状态栏隐藏行列号及细化分隔线。保留现有编辑、Git 与外部打开行为。
+- 在临时项目中生成 62 张后台 Qt 渲染截图，覆盖三套主题、720p/1080p/2K/4K、780×480 紧凑布局、14pt 字号及工作区/编辑器/设置/版本树页面，并点击“适应全图”复核其显示效果；人工复核代表截图。截图与生成脚本位于 `.research/ui-polish-20261008/`。Windows 原生窗口捕获接口不可用，本次为 Qt 离屏渲染，不代表桌面合成器捕获。
+- `py_compile` 与 `git diff --check` 通过；未运行测试、未联网/调用 LLM、未安装依赖、未提交 Git。保留工作区既有未提交修改。
+
+## 2026-10-07（Asia/Shanghai）— 修复版本树/保存时闪出命令行
+- 原因：Git 状态、分支、HEAD、diff 等检查虽然捕获了输出，却未禁止 Windows 创建控制台。新增统一后台启动选项 `CREATE_NO_WINDOW` 与隐藏启动窗口，覆盖 Git、项目文件检索、环境核验及已批准的 Agent 命令；保留输出、错误、退出码、超时和审批。不隐藏用户主动打开的浏览器，Qt 内置终端无需改动。
+- 专项 32 项运行成功（1 项条件跳过），包含 Git 参数、真实直接/shell 子进程、Qt 终端、环境核验、审批/超时和发布暂存；核心用例无失败，上下文/验证器/进程 71 项复测通过。新增测试曾因泛化命名挤占“测试命令发现”的检索名次，改为准确的后台启动/文件列表命名后通过，未修改检索排序。新增模块已加入发布清单；编译与 `git diff --check` 通过。
+- 用 `pythonw` 启动原生 Qt 后台验证：隔离项目连续 3 次保存并打开版本树，57 次 Git 调用全部带隐藏参数；启动器、真实命令子进程与内置终端的控制台句柄均为 0，非零退出码和 stderr 正常保留。证据：[验证结果](../.research/background-process-check/result.json)。未操作用户项目历史、未联网/调用 LLM、未安装依赖、未自动提交或重打包。
+
+## 2026-10-07（Asia/Shanghai）— 文件右键外部打开
+- 文件树右键增加“在编辑器中打开”；HTML/HTM/XHTML（不区分大小写）增加“在浏览器中打开”，所有普通文件增加“使用默认程序打开”。编辑器标签也支持外部打开，目标始终为右键所点文件，不继承其他选中项；空白区与目录不显示文件打开操作。
+- 本地网页使用编码后的 `file://` 地址，支持中文、空格、`#`、`%`；只打开项目内的实际文件，拒绝越界、内部目录、已删除文件及错误类型。失败和未保存提示通过状态日志显示；不自动保存/覆盖草稿，双击编辑行为不变。
+- 6 项专项检查及 95 项客户端回归通过，覆盖点击目标、标签菜单、默认程序调用、路径编码、草稿保护、目录/空白区及失败提示。隔离临时项目使用真实默认浏览器调用打开俄罗斯方块，Edge 窗口显示对应页面标题；未额外验收游戏交互。后台 Qt 菜单截图覆盖 720p/1080p/2K/4K，菜单 186×325，复查无截字；证据：[右键菜单](../.research/rightclick-open-check/menu-1280x720.png)。编译和 `git diff --check` 通过。
+- 未联网、未安装依赖、未调用 LLM、未自动提交或重打包；已运行的旧客户端需重启才能加载源码更新。
+
+## 2026-10-07（Asia/Shanghai）— 后台截图界面评估
+- 打开最新源码客户端；Windows.Graphics.Capture 两次返回 `SetIsBorderRequired failed / E_NOINTERFACE`。改用 Qt 后台渲染，保存 96 张布局矩阵、12 张 Windows 字体截图及 2 张完整事件循环的计划切换截图，人工复查 23 张代表状态，覆盖 720p/1080p/2K/4K。截图目录：[ui-audit-20261007](../.research/ui-audit-20261007/)。评估场景使用临时项目与示例计划/树节点。
+- 自动布局检查通过。观察到的计划步骤/占位提示叠加来自截图流程没有及时处理 deferred delete；完整事件循环后台截图中旧步骤为 0，不作为产品 bug。当前仅评估与记录，没有实施以下 UI 优化。
+
+| 优先级 | 位置 | 不足与建议 |
+| --- | --- | --- |
+| P1 | 对话区响应式 | 780×480 消息区只剩约 60px；4K 的对话栏仍被限制在 460px，比例过窄。低高度收起空计划、压缩次要工具；大屏允许按分栏比例扩展。 |
+| P1 | 14pt 字号下的资源栏 | 1120×700 仍展示资源栏，但“资源管理器”标题被操作按钮挤得截字；断点和最小宽度需要随字体计算，次要操作可收进菜单。 |
+| P1 | 浅色计划状态 | “已完成”的浅绿色和“进行中”的亮蓝色在浅底上偏淡；浅色主题使用更深的状态色，并保留图标/文字区分。 |
+| P1 | 开发版本树 | 节点说明、日期、次数和状态徽标明显小于 IDE 正文字号；增大元数据字号、对比度与状态/更多菜单间距。 |
+| P1 | Git 详情 | 暂存操作、状态框和提交输入纵向堆叠，1500×920 下提交操作仍处于下方滚动区；把主要提交操作固定在详情区底部并分组。 |
+| P2 | 顶部标题栏 | 宽窗口中搜索框仍约 190px，项目名提前省略；按照可用空间分配搜索框和项目名宽度。 |
+| P2 | 欢迎页 | `Ctrl + Shift + F` 可以断成孤立的 F；将每条快捷键作为完整单元，并减少辅助说明的零碎换行。 |
+| P2 | 设置工作区 | 仍保留资源栏与 Agent 栏；780×480 只能显示约一项设置，卡片/标题/底部说明占比高；提供设置专注布局，窄屏压缩卡片间距。 |
+| P2 | Agent 设置 | 外观设置在中间，Agent 设置另在右侧长表单；窄屏字段短，长指令只有单行；统一可搜索分类，长指令改为多行输入。 |
+| P2 | 对话输入区 | Agent、重试、总结、@ 与字节统计分成多个相似小控件，次要数据抢占输入空间；合并工具菜单，将用量改为弱化状态。 |
+| P2 | 版本树画布 | 顶部标题/统计卡/说明约占 220px；网格、光点、重阴影较抢眼，窄屏缺少明显的全图适配/缩放入口；压缩统计区、减轻装饰，增加常驻画布操作。 |
+| P2 | 状态栏与分隔 | 欢迎/设置/版本树中仍出现行列号或代码语言；分栏边界偏粗，深色代码底与周围面板色温不一致；按当前视图显示状态并统一细分隔、背景层级。 |
+
+- 代表证据：[窄窗口](../.research/ui-audit-20261007/native/native-typography-paper-minimum.png)、[大字号](../.research/ui-audit-20261007/matrix/preferences-large-font.png)、[浅色计划](../.research/ui-audit-20261007/native/native-plan-with-event-loop.png)、[设置页](../.research/ui-audit-20261007/native/native-preferences-paper-wide.png)、[Agent 设置](../.research/ui-audit-20261007/matrix/summary-settings-compact.png)、[版本树](../.research/ui-audit-20261007/matrix/tree-paper-wide.png)、[Git 详情](../.research/ui-audit-20261007/matrix/tree-details-expanded.png)。
+
+## 2026-10-07（Asia/Shanghai）— VS Code 风格设置工作区
+- 新增独立设置页，左下角齿轮、Ctrl+,、> settings 打开，Escape/返回工作区关闭；从版本树进入时可返回原视图。左侧分类、顶部中英文关键词搜索、已修改筛选、单项重置及恢复默认；窄窗口将分类改为下拉框，不增加弹窗。
+- 17 项配置覆盖主题、强调色、界面字体/字号/字重、缩放、密度、图标栏宽度/图标大小、资源栏显示，以及代码字体/字号/Tab 显示宽度/换行/行号/当前行高亮。即时保存至本机 appearance/*，同步同一进程的项目窗口；重置不影响 Agent 或项目配置。Agent 分类复用右侧原有设置入口。
+- 外观数据校验与设置 UI 分模块；不下载字体，未知代码字体回退等宽字体，强调色校验并自动匹配按钮文字明暗。修复大字号标题区域、行号区域尺寸、暗色设置标题、顶部长名称尺寸提示、Windows 空字体条目及颜色重置后的错误提示。
+- 新增 11 项设置回归，验证搜索、筛选、重启、多窗口同步、布局、色彩与未保存代码/光标/撤销保护；全量 479 项运行成功（3 项条件跳过），专项设置 11 项和 UI 16 项通过。100%/200% 各 96 张 Qt 离屏截图、另 12 张 Windows 字体后台截图通过并人工复核；均非合成器遮挡捕获。
+- 新模块纳入发布复制清单；依赖 smoke、启动器、pip check、编译、QML lint 和差异检查通过。未联网、安装依赖、调用 LLM、提交 Git、重打包 exe 或关闭用户窗口；重启源码客户端可使用新设置页。
+- 后续回归发现分辨率测试会读取机器级字体偏好并产生错误断言；为该测试隔离临时 QSettings。修复后全量 479 项通过（3 项跳过），设置/界面专项 27 项、响应式截图冒烟均通过；未改产品缩放行为。
+
+## 2026-10-07（Asia/Shanghai）— 圈图反馈：放大导航与修正细字体
+- 图标栏由 58 改为 76 逻辑像素，按钮固定 60×60 点击区域，图标由 20 改为 30；增加图标源分辨率和描边，随 UI 缩放同步放大，收起资源栏也不缩小点击区域。略增默认左栏占比和最小宽度，保留用户已保存的分栏比例。
+- 界面优先使用已安装的微软雅黑 UI，其次 Noto Sans SC 等中文无衬线字体；导航按钮、标签、任务规划标题统一 600 字重，加强浅色辅助文字对比度，文件树由 10pt 提到 11pt。QML 版本树同步字体，代码区保持原有等宽字体和普通字重。
+- 修复切换字体/主题后长标题不重新省略导致截字；新增字号变化、实际中文 glyph、固定点击区和高 DPI 图标回归。专项 16 项通过；最终全量 468 项运行成功（3 项条件跳过）。
+- 100%/200% 各 88 张离屏截图通过；另用 Windows 平台字体后台渲染 6 张三主题/窄窗口截图，确认中文导航实际为 Microsoft YaHei UI / Bold，并人工复核浅色、窄屏及高 DPI。后台为 Qt widget 渲染，不是 Windows 合成器遮挡捕获；截图设置现使用临时 INI，不改用户界面偏好。
+- 依赖 smoke、启动器、pip check、编译、QML lint 和差异检查通过。未联网、下载字体、安装依赖、调用 LLM、提交 Git 或重打包 exe；保留已有未提交改动及用户正在使用的窗口，重启源码客户端后生效。
+
+## 2026-10-06（Asia/Shanghai）— 11 项界面问题集中优化
+- 设置改为替换对话区的独立滚动面板，单列重排并保留输入高度；用量移到独立行，窄屏 Agent/重试/总结不再互相挤压。补齐三主题的下拉框、弹出列表、箭头、焦点、禁用态及浅色标题/分隔条对比度。
+- 新增独立词法高亮模块：Python、HTML 内嵌 CSS/JS、JS/TS、CSS、JSON、Markdown、YAML；未知类型保持纯文本。覆盖块注释、字符串和 UTF-16/emoji 偏移，预览复用和重命名时更新类型；不宣称具备完整语法解析或语言服务器能力。
+- 默认资源栏占比调整为约 19%，手动分栏宽度按主题保存。版本树隐藏无关资源栏/Agent、详情可收起；加大卡片文字，减弱网格/阴影，强化主干与分支层次，修复贴边分支向右拖动无效，保持平移/缩放/位置持久化。
+- 计划宽屏完整显示三个短步骤，窄屏优先当前及相邻步骤，长文本省略并保留完整提示。模型标题显示配置的真实 ID；未配置状态改为提示色并提供设置入口，不把“已配置”当作已验证连接。
+- 欢迎页改为无行号的简洁卡片，处理换行高度，打开文件后隐藏欢迎标签；合并编辑器双工具栏、移除资源栏重复 Git 卡片，保留醒目 Git 入口。附带修复状态栏文字重叠、长标签刷新回退旧文本及返回工作区后搜索不恢复展开。
+- 新增 12 项界面/高亮回归；全量测试 464 项运行成功（3 项条件跳过），桌面依赖与启动器检查、pip check、编译及差异检查通过。100%/200% 缩放各完成 88 张后台截图回归（共 176 张），覆盖三主题、欢迎页、真实 Tetris HTML、设置、计划和版本树拖拽；截图为 Qt 离屏渲染，不是 Windows 原生遮挡捕获。
+- 高 DPI 回归修正截图脚本的尺寸下限和跨响应式阈值判断：低于 780×480 逻辑尺寸的请求明确记录实际窗口下限，不宣称适配更小窗口；200% 版本树截图已人工复核。
+- 高亮模块和箭头资源纳入 release staging/Nuitka 配置；未重新打包 exe，未调用真实 LLM、联网、安装依赖或提交 Git，保留原有未提交工作。
+
+## 2026-10-05 16:50 (Asia/Shanghai) - 默认俄罗斯方块改为双击即玩的网页
+- 将 Tkinter 样例收敛为自包含 `examples/tetris/index.html`，加入方块生成/旋转/碰撞/消行、计分等级、下一个方块、暂停重开、键盘与触屏控制及响应式界面；不请求网络、不需服务或安装依赖。
+- 同步默认样例复制、release staging、README 和上下文检索；Edge 直接打开 `file://` 实测 Canvas、暂停、硬降计分、重开和手机触控布局，桌面/375px 手机视口均无溢出，浏览器无脚本异常；截图检查并修正窄屏标题换行。
+- release staging 7 项、引导 13 项、上下文 34 项及全量 452 项通过（3 项跳过）；`pip check`、`git diff --check` 通过。未联网、未安装依赖、未提交 Git。
+## 2026-10-05 16:15 (Asia/Shanghai) - Node/Rust/Go 根项目工具链核验
+- “核验环境”扩展为一次审批的只读诊断批次：根目录有 `package.json` 时探测 `node --version`；有 `Cargo.toml` 时探测 `rustc/cargo --version`；有 `go.mod` 时探测 `go version`；继续支持项目 Python venv + `pip check` 和可选 `nvidia-smi`/`nvcc`。固定 argv、`shell=False`、分项短超时及 45 秒总预算；未发现工具时直接报告，不运行其他命令。Python 不回退到 Harness 解释器。
+- 不运行 Node 包管理器、依赖解析、构建、测试或项目脚本。工具链版本不代表依赖齐全或工程可构建；运行时发现目前只看根清单，嵌套 monorepo 留待后续。
+- 环境/桌面/打包专项 25 项通过（1 项 Windows 平台跳过）；全量 452 项通过（3 项跳过），编译和 `git diff --check` 通过。诊断进程全部 mock，未实际运行项目/系统工具链；未调用 LLM、联网或安装依赖，未提交 Git。
+
+## 2026-10-05 15:52 (Asia/Shanghai) - 项目 Python 环境按需运行态核验
+- 上下文页新增“核验环境”：用户主动点击后仅选择项目内 `.venv`/`venv`/`env`，每次单次审批；固定诊断以 `shell=False`、`-I -B -S` 和 45 秒上限执行，运行期间禁止并发启动/重试编码任务。拒绝审批、缺少环境、超时和无效输出均有可读状态与事件记录。
+- 只读核验 Python 版本、`pip check` 已安装包元数据冲突，以及 PATH 中可用的 `nvidia-smi`/`nvcc`；不联网、不安装、不导入项目业务模块。`-S` 禁止 site 启动钩子，诊断仅显式添加该 venv 的 site-packages 来运行 pip 检查。Unix venv 标准解释器软链接保留 venv 路径启动，避免解析到基础解释器。
+- 结果明确提示 pip/GPU 结论边界；Node/Rust/Go 运行态核验仍未实现。专项服务 6 项通过、1 项按 Windows 跳过，桌面上下文 7 项通过；全量 448 项通过（445 passed、3 skipped），Python 编译、发布暂存清单和 `git diff --check` 通过。无真实项目解释器执行（进程调用为 mock）、无 LLM/联网/安装依赖、未提交 Git。
+
+## 2026-10-05 15:25 (Asia/Shanghai) - 项目虚拟环境静态元数据补强
+- 对项目 `.venv`、`venv`、`env` 的 `pyvenv.cfg` 增加 4 KB 有界读取，只提取配置 Python 版本及 `include-system-site-packages`；不返回 `home`/`executable` 等绝对路径、不运行解释器。配置文件是链接、不可读或超限时拒读并标状态。
+- 项目上下文展示此元数据，明确它只是创建配置，不代表当前解释器版本或依赖安装状态；CPU/GPU/CUDA 与实际依赖核验仍未做。
+- 项目上下文专项 34 项通过；全量 438 项运行、436 项通过、2 项可选跳过；编译、项目 `.venv` `pip check`、`git diff --check` 通过。未调用 LLM、未联网/安装依赖、未运行项目虚拟环境解释器、未提交 Git。
+
+## 2026-10-05 15:07 (Asia/Shanghai) - 多 Agent 只读并行委派与写入隔离
+- 新增 `delegate_parallel_research`，批量调度 2–3 个架构/测试/安全/Reviewer 只读调查，运行并发限制为 2；Coder 与文件修改不进入并行批次。结果按请求顺序返回，子任务会话和用量由主线程顺序保存。
+- 覆盖成功缓存、路径规范化重复请求、每任务 3 次总上限和剩余容量不足时不部分启动。线程屏障证明 3 个任务最多 2 个同时运行；工作区前后指纹不一致时报告标记过期、不缓存，完整性不足时也不缓存。
+- 多 Agent 专项 23 项运行、22 项通过、1 项可选跳过；全量 437 项运行、435 项通过、2 项可选跳过；`compileall`、项目 `.venv` `pip check`、`git diff --check` 通过。未调用真实 LLM、联网、安装依赖或提交 Git。
+- 边界：这是只读调查并行化，不是并行编码；Coder 仍串行，尚无工作区分支隔离或冲突自动合并。
+
+## 2026-10-05 14:33 (Asia/Shanghai) - 多 Agent Coder 本地模型编码闭环
+- Coder 委派前由 `ProjectContext` 按 `focus_paths` 本地预取有界上下文，使用已脱敏的源码片段；子模型只声明 `apply_patch` 并强制工具调用。修正 Codex patch schema 示例，明确操作行必须逐个使用 `Update File` / `Add File` / `Delete File`，不接受斜杠选项字面串。Harness 继续校验 focus 路径，补丁只经逐块审核后应用；未读取到可用源码时不调用模型。
+- 新增过早/未声明工具、文字 diff、范围越界、审批拒绝/部分批准和 Coder 预取上下文测试；本机 Ollama `scidev-qwen2.5-coder-7b:q4_k_m` 在隔离临时项目中一次 `apply_patch` 将 `VALUE = 1` 改为 `VALUE = 2`，工具调用、审核回调、改动路径与最终状态均通过断言。首次实测暴露工具说明歧义以及模型在工具结果续轮中退回文字输出，已通过本地预取上下文和 patch-only 首轮消除该交接。
+- 多 Agent 专项 18 项通过；全量 `unittest` 433 项通过、2 项可选测试跳过；`compileall`、`pip check`、`git diff --check` 通过。全量复测同时修正一个受用户持久化折叠设置影响的计划面板测试隔离问题。
+- 模型仅经 `127.0.0.1` 调用；没有下载模型、访问公网、安装依赖、修改临时目录外项目代码或提交 Git。E2E 审批回调只自动批准临时样例补丁，不代表生产 UI 审批被绕过。边界：目前仅证明一个单行简单任务；复杂改动/其他模型未验收，Agent 调度仍串行且没有冲突合并。
+
+## 2026-10-05 13:45 (Asia/Shanghai) - 工具调用崩溃恢复与防重复执行
+- 增加 SQLite 工具调用 journal，按 session/assistant 消息位置/调用序号记录 pending、started、completed；执行前持久化 started，完整结果先落库，再追加 transcript。重启后恢复已完成结果、标明未启动调用；started 无结果及无 journal 的旧 transcript 均按“结果不确定”处理，不重放原调用。参数不写入 journal，重复/冲突身份不会再次执行。
+- 会话保存使用同目录临时文件、flush/fsync 与原子替换。可能变更代码的恢复调用会保守触发验证门槛，避免 transcript 崩溃窗口漏掉验证或自动提交。
+- 注入副作用后、结果落库后两处崩溃及批量后续 pending 调用；另覆盖旧 transcript、journal 重复身份和原子替换失败。核心 96 项/53 个子用例通过；全量 437 项通过、1 个可选 E2E 跳过、205 个子用例通过。编译、`pip check`、`git diff --check` 通过。未调用真实 LLM/公网服务或 Agent `run_command`；仅在临时目录做 Git 故障注入，未安装依赖或提交项目 Git。
+- 保证边界：Harness 不会自动重放相同持久化调用，但不能提供任意外部副作用 exactly-once；模型之后仍可能生成新调用，命令仍受逐条审批。
+
+## 2026-10-05 13:17 (Asia/Shanghai) - 项目上下文凭据遮盖与完整回归
+- 项目上下文原有路径排除与 URL 账号信息遮盖不足以覆盖源码/说明文件内联字面量；增加上下文副本过滤：常见 API key/密码/访问密钥赋值、常见云/代码托管 Token 与 PEM 私钥块。保留 `os.getenv(...)` 等代码表达式，不改磁盘文件；普通 `token` 变量不一概遮盖，以避免破坏项目语义。
+- 新增过滤回归覆盖双引号/无引号凭据、Token、URL 用户信息、PEM 块、环境变量读取表达式和源文件不变性。上下文+桌面定向测试 121 项、34 个子用例通过；完整套件 433 项通过、1 项可选 E2E 跳过、203 个子用例通过；`compileall`、`pip check`、`git diff --check` 通过。
+- 边界明确：这不是通用秘密扫描；显式 `read_file` 仍可返回原文。使用已安装的系统 Python，无依赖安装、LLM/外网调用或 Git 提交。
+
+## 2026-10-05 13:02 (Asia/Shanghai) - 阶段总结增量压缩
+- 发现每次 checkpoint 总结虽已保存压缩摘要，但后续总结来源仍重新包含从会话开头到当前的完整 transcript，导致总结间隔越短，重复输入越多。改为传入“上一份摘要 + `context_compacted_through` 后的新消息”；无效游标回退到有界全量来源，不丢历史证据。
+- 修复 `_summary_source` 在插入省略标记后比 `context_chars` 多几十字符的问题；现在输出严格不超过配置预算。对含 4,000 字符旧工具输出的合成样例，下一次摘要来源从 4,000 字符降至 184（减少 95.4%；字符数对照，不等同 token 或网络字节）。
+- 新增增量来源、坏游标回退和精确字符预算回归；摘要压缩/重试相关专项 6 项通过。最终全量回归 426 项通过、1 项可选 Edge E2E 跳过；`compileall`、`pip check`、`git diff --check` 通过。未调用 LLM/外网/下载模型，未提交 Git。
+
+## 2026-10-05 12:51 (Asia/Shanghai) - Provider 直连优先与受限代理回退
+- 修复 `urllib.request.urlopen` 默认可能直接使用环境代理的问题：模型 API 现在显式直连；仅公网目标遇到 DNS 失败或明确 TCP 拒绝连接，且环境有代理、`NO_PROXY` 未排除时，才单次代理回退。超时、网络不可达等其他网络错误（避免不确定的重复计费）、HTTP 状态、本机/私有地址/常见内部域名不会转代理；维持每次模型请求一个回退尝试及任务队列最多 6 次指数退避。
+- 模型用量记录和 UI tooltip 增加代理回退计数，不保存代理地址/提示词/响应内容。新增直连/回退/失败边界测试；传输与用量/UI 专项 8 项通过。回环 HTTP Provider smoke 在代理变量指向不可用端口时仍直连成功；模拟直连 DNS 失败后，仅经本机假代理发送一次，没有外部网络访问。
+- 最终错误分类收紧后，直连/受限回退边界专项 8 项通过；全量 424 项通过、1 项可选 Edge E2E 跳过；`compileall`、`pip check`、`git diff --check` 通过（Git 仅输出现有换行格式警告）。未下载模型、未访问公网、未提交 Git。
+
+## 2026-10-05 12:28 (Asia/Shanghai) - 多 Agent 编码审批与失败状态收尾
+- 编码专员仅能在现有 focus_paths 内调用一次 `apply_patch`，继续沿用逐块人工审批；拒绝停止，部分批准仅保留获批块、任务停止且不自动提交。实际修改路径进入主 Agent 的工作区刷新、验证追踪与提交前 diff。修复临时失败/文字 diff 被误当作成功结果并缓存的问题；没有真实应用审核补丁时状态为 incomplete。
+- 新增纯文字 diff、范围越界、全拒绝、部分批准、主 Agent 追踪等回归。专项 27 项通过；完整回归 421 项通过、1 项 Edge E2E 按配置跳过；`compileall`、`pip check`、`git diff --check` 通过。
+- 本机 Qwen2.5-Coder-7B 只读委派真实 E2E 通过；编码专员真实 E2E 未通过，模型多次重复搜索输出且未调用 `apply_patch`，隔离文件未变更。程序正确报告 incomplete；因此编码专员实际效果仍需更可靠的工具调用模型验证。未下载模型、未访问外网、未改本项目测试文件以外的用户代码、未提交 Git。
+
+## 2026-10-05 11:51 (Asia/Shanghai) - 多 Agent 核心协作接入与回归
+- 主 Agent 可配置委派架构、测试、安全只读子 Agent；默认关闭，可选模型 ID，最多 3 次/任务、5 轮/子 Agent、8 次只读工具调用。调用/报告存会话与 JSONL 事件，聊天展示进度与结果，并仅复用完整且未变化代码版本的成功报告。
+- 失败注入复现“临时不可用结果被永久复用”；改为只缓存成功报告，补重试回归；另验证同批次含读+写请求时整个批次都不执行。全量 415 项通过、1 项可选 Edge E2E 默认跳过；多 Agent 11 项、设置/UI 3 项、发行暂存 7 项通过。
+- 本机 Qwen2.5-Coder-7B 经 `127.0.0.1` 完成完整 Manager→只读子 Agent→搜索/读取→`target.py` 第 1 行报告，并记录开始/工具/完成事件；临时项目外无源码变化。`compileall`、`pip check`、`git diff --check` 通过；未联网下载、未提交 Git。仍无可写子 Agent/并行调度/自动冲突合并。
+
+## 2026-10-05 11:34 (Asia/Shanghai) - 项目上下文能力复核
+- 对照能力文档确认功能已接通：任务自动注入、本地相关代码/符号检索、目录级 `AGENTS.md`、环境/依赖摘要、Agent 按需查询、未保存缓冲只读快照及桌面异步预览；发行暂存/CI 已包含上下文模块。
+- 上下文专项 32 项、桌面专项 5 项通过；全量 413 项通过、1 项可选 Edge E2E 默认跳过；核心模块编译通过。未发现需改产品代码的问题，因此本轮仅更新文档；未调用 LLM/联网/安装依赖、未提交 Git。检索仍为有界词法排序，不是通用语义搜索。
+
+## 2026-10-05 10:57 (Asia/Shanghai) - 浏览器本地主机名策略补强
+- 安全复核发现单段主机名及 `.lan`/`.internal`/`home.arpa`/`.test` 名称此前可通过 URL 检查；现拒绝这些名称，并增加回归。公网 DNS 解析结果未钉扎，仍明确不视为网络沙箱。
+- 浏览器/审批专项共 14 项均通过：常规模式 13 项通过、E2E 1 项跳过；单独启用门禁后该 Edge E2E 通过。全量 403 项通过（其中同一 E2E 在常规套件跳过）；编译与 `git diff --check` 通过。Edge 进程和临时 profile 均已清理。
+
+## 2026-10-05 10:52 (Asia/Shanghai) - 浏览器 Agent 核心闭环完成
+- 加入独立 `scidev_browser.py`：显式网页任务才开放搜索/打开/点击/截图；使用隔离临时 Edge profile 与 loopback CDP，逐次审批并记录事件；不继承用户登录态，下载默认拒绝，截图限大小/数量并只存本地。
+- 浏览器及审批 UI 专项 14 项通过；本机临时网页 Edge E2E 实测页面读取、点击、截图和下载拒绝；release staging、Essentials-only 发布元数据、编译、`pip check` 与 `git diff --check` 通过。全量 403 项通过、1 项可选 E2E 被常规套件跳过（已单独通过）。
+- `verify_minimal_qt.py` 受现有 `.venv` 中额外安装的 `PySide6-Addons` 阻挡；没有修改环境。未访问公网、未安装依赖、未提交 Git。边界：外部浏览器不是网络沙箱，网页脚本/重定向及已批准点击可能产生远端访问或状态变化。
+
+## 2026-10-05 09:50 (Asia/Shanghai) - 浏览器 Agent 接入边界盘点
+- 能力表确认浏览器 Agent 尚未实现。发布元数据只依赖 `PySide6-Essentials`，CI/打包门禁不允许依赖 `PySide6-Addons`；当前项目虚拟环境没有 Playwright/Selenium/WebSocket 客户端，系统安装有 Edge。
+- 内嵌 WebEngine 与外部 Edge/CDP 会分别改变包体/依赖约束及授权/用户会话边界；暂不安装依赖或启动浏览器，等待确定接入形态。
+## 2026-10-05 09:49 (Asia/Shanghai) - 项目上下文真实仓库检索基准
+- 对本仓库补丁审核、HTTP 重试、项目记忆、任务规划、测试发现、UI 和 Tetris 机制 7 类任务做真实路径回归；每个目标实现均进入 Top-5，Tetris 同时召回引擎与测试。
+- 上下文/桌面专项 37 项、全量 389 项通过；检索排序回归现覆盖合成基准和真实仓库。未调用 LLM、联网、安装依赖或提交 Git。
+- 项目上下文漏召回观察阶段收尾；下一项按能力表处理浏览器 Agent，先遵循本机浏览器/授权/依赖边界。
+## 2026-10-05 09:40 (Asia/Shanghai) - 项目上下文召回补强与完整回归
+- 实仓发现“修复俄罗斯方块旋转与碰撞检测”漏掉引擎/测试；加入离线 Tetris、旋转、碰撞、检测术语映射及回归。默认示例查询现在召回 `tetris_engine.py` 与 `test_tetris_engine.py`，不调用模型/网络。
+- 同轮完成已有源码修改审核收敛：Agent 对任务开始前已存在的文件只允许走用户逐块批准的 `apply_patch`；新建文件可在任务内迭代。更新语义验收/SVG 夹具与提示词契约，确认审核拒绝边界未退化。
+- 项目上下文与桌面专项 36 项、全量 388 项通过；Python 编译与 `git diff --check` 通过。未调用 LLM/联网/安装依赖/提交 Git。检索仍为有界词法排序，不是通用语义搜索。
+## 2026-10-05 08:54 (Asia/Shanghai) - 上下文压缩省流收益实测
+- 本机 `scidev-qwen2.5-coder-7b:q4_k_m`，`max_tokens=12000`，对两份独立合成 10 轮会话实测。压缩前后续请求体均为 21,976 B，压缩后为 2,945/3,097 B；接口 prompt tokens 5,051 降至 642/686；总结调用合计 4,646/4,689 tokens，均约两次后续调用回本。
+- 新增回归，直接经 OpenAI-compatible Provider 比较完整 JSON 请求体，确保压缩后更小；专项测试通过，全量 385 项通过。调用只到 `127.0.0.1`，禁用代理，输入仅为合成对话；响应/请求字节统计不含 HTTP/TLS 头，结果不外推云端模型。未下载、未提交 Git。
+
+## 2026-10-05 08:38 (Asia/Shanghai) - 项目上下文能力复核
+- 确认现有能力包含任务自动注入、本地相关文件/符号检索、目录指令、依赖/环境摘要、Agent 查询工具、未保存编辑器只读快照及桌面异步预览；当前仓库只读 smoke 对 Tetris 任务找到引擎与对应测试。
+- 上下文专项 30 项、桌面上下文专项 5 项、全量 385 项通过；Python 编译和 `git diff --check` 通过。边界仍是有界词法检索，不含向量语义检索；未调用 LLM/联网/安装依赖，未提交 Git。
+
+## 2026-10-05 08:23 (Asia/Shanghai) - 低流量请求身份与服务端退避
+- 编码/总结 request ID 按 session、task、轮次/阶段区分；HTTP `Idempotency-Key` 由逻辑 ID 和精确请求体摘要生成，同一正文的重试复用 key，恢复后正文改变则生成新 key。
+- 429/5xx 的 `Retry-After` 支持秒数和 HTTP 日期，持久队列最多等待 1 小时且不少于指数退避；辅助总结最多原地等待 5 秒，较长时记录并跳过本次重试。修复 HTTPError 流关闭，并让总结失败事件记录真实尝试数。
+- 曾以同一 session 的两个新 task 复现 coding key 相同；修复后不同 task key 不同、同 task/同正文重试仍稳定。新增长退避、日期解析、请求体摘要与资源关闭用例；专题 8 项、全量 385 项、ResourceWarning 严格模式均通过。真实服务幂等语义未验证，未真实联网/调用 LLM/提交 Git。
+
+## 2026-10-05 07:52 (Asia/Shanghai) - 非标准测试入口与 monorepo 发现补强
+- 测试候选按嵌套 manifest/test 文件归属生成 Go `cd`、Cargo `--manifest-path`、Maven `-f`、Gradle `-p`、.NET 项目路径及 Node package manager 命令；支持 Node `test:*`、tox/nox 与 Make/Just 明确测试目标。
+- 发现不执行命令或配置，限制路径/读取预算；未知 packageManager、Shell 元字符路径、未匹配测试证据或超限时不猜命令/标记范围受限。修复 npm 默认 “no test specified” 占位脚本被误识别的回归风险，不输出脚本正文。
+- 新增 9 项正反例；发现器专项 20 项、验证模块 30 项、全量 378 项通过；Python 编译和差异检查通过。当前仓库只读上下文 smoke 给出 `.venv` 下 Tetris 与主 tests 两条 unittest 候选。未执行候选、未调用真实 LLM/联网/安装依赖，未提交 Git。
+
+## 2026-10-05 07:28 (Asia/Shanghai) - 独立语义验收
+- 新增可选隔离复核模型：默认关闭；建议模式只报告，必需模式将结构化判定纳入完成/自动提交门槛。审查输入只含用户任务、Agent 最终说明、受限的安全文本 diff、计划摘要和最近检查摘要，不给 reviewer 工具权限。
+- diff 最多 40 个文件/36,000 字符；要求 1-16 条标准逐项引用变更文件，pass 与 unmet/缺少引用不一致时降级。请求后重新读取 diff，变化则 scope_incomplete；必需模式不通过保留改动，可对 revise 进行一次有限修正。模型调用计入用量，审查报告保存在会话/JSONL，不记录原始审查请求。
+- 修复初测发现的 pass/passed 门槛状态不一致，并覆盖模型同 ID、缺模型、错误响应、工作区并发修改、手动重试与一次修复闭环。专项 15 项、UI 2 项、发布暂存 7 项、全量 369 项、编译及 `git diff --check` 均通过。未调用真实 LLM/联网/安装依赖，未提交 Git。
+
+## 2026-10-05 06:52 (Asia/Shanghai) - 项目上下文端到端复核
+- 当前工作区已有本地有界检索、任务自动注入、分层目录指令、环境/依赖摘要、Agent 按需查询、未保存编辑器只读快照与桌面异步预览；代码及测试已纳入项目构建配置。本轮确认该需求已实现，没有重复改写。
+- 上下文专项 30 项、桌面 UI 专项 5 项、全量 354 项通过；`git diff --check` 通过。未调用 LLM/联网/安装依赖，未提交 Git。
+
+## 2026-10-05 06:36 (Asia/Shanghai) - 静态测试命令发现
+- `TestCommandDiscovery` 基于受限的根清单/源码证据推断 Python pytest/unittest、Node test script、Go、Cargo、Maven/Gradle、.NET 命令；不同 Python unittest 根分别列出，存在普通项目 `.venv` 解释器文件时优先引用。
+- 候选进入 Agent 项目上下文和桌面预览，但不会执行或安装依赖；拒绝路径穿越/链接、限制文件和字节读取；候选不等于命令可运行或验证通过，实际运行依旧逐条批准。未识别测试栈会明确提示，不声称“没有测试”。
+- 首轮全量测试暴露 Agent system prompt 契约断言回归，已恢复完整规则并复测。最终全量 354 项通过；53 项专项、项目 `.venv` 桌面依赖 smoke、Python 编译和 `git diff --check` 通过。未运行候选测试命令、未调用真实 LLM/联网/安装依赖、未提交 Git。
+
+## 2026-10-05 06:04 (Asia/Shanghai) - 项目上下文检索排序补强
+- 中英检索基准发现“重复支付请求”会把通用扣款代码排在幂等实现之前；对已知复合术语提升权重后，11 个中英/标识符场景 Top-1、Top-5 均为 11/11，陌生主题无误命中。本仓库 7 个代表任务的目标实现均出现在 Top-5。
+- 检索仍是有界本地词法匹配与有限术语扩展，不是通用翻译/语义搜索；当前基准未显示必须引入向量模型，先等真实漏召回样例。
+- 全量 342 项、项目虚拟环境依赖/UI smoke、Python 编译与 `git diff --check` 通过；未调用真实 LLM、未联网/安装依赖、未提交 Git。
+
+## 2026-10-05 05:50 (Asia/Shanghai) - 未保存编辑器缓冲接入项目上下文
+- 任务提交与异步上下文预览最多采集 8 个打开的脏文件、合计 1 MB；项目概况、`search_code`、`get_project_context` 和 `read_file` 使用同一缓冲快照，项目清单解析也采用未保存内容。超预算文件从检索中排除，不回退使用磁盘旧版本。
+- 编辑器快照按只读数据处理：任务期间写入、文本替换和补丁工具都不能改这些路径；超预算草稿也禁止读取旧版本。为支持断网/重启续跑，待处理及可重试快照暂存在本机 `.research/runs.db`；任务创建事件不记源码正文，只记录快照路径和字节数，任务成功后清除队列副本，最终失败但仍可手动重试的任务保留快照。会话中的上下文片段和工具输出沿用既有本地记录。
+- 新增上下文、Agent、Qt 客户端及队列快照生命周期回归。专项 34 项、全量 341 项通过；桌面依赖 smoke、编译、`git diff --check` 通过。未连接真实 LLM、未联网或安装依赖、未提交 Git。
+
+## 2026-10-05 05:13 (Asia/Shanghai) - 项目上下文中英混合检索
+- 合成语料复现中文任务无法命中英文代码标识符；新增离线、有限的中英软件术语别名，直接查询词高权、翻译别名低权，优先保留两类词的预算。包含登录/令牌续期、数据库连接池、文件上传超时、配置读取等场景及相似干扰文件。
+- Top-1 回归从中文 0/4、英文 1/1 提升到 5/5；别名预算长查询测试通过。不引入模型、依赖或网络请求。边界：有限词典扩展，不等同于通用翻译或语义检索。
+- 项目上下文专项 22 项、全量 332 项通过；客户端依赖 smoke、Python 编译和 git diff --check 通过。未调用真实 LLM/外网，未提交 Git。
+
+## 2026-10-05 05:00 (Asia/Shanghai) - 项目上下文复核与省流记录闭环
+- 项目上下文复核通过：本地代码/符号检索、目录级 `AGENTS.md`、依赖与环境摘要、任务注入、重试/编辑后刷新及桌面异步预览均有端到端覆盖；保留扫描和输出上限，不做自动依赖安装。
+- 模型请求按会话累计请求体/客户端读取的响应体字节、重试/失败、耗时及接口报告 token，不保存提示词或响应正文；成功的阶段总结用于后续上下文压缩，完整 transcript 留在本地。修复损坏的旧压缩计数容错。
+- 修复发布暂存包漏带 `scidev_usage.py` 导致启动失败，并同步打包清单、CI 编译项和回归测试。
+- 全量 331 项通过；项目上下文专项 21 项、客户端 84 项、发布暂存 7 项通过；依赖 smoke、Python 编译与 `git diff --check` 通过。未调用真实 LLM/外网；响应字节不含 HTTP/TLS 传输开销，检索仍为有界词法排序。
+
+## 2026-10-05 04:28 (Asia/Shanghai) - 精确代码修改：逐块补丁审核
+- 新增 Codex 风格 `apply_patch` 解析与审查闭环：补丁只用项目相对路径，要求上下文唯一匹配；先展示完整 diff，再由用户逐块勾选；拒绝/部分批准、审核不可用或文件过期时停止，不自动提交；多文件先校验后替换，失败尝试回滚。
+- 新增桌面审核卡交互、后台等待/选择/清空会话取消回归；修正提示词约束断言、补丁测试调用计数和临时 Git 仓库未忽略 `.research` 的夹具问题。提示词保留低上下文预算（699 字符）。
+- 全量 322 项通过，依赖/启动 smoke、Python 编译、发布暂存及 `git diff --check` 通过。边界：`write_file` 与 `replace_in_file` 仍可用于对应场景，不是每种文件修改都强制逐块审核；未调用真实 LLM，未提交 Git。
+
+## 2026-10-05 03:51 (Asia/Shanghai) - 项目上下文边界修复
+- 超单文件扫描阈值现在显式标记结果受限；文件数恰好达到上限不再误报截断；发给模型的项目快照不包含本机绝对路径。
+- 全量 312 项、上下文专项 21 项、发布暂存 7 项通过；依赖启动 smoke、Python 编译与 `git diff --check` 通过。实仓检索 `examples/tetris` 返回相关代码，确认快照不含本机绝对路径。修复暂存包漏带当前核心依赖 `scidev_patching.py`，同步更新发布清单/打包配置/CI 编译清单。未调用真实 LLM，未提交 Git。
+
+## 2026-10-05 03:22 (Asia/Shanghai) - 项目环境感知上下文
+- 环境快照进入自动任务上下文、`get_project_context` 与桌面异步预览：区分 Harness 进程 Python 和项目解释器候选，记录 OS/架构/实现/版本、项目内 `.venv`/`venv`/`env` 状态，以及 Python/Node/Rust/Go 约束、根目录依赖清单和锁文件；保存结构化字段供 Agent 使用。
+- 依赖声明标为“仅声明/未核验”，不运行候选解释器、不读 `site-packages`、不安装依赖、不探测 GPU/CUDA；实际检查仍使用逐条审批命令。环境依赖 URL 摘要不包含直接 URL，上下文索引遮盖带账户信息的 HTTP(S) URL；不宣称对任意文件完成秘密扫描。
+- 新增 Python/Node/Rust/Go、环境存在/不完整、凭据 URL、只读快照、客户端预览和会话持久化回归。专项 20 项、全量 304 项通过；依赖/客户端启动 smoke、Python 编译、`git diff --check` 通过。未调用真实 LLM，未提交 Git。
+
+## 2026-10-05 03:05 (Asia/Shanghai) - 执行与验证反馈闭环
+- 新增 `scidev_verification.py`：分类常见测试/lint/类型检查/构建命令，记录状态、退出码、超时、耗时；会话和 JSONL 事件账本保存检查历史，并用有上限的源码指纹及 Git HEAD 标记验证是否对应当前代码。无 Git 基线时通过 `ProjectContext.list_paths` 安全枚举源码，避免跨模块调用私有扫描器。
+- 桌面默认要求代码/配置改动有当前代码的成功检查后才自动提交，最多反馈续作两轮；审批拒绝立即停止，检查失败或范围受限时保留未提交改动。客户端展示逐次检查、过期与阻断状态；文档已记录边界。
+- 新增分类、指纹、无 Git、成功/过期/失败/拒绝、重试门槛、自动提交保护和 UI 回归。专项 31 项、全量 301 项通过；Python 编译与 `git diff --check` 通过。边界：命令类别依赖规则匹配，不自动发现/运行所有测试；退出码不等于语义正确；未调用真实 LLM，未提交 Git。
+
+## 2026-10-05 02:19 (Asia/Shanghai) - 项目上下文目录聚焦补强
+- 修复指定目录未提升后代源码排序的问题；无关键词命中时，聚焦源码仍附少量定义/代码行，避免上下文只剩符号名。
+- 新增目录范围与无关键词回归；上下文专项 16 项、全量 288 项通过。功能仍是有预算的词法检索，不是语义索引。
+
+## 2026-10-05 02:05 (Asia/Shanghai) - 跨会话项目记忆
+- 新增 `scidev_memory.py`：在项目 `.research/memory.sqlite3` 建本地倒排索引，只索引最终总结；按中英文词项与 IDF 排序，回填最多 400 个文件/12 MB，索引最多 1000 条。常见 API/Bearer/GitHub/AWS/Slack/npm/私钥/URL 密码格式先脱敏。
+- 每个新任务最多注入 3 条、6000 字符，聊天栏可配置开关/条数/长度；不调用新模型、不跨项目检索。当前会话隔离，瞬时重试复用已持久化快照；记忆库错误不阻断编码。没有向量检索；未生成最终总结的失败任务暂不入记忆。
+- 修复 SQLite 上下文管理器未实际关闭连接导致 Windows 临时目录被锁；回填增加签名缓存，候选词频限定在最多 300 条，避免重复解析与无界加载。新增 10 项回归，全量 287 项、依赖 smoke、编译和发布暂存检查通过；没有真实 LLM 调用，未提交 Git。
+
+## 2026-10-05 01:45 (Asia/Shanghai) - 项目上下文复核
+- 复核现有端到端实现：按任务检索代码/符号与项目清单，应用路径级 `AGENTS.md`，屏蔽敏感/内部文件，并在任务、重试和写入后刷新；客户端预览异步运行。功能已纳入发布暂存，无需重复实现。
+- 定向 15 项及全量 277 项测试通过；语法编译、差异空白检查通过。未调用真实 LLM；检索仍为词法匹配，缓存只在进程内。
+
+## 2026-10-05 01:36 (Asia/Shanghai) - 结构化任务规划能力
+- 新增 `scidev_planning.py`，用受校验的 `update_plan` 工具跟踪 1–12 个步骤；客户端可选自动/必须/关闭模式并在对话侧栏展示计划。每版计划先写 session JSON，再将完整快照追加到事件账本；队列重试恢复原状态，新任务归档旧计划，最多 20 条。
+- 必须模式首轮仅开放计划工具；连续回答仍未完成时最多反馈续作两次，出现进度后重新计数，耗尽后任务失败、计划保留且不自动提交。模型报告状态不视为独立验收；不包含人工逐步批准或科研实验 DAG。
+- 修复计划说明中文乱码、相同提示但新任务 ID 未重置计划/未归档，以及终态人工重试沿用耗尽预算的问题；首次历史字段缺省现初始化为空列表。
+- 新增计划数据、Agent 闭环、网络重试恢复、相同提示归档和客户端模式/折叠回归；全量 277 项通过。三主题宽屏/780×480离屏截图、发布暂存、PySide/QML 源启动及依赖 smoke 通过。未接真实 LLM，未构建 Windows standalone，未提交 Git。
+
+## 2026-10-05 01:11 (Asia/Shanghai) - 项目上下文能力
+- 新增独立本地检索服务与 `search_code` / `get_project_context`；自动提供相关片段、符号、依赖声明和适用目录指令，任务/重试/编辑后替换当前快照，保存到会话并记录来源。客户端增加 `@` 菜单和底部异步上下文预览，敏感选区不自动附带。
+- 修复 240 KB 门槛排除本项目约 277 KB 客户端源码的实际边界；检索/读取支持最大 2 MB 源文件，返回内容与总扫描量有预算，长行片段围绕命中位置。实测定位到本项目 `ProjectFilterProxy` 的真实文件/行号。
+- 18 项新增回归、全量 266 项、依赖 smoke、编译和差异检查通过；脚本化 provider 完成真实检索→读改→Git 提交及重试恢复验证，未调用真实 LLM。Qt 离屏深浅主题/820px 紧凑截图通过，验证图片已忽略；未提交 Git。
+
+## 2026-10-05 00:48 (Asia/Shanghai) - 编辑器大纲与重命名路径修复
+- 空符号大纲未把提示项加入树；文件/目录重命名未同步导航栈、终端工作目录、工作区搜索结果与当前编辑器上下文。现统一重基路径并刷新活动编辑器状态。
+- 新增回归覆盖空大纲、共享文件重命名、目录重命名及搜索结果路径；全量 248 项通过，`git diff --check` 通过。未提交 Git。
+
+## 2026-10-05 00:41 (Asia/Shanghai) - 常规 Bug 回归巡检
+- 全量 247 项测试通过；`smoke_dependency.py`、启动器运行时检查、`pip check`、QML lint、关键 Python 文件编译通过。
+- 后台宽屏/紧凑布局/版本树截图抽查未见新的可复现 UI Bug；本轮未改产品代码。未构建 Windows standalone。
+
+## 2026-10-05 00:33 (Asia/Shanghai) - Harness 能力状态盘点
+- 更新 `SCIDEV_HARNESS.md`，新增逐项状态表，明确核心已实现、部分实现、未实现/当前范围外及对应缺口；没有新增 Markdown 文件。
+
+## 2026-10-05 00:27 (Asia/Shanghai) - 加入默认俄罗斯方块项目
+- 新增 `examples/tetris`：纯 Python/Tkinter 可运行游戏、控制说明和 7 项规则测试；烟测发现并修复 Tkinter 不支持的 `lineheight` 参数，窗口启动通过。
+- 首次启动默认打开样例；显式或已记忆的其他项目优先，旧版记忆的仓库根目录迁移到样例。发布暂存包含样例源码，打包脚本复制到 exe 旁。
+- 主项目全量 246 项通过；发布暂存/样例复制专项 7 项通过。打包工作流改为无 `--workspace` 启动烟测；本机未实际构建 Windows standalone。
+
+## 2026-10-05 00:14 (Asia/Shanghai) - Git 页面切回后宽泛搜索结果不展开
+- 复现：在开发版本树页面搜索 151 个命中目录，切回工作区后展开队列未恢复，结果目录像空文件夹。现在监听工作区页切换并重启渐进展开流程。
+- 新增页面往返 Qt 回归；搜索专项 12 项、全量 243 项通过。依赖 smoke、启动器运行时检查、`pip check`、QML lint、编译和差异检查通过。
+
+## 2026-10-05 00:04 (Asia/Shanghai) - 顶部搜索单字符结果展开修复
+- 搜索逻辑原先在输入少于 2 个字符时跳过自动展开，导致命中文件藏在折叠目录里，看起来像空文件夹。移除长度门槛，单字符宽泛结果仍沿用可视区域渐进展开；真正空目录继续隐藏。
+- 新增 Qt 交互回归：先确认旧逻辑失败，再验证修复通过。搜索专项 11 项、全量 242 项通过；`compileall` 与 `git diff --check` 通过。
+
+## 2026-10-04 23:19 (Asia/Shanghai) - 同文件分栏编辑问题审查
+- 确认 1 个数据一致性 Bug：同一路径跨左右编辑器组被加载为两个独立缓冲区；先保存一侧后，另一侧保留旧文本，后续保存会静默覆盖前一侧改动。使用临时项目与 Qt 编辑/保存调用复现，仓库文件未修改。
+- Ctrl+W 关闭标签回归通过，不计缺陷。下一轮处理跨分栏共享/同步缓冲区及对应测试；本轮仅审查并统计。
+
+## 2026-10-04 23:07 (Asia/Shanghai) - 顶部宽泛搜索渐进展开
+- 修复命中目录超过 150 个时全部不展开的问题：只展开可视区域匹配分支，并在滚动/布局变化时增量处理；151 目录回归确认文件可见且后续分支可展开。提交 `0ce2858`。
+- 本机全量 235 项及两档 DPI 截图矩阵通过；GitHub Actions #37211644639 在 Python 3.12/3.13/3.14 全绿（测试、依赖 smoke、UI 渲染、QML lint）。
+
+## 2026-10-04 22:43 (Asia/Shanghai) - 宽泛顶部搜索审查
+- 确认 1 个 Bug：`>150` 个目录命中时整批不展开。151 个目录复现为 151 个可见父目录、0 个展开，文件结果不可见；细粒度搜索此前已修复，本边界待处理。
+- 两档 DPI 的三主题标准分辨率 smoke 通过；Studio 另测四档随机邻近尺寸。同一 HEAD 的 GitHub CI 全绿。截图为离屏渲染，无可见原生窗口。
+
+## 2026-10-04 22:32 (Asia/Shanghai) - 顶部搜索目录展开修复
+- 过滤结果现在自动展开匹配文件的父目录，避免搜索后只看到折叠的文件夹；真正空目录仍隐藏，宽泛结果超过 150 个目录时不自动展开。
+- 新增嵌套路径及空目录回归测试；全量 234 项通过，`compileall` 与 `git diff --check` 通过。
+
+## 2026-10-04 22:15 (Asia/Shanghai) - 同屏显示变化信号修复
+- `ClientWindow` 现在监听活动屏幕分辨率及可用区域变化；分辨率变化触发 UI 缩放与普通窗口尺寸重算，可用区域变化重新夹取位置/尺寸。迁移到新屏幕时断开旧屏信号，最大化/全屏保留系统几何。
+- 新增 Qt 信号级回归：同屏 720p↔4K、任务栏/保留区域变化、切屏后旧信号解绑。全量 233 项、100%/125% DPI 标准与随机邻近分辨率截图矩阵、依赖 smoke、QML lint 通过。截图为离屏渲染，未做原生桌面迁屏验收。
+- 代码提交后由 GitHub Actions 复核；本轮未改变模型或实验流程。
+
+## 2026-10-04 22:03 (Asia/Shanghai) - 同屏显示模式变更审查
+- 本轮确认 1 个实质性问题：只连接窗口迁屏信号，未订阅屏幕 `geometryChanged` / `availableGeometryChanged`；同屏修改分辨率、任务栏/保留区域后，窗口不重新缩放或夹取。Qt 文档明确 `QWindow.screenChanged` 仅在窗口屏幕变化时触发。
+- 100%/125% DPI 720p、1080p、2K、4K 和随机邻近分辨率截图矩阵通过；依赖 smoke、全量 230 项通过。原生桌面窗口不可见，未宣称实机 UI 验收。
+- 官方参考：[QWindow::screenChanged](https://doc.qt.io/qt-6.12/qwindow.html#screenChanged)、[QScreen geometry signals](https://doc.qt.io/qt-6/qscreen.html#signals)。下轮加入信号绑定、重连与回归测试。
+
+## 2026-10-04 21:49 (Asia/Shanghai) - 跨显示器窗口尺寸修复
+- 窗口迁移到不同分辨率屏幕时按 UI 缩放比例同步缩放；依据目标屏幕可用区域约束尺寸与位置，支持负坐标副屏，并保留用户手动尺寸比例。最大化/全屏不由应用强制改几何。
+- 回归覆盖 720p→4K→720p、同屏重复回调、负坐标屏幕和最大化状态；全量 230 项、100%/125% DPI 截图矩阵、QML lint、依赖 smoke 均通过。
+- GitHub Actions [#37207073591](https://github.com/ljk00000/SciDevHarness/actions/runs/37207073591) 在 Python 3.12/3.13/3.14 全绿；CUA 无可见原生桌面窗口，迁屏行为以确定性 Qt 屏幕回调模拟测试验证，不宣称实机验收。
+
+## 2026-10-04 21:34 (Asia/Shanghai) - 修复高分辨率版本树内容裁切
+- 最小滚动高度此前没有随分辨率缩放；拖动尝试分支到更低处也未更新高度。现按缩放因子重算主干/分支内容范围，拖动保存位置时同步扩展滚动范围。
+- 全量 227 项通过，100%/125% DPI 的 720p/1080p/2K/4K 与随机邻近尺寸截图矩阵通过；GitHub CI `37205845659` 在 Python 3.12/3.13/3.14 全绿。
+- 代码提交 `2cd3a85` 已推到 SciDevHarness 主仓库；桌面视觉证据为 Qt 离屏截图，未声称通过原生窗口验收。
+
+## 2026-10-04 21:21 (Asia/Shanghai) - 高分辨率 UI 缩放与虚拟屏幕测试修复
+- 720p 基准为 1.0，向 4K 平滑增长并封顶 1.3；Qt 样式、代码字体、2.5D 版本树节点/文字和缩放定位统一随逻辑屏幕尺寸调整。
+- 离屏截图保持稳定测试画布，不再误用 Qt 合成的 800×600 屏幕尺寸；新测覆盖缩放边界、样式尺寸与高 DPI 缩放锚点。
+- 全量 227 项、100%/125% DPI 截图矩阵及 4 档标准+邻近随机分辨率通过；QML lint、launcher、依赖 smoke、pip check、compileall、diff check 通过。最小 Qt runtime 门禁被既存 PySide6-Addons 环境冲突拦截，未改动环境。
+
+## 2026-10-04 20:51 (Asia/Shanghai) - 修复顶部搜索目录过滤
+- 顶部快速搜索只显示匹配文件及其祖先路径，隐藏空目录和不含匹配文件的目录；增量输入复用文件名索引，并在资源树变化、刷新时失效重建。
+- 覆盖空匹配目录、无关目录、嵌套文件、索引刷新和清空查询；搜索专项 8 项、全量 223 项均通过。
+- 分栏交互回归中的换行输入改成独立 Return 键事件，避免 Qt 测试进程异常退出。
+- 桌面 UI 离屏截图 smoke 的 720p、1080p、2K、4K 和紧凑布局矩阵通过；这不是原生桌面进程验证。
+- 代码提交 `b58a576`、文档提交 `a8246d1` 已通过 HTTPS 直连推到主仓库；GitHub Windows CI `37203806406` 在 Python 3.12/3.13/3.14 全绿。
+
+## 2026-10-04 20:34 (Asia/Shanghai) - 搜索过滤文件系统异常兜底
+- symlink/junction 元数据不可读或路径刷新竞态时，快速打开和工作区遍历会安全跳过条目，不再把 `OSError` 抛进 Qt 过滤回调；junction 检查改为可选 API。
+- 新增模拟权限错误键入和无 junction API 回归；搜索用例 7 项通过。
+
+## 2026-10-04 20:14 (Asia/Shanghai) - 标准分辨率与高 DPI 截图回归
+- 编辑器三主题和版本树新增 1280×720、1920×1080、2560×1440、3840×2160 实像素截图；100% 与 125% 缩放均通过。
+- 新增状态栏越界/重叠断言；2K/4K 使用更密的非空画面采样；本机两轮完整截图 smoke 全绿。
+
+## 2026-10-04 20:00 (Asia/Shanghai) - 增补 IDE 核心黑盒回归
+- 资源树双击实际 Qt 鼠标事件验证为固定打开文件；F12 定义跳转后 Alt+←/→ 可恢复调用点和目标文件。
+- 四类搜索输入经键盘事件覆盖，检查 QCompleter 结果与工作区搜索结果，并捕获 Qt 槽异常；219 项全量测试、60 张 UI 截图 smoke、运行时与依赖 smoke 通过。
+
+## 2026-10-04 19:42 (Asia/Shanghai) - junction 回归测试兼容 Windows 短路径
+- 远端 CI 确认 3.12/3.13/3.14 均只因测试把短路径别名与长路径直接 `relative_to` 而失败；规范化两侧路径后本机用例通过。
+
+## 2026-10-04 19:38 (Asia/Shanghai) - 搜索、工作区和符号导航回归修复
+- 项目扫描现在跳过 symlink/junction；选择已有窗口会同步更新启动恢复目录；Shift+F12 自动打开搜索结果并按 Python 大小写匹配。
+- F2 使用 Python tokenizer 只改标识符 token，保留注释/字符串，拒绝关键字和无法安全分词的文件；支持 Unicode 名称及 f-string 表达式。
+- 补多窗口、junction、引用搜索、改名、版本树点击回归；全量 216 项、60 张 UI 截图及 launcher/dependency smoke 通过。
+
+## 2026-10-04 19:16 (Asia/Shanghai) - 搜索兼容修复跨版本 CI 通过
+- 提交 `6b636ea` 的 GitHub Actions `37198044756` 在 Python 3.12/3.13/3.14 全绿；包含完整测试、依赖 smoke、IDE/版本树截图和 QML lint。
+
+## 2026-10-04 19:13 (Asia/Shanghai) - 搜索输入兼容性回归修复
+- Quick Open 逐键触发过滤变更；新增兼容旧 Qt 过滤 API 的 `invalidateRowsFilter` 回退，避免新 API 不存在时键入即报错；本机 Qt 6.11.2 键盘测试正常，模拟旧 API 测试通过。
+- 全量测试 210 项通过。当前环境未复现用户所见错误，版本/错误原文待进一步对照。
+
+## 2026-10-04 19:07 (Asia/Shanghai) - 总结设置窄屏截断修复
+- 发现总结设置仍按四列排版：1120 窗宽的对话栏仅 305px，820 窗宽仅 232px，导致状态、数值和标签挤压。现按对话栏宽度响应式切换两列纵向表单，窄屏缩短状态/勾选文案并隐藏说明提示。
+- 新增宽屏/中屏/紧凑屏总结面板截图与控件几何回归；逐张检查 1500×920、1120×700、820×600 截图，控件不再互相挤压。
+- 全量 209 项、127 子测试、依赖 smoke、启动器预检、`pip check`、QML lint、Python 编译和完整离屏 UI 截图矩阵通过。
+- 当前没有可操作的原生桌面窗口，本轮 UI 验证为真实 Qt 离屏渲染与事件测试，未声称完成桌面实机验收。
+
+## 2026-10-04 18:50 (Asia/Shanghai) - 忙碌输入保留与终端中文乱码修复
+- 忙碌任务期间按 Ctrl+Enter 不再丢失输入；真实 Qt 按键回归先失败、修复后通过。
+- 用真实 QProcess 将 UTF-8 中文字符拆成多段写入，复现旧解码器乱码；按 stdout/stderr 增量解码后恢复正确文本，并保留 GBK 分块回退测试。
+- 全量 208 项、127 子测试、客户端依赖 smoke、启动器预检、`pip check` 与 QML lint 通过。GitHub CI 对前一批总结幂等键提交已全绿；本批提交后待 CI。
+- 离屏响应式截图通过；当前没有可用原生桌面窗口，未声称实机截图验收。
+
+## 2026-10-04 18:35 (Asia/Shanghai) - 周期/最终总结幂等键冲突修复
+- `_summarize_session` 按 session、phase、turn 生成请求键：单次总结的网络重试继续复用键，不同阶段总结不再被服务端幂等缓存混淆。
+- 回归测试先在旧逻辑下失败，再通过；完整 205 项测试、依赖 smoke、启动器预检、依赖一致性和 QML lint 通过。
+- 780×480 至 1920×1080 离屏布局/主题/版本树拖拽恢复截图矩阵通过；本轮无可见原生桌面，未声称实机截图验收。
+
+## 2026-10-04 18:23 (Asia/Shanghai) - 搜索与 junction 修复 CI 通过
+- GitHub Actions [#37195090931](https://github.com/ljk00000/SciDevHarness/actions/runs/37195090931) 对提交 `bdbe774` 在 Python 3.12/3.13/3.14 全部成功；最小 Qt 运行时门禁、全量测试、依赖 smoke、常规/125% DPI 截图与 QML lint 均通过。
+- 干净 CI 环境证明本机最小 Qt 门禁失败仅由已有虚拟环境额外安装的 Addons 导致，不是项目依赖或本次修改回归。
+
+## 2026-10-04 18:20 (Asia/Shanghai) - 搜索告警与 junction 删除风险
+- 每次键入触发的 `QSortFilterProxyModel.invalidateFilter()` 在 PySide6 6.11.2 发出弃用警告；改为 `beginFilterChange/endFilterChange(Rows)`，真实键盘输入测试确认过滤正确且无该警告。
+- Windows 项目内 junction 原先显示为普通目录，删除入口会 `resolve()` 后误指向真实目标；现资源树隐藏链接，删除入口在解析前拒绝链接。新增回归复现并通过。
+- 工作区搜索测试改用真实键盘输入，并拦截 `Path.open` 验证超大文件确实不读取；补实际 QProcess 终端 stdout/stderr、带空格参数和非零退出码回归。全量 205/205，启动器/依赖 smoke、布局/主题/拖拽截图矩阵通过。
+- 本机最小 Qt 环境门禁因现有虚拟环境装有额外 `PySide6-Addons` 而失败；`pip check` 正常，未改动依赖。推送后由干净 CI 复核。
+
+## 2026-10-04 18:02 (Asia/Shanghai) - 本地与远端验证通过
+- GitHub Actions [#37193907703](https://github.com/ljk00000/SciDevHarness/actions/runs/37193907703) 的 Python 3.12/3.13/3.14 全绿；完整测试、依赖 smoke、普通/125% DPI UI 截图和 QML lint 均通过。
+- 本机全量 202/202；提交 `0f857ca` 修复行列-only Quick Open，短/长路径断言修正后远端复验通过。`master` 已推至 `8e9f1ec`，`release/v5` 未改。
+
+## 2026-10-04 17:53 (Asia/Shanghai) - Quick Open 与 Windows CI 路径回归
+- 修复 `:3:2` 等仅行列跳转把空查询匹配到无关文件的问题；没有活动文件时保留输入并显示提示；新增两项 Qt 事件测试。
+- 本机全量测试 202/202 通过。CI 失败根因为 `RUNNER~1` 与 `runneradmin` 路径别名的字面比较，测试改用 `.resolve()` 规范路径，待新 CI 验证。
+
+## 2026-10-04 17:47 (Asia/Shanghai) - 内部目录大小写过滤修复
+- 实际复现根目录下 `.RESEARCH/private.txt` 被 `_project_files()` 收录，全文搜索可触达科研内部状态；资源树过滤和删除保护也使用了大小写敏感判断。
+- 新增大小写变体回归，验证目录在资源树隐藏、全文搜索无结果、删除不会弹确认或改动文件；统一内部路径组件 casefold，并阻止任意层级删除。
+- 全量 200/200、完整离屏截图矩阵、版本树拖拽偏移持久化、compileall、QML lint 和差异检查通过；远端 CI 待新提交验证。
+
+## 2026-10-04 17:39 (Asia/Shanghai) - 查找/替换 UI 键盘回归
+- 新增实际 Qt 按键与控件交互回归：Ctrl+F 打开查找，Ctrl+H 从搜索输入框切换替换且不删查询文本，Ctrl+Shift+F 切到工作区搜索并正确聚焦。
+- 验证大小写不敏感的整词前进导航、当前匹配替换与全部替换；新增测试 2 项，全量套件 199/199 通过。
+- 完整离屏截图矩阵含窄窗、三主题、版本树拖拽持久化及未保存关闭对话框，smoke 通过。CUA 返回 `apps=[]`，不声称原生桌面验收。
+
+## 2026-10-04 17:26 (Asia/Shanghai) - 远端三版本 CI 全绿
+- [Windows CI #37191976618](https://github.com/ljk00000/SciDevHarness/actions/runs/37191976618) 在代码提交 `127020e` 上 Python 3.12/3.13/3.14 全部成功；依赖安装/运行 smoke、Python compile、两种 DPI 截图、QML lint 均通过。
+- Git 面板新增 UI 级暂存/取消暂存/全暂存/提交回归；完整本地套件 197/197。提交过程中发现并修正 Windows 长/短路径断言，最终远端复核通过。
+- 截图为 CI/本机离屏渲染证据；当前 CUA 未暴露原生窗口，故没有把离屏图冒充实机交互验收。
+
+## 2026-10-04 17:22 (Asia/Shanghai) - Git 面板端到端与搜索路径断言
+- 新增 Git UI 工作流回归：初始化仓库、选择变更并暂存/取消暂存、暂存全部、从面板提交，最终确认 HEAD 和干净状态。
+- GitHub Actions 上一轮三版本唯一失败为搜索测试把 Windows `runneradmin` 与 `RUNNER~1` 路径字符串直接比较；改为 resolve 后比较，本机定向 2/2 通过。
+- 全量 197/197、本机临时仓库 Git 面板操作、compileall/QML lint/diff 检查与离屏 UI smoke 通过；修正后远端 CI 待重跑。
+
+## 2026-10-04 17:16 (Asia/Shanghai) - 固定标签与项目搜索保护
+- 修复单击已固定文件会误占预览槽、后续预览替换固定标签的问题；未保存预览仍保留为独立脏标签。
+- 项目全文搜索改为先检查文件长度，再最多读取 `MAX_READ_BYTES + 1`；新增超大文件不读取及结果双击定位回归。
+- Windows CI 上一轮仅剩路径测试用短/长别名直接比较；断言已改为比较规范路径。本机全量 196/196、离屏布局 smoke、compileall、QML lint、diff 检查通过，最新提交待远端复核。
+
+## 2026-10-04 17:06 (Asia/Shanghai) - Windows CI 路径回归修复
+- GitHub Actions 的 3.12/3.13/3.14 均暴露同一组失败：重命名遇到 `RUNNER~1` 短路径别名时无法相对项目根计算路径；diff 测试把同一路径的短/长写法误作不同路径。
+- 重命名前先规范化旧路径；diff 断言比较 resolve 后路径，并新增 Windows 短路径重命名回归。
+- 本机全量 194/194、短路径定向测试、compileall、QML lint、`git diff --check` 与离屏 UI smoke 通过；修复等待远端 CI 复核。
+
+## 2026-10-04 16:55（Asia/Shanghai）· 编辑器/资源树/Git diff 边界修复
+
+- 编辑器保存现按打开文件的首个原始换行符保留 CRLF / LF / CR；Agent 更新干净缓冲区时同步 EOL 元数据。资源管理器可在“新建文件/文件夹”间切换，并拒绝任意层级的 `.git`、`.research` 等内部路径。
+- Git diff 以规范化完整路径复用标签，标签显示相对路径；不同目录同名文件不再互相覆盖。旧主题图标测试固定从 Studio 起测，避免依赖用户已保存的主题。
+- 新增 6 项编辑器/资源/Git 回归；全量 193/193、全分辨率 UI 截图 smoke、compileall、QML lint、diff 检查通过。原生 UI 不可枚举，本轮未声称实机验证。
+
+## 2026-10-04 16:25（Asia/Shanghai）· 错误提示改为非阻塞通知
+
+- 工作区错误提示改为单条可关闭 toast，9 秒自动收起；新提示原位更新，随窗口重排并锚定编辑区，不再打断输入。Studio / Paper / Focus 均有适配样式；命令授权、删除与未保存退出仍保留确认。
+- 截图回归覆盖三主题 1500×920 与 Paper 820×600，目检通过；全量测试 187/187、`compileall`、QML lint、`git diff --check` 通过。截图为离屏证据，未声称桌面实机验收。
+
+## 2026-10-04 16:05（Asia/Shanghai）· 主题化键盘焦点提示
+
+- 补齐按钮、活动栏、标签页与资源树的可见键盘焦点环，颜色跟随 Studio / Paper / Focus 强调色，透明按钮不再只依赖系统默认焦点绘制。
+- 新增主题焦点状态像素检查；三主题 100%/150% 截图 smoke、全量单测 186/186、QML lint、compileall 通过。CUA 未暴露原生窗口，未声称桌面实机验收。
+
+## 2026-10-04 15:53（Asia/Shanghai）· 活动栏矢量图标与主题状态
+
+- 资源、搜索、版本树导航改为 2× 高 DPI 线性图标，统一普通/悬停/选中态，并按 Studio / Paper / Focus 着色；不再依赖字体字形，保留辅助技术标签。
+- 新模块纳入桌面工程清单与发布暂存。185 项单测、三主题 100%/150% 截图 smoke、QML lint 通过；未取得原生桌面窗口，未声称实机验收。
+
+## 2026-10-04 15:37（Asia/Shanghai）· 窄窗资源栏响应式优化
+
+- 900px 以下默认收起资源树但保留活动栏，编辑区在 899px 截图从三栏挤压提升到约 587–599px；780px 最小窗编辑区保持 480px。资源管理器按钮可手动切换且跨窗口宽度保持用户选择，并同步无障碍名称。
+- 补充断点/切换回归测试；截图色彩检查改为比对色相，避免 Qt 合成/抗锯齿造成同一红色节点的逐通道误报。
+- 完整单测 184/184；Studio / Paper / Focus 在 100% 与 150% 的离屏响应式及版本树交互 smoke、`compileall`、QML lint、`git diff --check` 全通过。原生桌面窗口未暴露，未声称实机验收。
+
+## 2026-10-04 15:20（Asia/Shanghai）· 修复无效字体首选与编辑器比例字体回退
+
+- 本机 Qt 字体清单确认旧应用级首选 `Microsoft YaHei UI`、`Cascadia Code` 不存在（应用默认请求会落到 Arial；样式控件本来解析为 Segoe UI）。代码编辑区被通用 QSS 覆盖，实际也是 Segoe UI 比例字体。
+- 统一采用可用的 Segoe UI/CJK 回退；代码、终端及工具输出明确走 Consolas/Courier New 等宽回退，编辑器固定 12pt；版本树节点小字略微放大。新增测试检查解析后的编辑器字体确为等宽。
+- 全量 `unittest` 183/183、截图响应矩阵 100%/150%、QML lint 通过。原生窗口仍未向 CUA 暴露，未把离屏结果记作桌面实机验收。
+
+## 2026-10-04 15:00（Asia/Shanghai）· 扩大响应式屏幕矩阵并修正 Focus 侧栏权重
+
+- Focus 保留更多项目导航宽度、收窄对话栏，将释放的空间交给中央编辑区；1500px 下资源栏 327px、编辑区 865px、对话栏 298px。
+- 三套方案新增 1920×1080、1366×768、1280×720、1024×768 以及 1120/1119 紧凑断点截图回归；在 100% 和 150% 缩放下所有布局/标题栏/输入区域检查通过，版本树交互 smoke 通过。
+- 全量 `unittest` 183/183 通过；后续继续按用户对三套方案的实机评判精修。CUA 当前没有原生窗口可供实机验收。
+
+## 2026-10-04 14:40（Asia/Shanghai）· 多方案 UI、响应式与发布暂存回归
+
+- 增加 Studio / Paper / Focus 三套可切换工作台外观，选择写入本机设置并同步现有窗口；Focus 为编辑器分配更多宽度。浅色/专注方案同步更新语法高亮、行号、选中行、Git 与开发版本树绘制。
+- 顶栏主题菜单截图可见三项并显示当前选择；支持 `> appearance` 命令。README、PySide 项目文件清单、发布暂存脚本和暂存测试均包含新 UI 模块。
+- 全量 `unittest` 183/183，包含发布暂存后客户端启动和 QML Ready；`compileall`、QML lint、`git diff --check` 通过。离屏 UI 截图在 100%/125% DPI 与 1500×920、940×620、780×480 验证三套主题，检查无控件重叠/裁切，树拖拽/缩放/窄高滚动原有 smoke 继续通过。
+- CUA 本轮 `apps=[]` 且无原生窗口 API，因此仅记录离屏证据。下一步推送单一公开 `master` 并检查 CI/可执行打包；方案待用户实机评判后继续迭代。
+
+## 2026-10-02 18:38（Asia/Shanghai）· 单原句工具反馈与两档 DPI 回归
+
+- 严格 smoke 在保持唯一原始 user 消息的前提下，可继续使用 SVG 结构预检、工具 schema 拒绝等已有对话/工具反馈；普通模式仍保留原有用户级补救路径。回归验证恢复了 `read_file` 阶段限制、拒绝未授权整图重写，且不会把额外 user 消息发给模型。
+- Qwen2.5-Coder-7B 实测 3 次本机请求，每次 user 消息数为 1；Harness 完成 `write_file`、提交前 `git_diff` 和临时任务提交，但固定任务未通过最终 SVG 语义验收：viewBox 100×100，缺 17 个 pelican/bicycle 关键部件。未提交到项目仓库；预览/诊断在 `%LOCALAPPDATA%\Temp\scidev-pelican-svg-uithfr92`。
+- Qwen3.5-4B 基线图可辨认鸟与自行车但未过结构预检；另一轮首响应 240 秒超时。两轮均未下载权重或更改服务设置。
+- 全量 `unittest` 181/181、`compileall`、`git diff --check` 通过。编辑器和版本树离屏截图 smoke 在 100% 与 125% DPI 下覆盖 1500×920、1180×760、940×620、820×600、780×480，并验证拖动/滚动/缩放/恢复。CUA 两次均无可见 app 列表，因此仅记离屏结果。
+- 核心改动提交 `53378c8dbd4bbf808a407d455204ee0c623e739c` 已推送到唯一公开 `master`；Windows CI [36996307234](https://github.com/ljk00000/SciDevHarness/actions/runs/36996307234) 的 Python 3.12/3.13/3.14 全通过。
+
+## 2026-10-02 17:35（Asia/Shanghai）· 任务级提示与真实单提示评测
+
+- 将纯 SVG 指导从通用系统提示拆分为按任务注入；通用提示从 884 缩至 666 字符，并为 SVG 任务补充“调用前按原句自检对象/关系”的通用要求。续接会话按新任务更新 system 指令，测试覆盖通用/SVG 分流与任务切换。
+- 新增可选 `single_user_prompt_only` 模式，Harness 遇到格式错误、缺文件、结构预检失败等需要追加用户消息的情况时，在下一次模型请求前停止；原有客户端默认恢复行为不变。pelican smoke 启用该模式，并在 HTTP 边界断言每个请求仅含一个 user 消息、主任务内容以原句结束；每次只评测一条任务，不下载模型。
+- Qwen2.5-Coder-7B 真实运行（max tokens 12,000）仍失败：一次请求，user 消息数 1，产物 viewBox 仅 100×100；渲染为抽象蓝椭圆/黄三角，无自行车，严格预检缺 17 个语义部件。失败在结构预检后即时停止，没有人工/模型重写提示、额外补救调用或 Git commit；未验证 SVG 与 PNG 预览保存在 `%LOCALAPPDATA%\Temp\scidev-pelican-svg-bjcaxu7z`。
+- 全量 `unittest` 180/180、`compileall`、`git diff --check` 通过。初次开启严格模式时发现结构反馈会额外触发模型请求，现已改为工具结果后立即停止；本次最新运行流量降为单次请求，完整 user 消息数证据在诊断 JSON。
+- 代码提交 `3341966a09d9334ef12cbd98e07fb1f834ae8189` 已推送且远端 SHA 匹配；Windows CI [36991274617](https://github.com/ljk00000/SciDevHarness/actions/runs/36991274617) 的 Python 3.12/3.13/3.14 全通过。
+
+## 2026-10-02 16:56（Asia/Shanghai）· 推理模型参数与高 context 对照
+
+- 增加 opt-in `SCIDEV_REASONING_EFFORT` 并透传到支持此字段的 OpenAI-compatible 模型；默认不发送。Qwen3.5-4B 的 `none` 模式返回了有效工具调用和可辨认的 pelican/bicycle 插画，但 5 次本机调用约 255 秒，严格预检仍失败；Qwen2.5-Coder-7B 在 32K context 下也未通过。更大 context 不是内容质量的充分修复。
+- 临时 Ollama 服务仅监听 `127.0.0.1:11435`，退出时已停止；未改常驻模型/服务配置、未下载模型。Ollama `/v1` 不提供逐请求 context 设置，需在服务或模型层处理。
+- 全量 `unittest` 176/176、`compileall`、差异检查通过。提交 `b11974f` 已推送；[Windows CI #23 三版本全部通过](https://github.com/ljk00000/SciDevHarness/actions/runs/36986631048)。原生窗口仍无法由 CUA 枚举，响应式 UI 只完成离屏验证。
+
+## 2026-10-02 16:30（Asia/Shanghai）· 单提示词执行与盲审能力
+
+- 移除 Pelican smoke 在失败后把评测缺陷改写成新提示词/另开会话的路径；每次基准只送固定原句。可选视觉盲审仅收安全栅格图，不收任务、文件名或源码；默认关闭，且不代表任务通过。盲审限长/去重，极端响应仍保持有效 JSON。
+- 全量 `unittest` 175/175、`compileall`、`git diff --check` 与离屏 UI smoke 通过（1500×920 至 780×480，含版本树拖拽/平移/缩放）。
+- 本机 Qwen2.5-Coder-7B 固定单提示词实测失败：9 次本机 HTTP 调用（含 2 次盲审），仅生成圆形/黑条/点，未形成目标图形，并发生不完整工具调用。证据在 `%LOCALAPPDATA%\Temp\SciDevHarness-pelican-blind-review-2-20261002`；未下载模型，未向 Agent 发送评测器缺陷提示。
+- 提交 `b6aefc2` 已推送到唯一公开 `master`，远端 SHA 一致；[Windows CI #22 三任务通过](https://github.com/ljk00000/SciDevHarness/actions/runs/36984109087)。CUA 未列出原生窗口，仅完成离屏 UI 检查，不声称原生截图验收。
+
+## 2026-10-02 15:04（Asia/Shanghai）· 推送及多版本 Windows CI
+
+- 路径推断、可配置温度与测试/文档提交 `bd35043` 已推送至 SciDevHarness 唯一公开主仓库；保留 `release/v5`，未更改其他私有仓库。
+- GitHub Windows CI [三版本全部通过](https://github.com/ljk00000/SciDevHarness/actions/runs/36976220009)：Python 3.12/3.13/3.14 测试、依赖 smoke、响应式截图及 QML lint。
+
+## 2026-10-02 14:57（Asia/Shanghai）· 有界路径推断与模型采样对比
+
+- 发现本机模型在唯一 SVG 修复阶段反复漏传必填 `path`。现在只有 Harness 记录到“最近唯一读取目标”时才把 path 变为单值 enum 并允许省略；执行前注入该原始路径并记审计事件，多文件仍强制明确选目标。新增集成回归覆盖补全与歧义时保持必填。
+- Provider 新增 0–2 的 `SCIDEV_TEMPERATURE`；通用默认 0.2，本机 Qwen 启动默认 0 且尊重显式覆盖。温度 0 与 0.2 固定原句烟测各一轮：0.0 成功走完 3 轮修复/11 次请求；0.2 在 8 次初始阶段请求后因预检无进展停止。两次图像都未过视觉验收，温度结论仅作当前模型的单轮观察，不泛化。
+- 全量 `unittest` 166/166、`compileall`、`git diff --check` 通过；响应式离屏截图/交互 smoke 通过。CUA 当前未暴露桌面窗口，本轮不声称原生实机截图验收。未下载权重。
+
+## 2026-10-02 14:13（Asia/Shanghai）· 工具调用诊断与有限修复闭环
+
+- 文本工具解析失败现在记录不含参数内容的字段路径/原因，便于模型按反馈修正；SVG 预检后只开放当前阶段允许的工具，读后重复空转有界停止，整图文本恢复不会绕过局部编辑限制。
+- `unittest` 165/165、`compileall`、`git diff --check` 通过。固定提示 `Generate an SVG of a pelican riding a bicycle` 用本机 Qwen2.5-Coder-7B、最多 10 回合/3 轮修复后仍未通过视觉语义校验；失败预览/诊断保存在 `%LOCALAPPDATA%\Temp\SciDevHarness-pelican-turn-budget-20261002`，没有重复下载模型。
+- 本地模型仍不足以稳定产出合格图形；当前 Harness 会保留失败证据并拒绝把结构预检冒充视觉成功。独立许可证审计仍为 `manual-review-required`。
+- 提交 `13927a1` 已推送至 `master`；[Windows CI](https://github.com/ljk00000/SciDevHarness/actions/runs/36972322392) 在 Python 3.12/3.13/3.14 全通过（测试、依赖、常规/125% DPI 布局及 QML lint）。
+
+## 2026-10-02 13:08（Asia/Shanghai）· 工具安全与响应式细节打磨
+
+- 文本工具调用现在递归校验嵌套参数 schema；定向 SVG 修复若读文件但未编辑，只允许一次补救，仍无改动就失败且不自动提交。回归测试覆盖有效编辑与无改动失败。
+- Qt 离屏交互 smoke 覆盖 1500×920 至 780×480；窄屏版本树自动紧凑适配，最小宽度缩放约 97%，节点卡片仍可读，拖拽/平移/缩放/持久化通过。
+- 全量 `unittest` 162/162 通过。固定提示 `Generate an SVG of a pelican riding a bicycle` 用本机 Qwen2.5-Coder-7B 复测仍失败：模型生成的图形结构差，修复时复述工具响应而没有编辑；Harness 保留文件、明确失败、不提交。未下载模型。
+- 本地 smoke 诊断新增安全的工具名/拒绝原因字段，不保存工具参数或凭据。Windows CI [三版本全部通过](https://github.com/ljk00000/SciDevHarness/actions/runs/36967814078)，含 125% DPI 截图与 QML lint。独立打包许可证状态仍需人工复核。
+
+## 2026-10-02 12:39（Asia/Shanghai）· v5 并入唯一公开主仓库
+
+- `SciDevHarness` 主仓库 `master` 快进至 `40ca5e6bdddb77133513c6863035fc0dad424fc5`，保留 `release/v5`（`3ba6861e5bd542866e1d37fd47816e95880daa95`）。v5 全历史保留。
+- 将 `SciDevHarness-Research-IDE[-v2/-v3/-v4/-v5]`、`SciDevHarness-{Client,Public,Open,IDE,Desktop}` 共 10 个重复仓库设为私有，未删除仓库/分支；该项目系列现在仅主仓库公开。主线与 v5 分支 [Windows CI 均通过](https://github.com/ljk00000/SciDevHarness/actions/runs/36965218558)（[v5 CI](https://github.com/ljk00000/SciDevHarness/actions/runs/36965167675)）。
+- 工具文本解析现在把不完整/不匹配 schema 的已声明调用安全拒绝并有限重试；不会执行或把无效 JSON 当作完成。全量 `unittest` 160/160 通过；独立打包许可审计仍标记 `manual-review-required`。
+- 固定提示 `Generate an SVG of a pelican riding a bicycle` 的 Qwen2.5-Coder-7B 本地 smoke 用 14 次请求、3 轮修复后仍未过视觉检查（实心轮、车架/后轮未连接、身体/头部标识和腿/嘴袋关系不合格）。已保存预览与诊断；没有把模型限制误记为 Harness 成功。
+- Qt 离屏 UI 烟测覆盖 1500×920 至 780×480、文件编辑、版本树拖拽/平移/缩放和持久化；检查现有截图布局通过。原生桌面窗口不可枚举，本次不宣称实机截图验收。
+
+## 2026-10-02 11:34（Asia/Shanghai）· 新建并公开 v5 仓库
+
+- 创建公开仓库 [ljk00000/SciDevHarness-Research-IDE-v5](https://github.com/ljk00000/SciDevHarness-Research-IDE-v5)。核心源码提交 `a7370793d899ecbf4e4fadeeaaa88f751e6979ae` 已推送；`main` 远端 SHA 与本地源码提交一致，仓库可见性为 `PUBLIC`。
+- 修复 Qwen 本地模型复制 `read_file` 行号后输出 `<tool_response>` 的工具调用解析；编辑失败时明确提示去除显示行号。相同 SVG 结构问题与文件连续不变时提前停止，避免空转。全量 `unittest` 158/158 通过。
+- 固定提示 `Generate an SVG of a pelican riding a bicycle` 的最新 7B 实测仍未通过视觉评估：缺两条腿，另有 7 项几何/接触关系问题；没有将其记作成功。
+- 发布使用已跟踪项目文件；`.venv`、`.research` 数据库/会话及本地模型权重未上传。当前工作区常见凭据格式扫描无命中，gitleaks 未安装，未声称完成完整历史密钥审计。GitHub API 直连超时后才经代理串行完成建仓与查询；源码推送使用 SSH 直连。
+
+## 2026-10-02 10:41（Asia/Shanghai）· 新建并公开 v4 仓库
+
+- 公开仓库 [ljk00000/SciDevHarness-Research-IDE-v4](https://github.com/ljk00000/SciDevHarness-Research-IDE-v4) 已创建。源码提交 `ef4246ad440146f4f8dd9d39e5d5a8a2a297f77a` 的本地与 `main` SHA 一致；可见性为 `PUBLIC`。此前 v3 未覆盖。
+- 修复 SVG 结构预检后的稳定工具调度，并要求读取目标后再局部编辑；全量 `unittest` 156/156 通过。离屏 Qt 截图烟测 1500×920 至 780×480 通过，含版本树拖动/平移/滚动/缩放。
+- 发布只包含已跟踪源码和文档；`.venv`、`.research` 与本地权重未上传。常见凭据格式扫描未命中；未安装 gitleaks，不代表完整历史审计。GitHub Windows CI 对源码提交仍在运行。
+- GitHub HTTPS 直连超时后，按规则逐个、串行使用已配置代理完成建仓/核验；代码推送走 SSH 直连并设置 10 秒连接超时。
+
+## 2026-10-02 09:32（Asia/Shanghai）· 新建公开仓库并上传当前版本
+
+- 创建公开仓库 [ljk00000/SciDevHarness-Research-IDE-v3](https://github.com/ljk00000/SciDevHarness-Research-IDE-v3)，默认分支 `main`。提交 `78d2c5e8f2f9ddeba2a4f61600f0d68b4bea05bf` 的本地与远端 SHA 一致；没有覆盖已有仓库。
+- 上传 SVG 结构校验、修复预算、提示和对应回归测试。全量 `unittest` 151/151 通过；`git diff --cached --check` 通过。
+- 发布前工作区凭据格式扫描仅发现 README 的 `your-key` 占位示例；未安装 gitleaks，未声称完成完整历史扫描。独立打包二进制仍需单独审查第三方许可证；本次仅发布源码。
+
+## 2026-10-02 09:22（Asia/Shanghai）· SVG 语义/骑行结构与修复预算
+
+- SVG 几何校验现在覆盖躯干与车座接触、车架座管节点、踏板组包含两个不同圆，以及两条腿分别连接身体和不同踏板；检查也会在其他部件缺失时执行。修正测试插画为双踏板、双腿到不同踏板，新增对应回归。
+- 通用系统提示（884 字符）及无文件后的单次恢复提示要求主体和每个关键部件分别对应可见几何元素及唯一 `id`，不能只给共享分组命名；未引入 pelican/bicycle 专项规则。
+- 全量 `unittest` 151/151、`py_compile`、`git diff --check` 通过。Qwen3.5 4B、`max_tokens=12000`，原句四次首轮都未通过：两次 16K context、两次默认 4K；第五次最多一轮结构修复仍失败。该会话在修复阶段发出 17 个请求；全程 20 请求响应 903,941 bytes、耗时合计 368.4 秒，仍缺踏板/辐条/头部/嘴袋/伸展翅膀等结构。预览已目视复核，骑乘关系不合格。
+- 新增 SVG 修复会话 8 回合上限，一般编码仍最多 32 回合；到限额后显式失败、不完成/不自动提交，已有工作区改动保留。新增无进展循环回归测试通过。临时 Ollama 别名及 Modelfile 已清理，原模型仍在本地；当时尚未提交的改动随后发布，见 09:32 记录。
+
+## 2026-10-02 07:54（Asia/Shanghai）· 工具安全、SVG 修复与 UI 回归
+
+- 定向 SVG 修复时隐藏并拒绝 `replace_all`；`write_file`/精确编辑先校验 SVG XML 与根元素，格式错误或 DTD/entity 不落盘。补充无编辑后的有限提示与缺部件时的几何预检。
+- 全量 `unittest` 145/145、`py_compile`、`git diff --check` 通过。离屏 UI 截图与交互回归通过：1500×920 至 780×480，含版本树拖动/平移/滚动/缩放及关闭提示。
+- Qwen2.5-Coder-7B 与 Qwen3.5:4b 固定提示结果仍未过验证；后者已生成较完整构图，但若干部件缺失/元素类型不符。未下载模型。
+- 原生桌面窗口枚举出两个同标题实例，无法安全确定截图目标；先前截图接口报 `SetIsBorderRequired failed: 不支持此接口 (0x80004002)`，因此不把离屏图说成实机截图。
+
+## 2026-10-02 07:03（Asia/Shanghai）· 创建并验证新公开仓库
+
+- 新仓库 [ljk00000/SciDevHarness-Research-IDE-v2](https://github.com/ljk00000/SciDevHarness-Research-IDE-v2) 已公开，默认分支 `main`。提交 `628af9cfa1b5857235aafbe719b35faec47ddc70` 的 `git ls-remote` SHA 与本地一致；已有仓库未覆盖。
+- `unittest` 138/138 通过；Windows CI 仍在排队。凭据常见格式扫描未命中；`gitleaks` 未安装，故不宣称完整凭据审计。
+- 上传时按项目规则绕开预设代理、直连 GitHub HTTPS 成功；仅移除单次命令进程代理变量。
+
+## 2026-10-02 06:59（Asia/Shanghai）· 工具调用与 SVG 回归修正
+
+- 精简通用系统提示；工具单一为 `write_file` 时要求工具调用。修复 SVG 工具结果误判、局部编辑提示字段和对比度校验，并限制自动修复轮数。
+- 全量 `unittest` 138/138 通过，`git diff --check` 通过。固定 Qwen2.5-Coder-7B SVG smoke 仍产生未通过验证的结果；此项保持失败记录。
+- 常见凭据格式扫描未命中；`gitleaks` 未安装，扫描不等同完整凭据审计。
+
+## 2026-10-02 06:01（Asia/Shanghai）· 创建并发布独立公开仓库
+
+- 新建公开仓库 [ljk00000/SciDevHarness-Research-IDE](https://github.com/ljk00000/SciDevHarness-Research-IDE)，默认分支 `main`。提交 `9c91d52e46620691f51f26cd2f17ee24b20ca52b` 已上传，`git ls-remote` 与本地 SHA 一致；原有六个公开仓库未覆盖。
+- 全量 `unittest` 134/134 通过，`git diff --check` 通过。常见凭据格式历史扫描无命中；`gitleaks` 未安装，未声称完成完整凭据审计。
+- SSH 22 端口连接被 GitHub 重置；仅将新仓库 remote 改为 HTTPS，通过直连 443 与现有 `gh` 登录凭据推送，未启用代理、未更改全局 Git 配置。新仓库 Windows CI 已排队。
+
+## 2026-10-02 05:40（Asia/Shanghai）· 批量文件编辑与固定 SVG 回归
+
+- `replace_in_file` 支持最多 50 项精确批量替换，先校验整批再单次写入；测试覆盖 CRLF 保留、失败不落盘和旧参数兼容。模型实测一次调用成功应用 11 项标签，减少拆分请求。
+- 修复标签修复提示未进入局部修复工具权限的问题；安全恢复 SVG 后直接进入本地 diff/自动提交闭环，防止模型重复生成同一文件。系统提示改为文件创建只写一次、不重复输出完整产物。
+- 全量 `unittest` 134/134 通过。Qwen3.5 本地 smoke 后续 SSE 缺完成标记；Qwen2.5-Coder-7B 本地 smoke 两次修复后仍产生无效 XML。两者均未通过最终 SVG 验证；没有下载模型，所有调用走本机 Ollama。
+- 本轮改动尚未提交或推送；UI 未改，原生桌面截图接口仍不可用。
+
+## 2026-10-02 04:33（Asia/Shanghai）· 固定 SVG 提示迭代与 UI 复核
+
+- 固定用户原句、Qwen2.5-Coder-7B `num_ctx=32768` 和 `max_tokens=12000` 未变；五次本地模型迭代均未达到最终验证。较好的一次 12 请求、约 1.46 MB 回包、81.2 秒模型耗时，曾生成多数已标记部件，但轮胎仍填充且若干部件裁切；最新一次 16 请求、约 1.38 MB、78.7 秒仍失败。所有调用只访问本机 Ollama。
+- 改进通用编辑指令，并区分完整重建和局部 SVG 修复工具集；局部修复隐藏 `write_file`，SVG 文本适配器不得绕过该范围。回归单测通过；模型仍会输出错误几何或重写草图，未声称质量达标。
+- `smoke_screenshot.py` 新截图覆盖 1500×920、1180×760、940×620、820×600、780×480，并通过标题栏/工作区/树布局、拖动、缩放、滚动和未保存关闭断言。目视检查宽屏、紧凑编辑器、最小版本树可读且无明确 UI 缺陷；Computer Use 返回 `apps=[]`，真实桌面截图未能采集。
+- 下一轮改用已缓存的 Qwen3.5:4b 对照固定原句；若结果仍不佳，进一步拆解模型能力、SVG 修复反馈和文件工具使用问题，系统提示继续保持通用。
+
+## 2026-10-02 03:59（Asia/Shanghai）· 新建公开客户端仓库并推送
+
+- 新建 [ljk00000/SciDevHarness-Client](https://github.com/ljk00000/SciDevHarness-Client)，确认为公开仓库、默认分支 `main`。代码提交 `0c7b56c73e47d497b1e3a1bfbd33b090b65255f2` 已推送，`git ls-remote` 与本地 SHA 一致；既有远端未改动。
+- 完整 `unittest` 129 项通过；Apache-2.0。凭据特征扫描无命中，未发现超过 50 MB 的 Git 对象，`.venv`、模型权重及研究数据未上传。
+- GitHub [Windows CI 首次运行成功](https://github.com/ljk00000/SciDevHarness-Client/actions/runs/36918193600)。GitHub API 直连短超时失败后才通过已配置代理创建仓库；代码推送使用 SSH 直连成功。
+
+## 2026-10-02 03:43（Asia/Shanghai）· 工具范围缩减与提示结构对照
+
+- 固定提示词原文未变。Qwen2.5-Coder-7B 首次生成只开放 `write_file` 后，本次请求 14 次、累计 72.8 秒、响应体约 1.18 MB；此前一次为 17 次、284.9 秒、5.32 MB。单次对照显示开销明显下降，但最终预览仍不能识别为鹈鹕骑车，仍缺全部自行车关键 ID。
+- 所有 `tool_argument_bytes` 仍为 0：模型没有发出原生函数参数，文件依靠 Harness 从文本 SVG 安全恢复。已更新通用提示，明确先规划对象接触/连接关系、再添加细节；待同模型固定提示复测。
+
+## 2026-10-02 03:29（Asia/Shanghai）· 固定提示词模型对照与 Qt 渲染故障
+
+- 用户提示词保持精确为 `Generate an SVG of a pelican riding a bicycle`；缓存的 Qwen3.5 4.7B 未下载，Harness 请求 `max_tokens=12000`，但 Ollama 实际上下文为 4096。初稿仍未形成正确车架/骑乘关系。
+- 对照进程曾以 `0xC0000409` 崩溃，Windows 事件确认故障模块为 `Qt6Core.dll`。原因是 headless 验证器未创建 `QGuiApplication`；现已修复，复测真实失败产物返回可读结构错误，含 `<text>/<tspan>` 的隔离子进程回归测试通过。
+- 纯 SVG 新建时工具集缩减为 `write_file`；修复任务仍能读取、精确编辑和检查 diff。定向回归测试通过，待固定提示词重跑和全套测试确认整体效果。
+
+## 2026-10-02 03:02（Asia/Shanghai）· 创建并公开发布新仓库
+
+- 新建 [ljk00000/SciDevHarness-Public](https://github.com/ljk00000/SciDevHarness-Public)，公开可见，默认分支 `main`；推送提交 `527410fc8a050802703d15e3839efa064ccfc168`，远端 SHA 核验一致。
+- 128 项 `unittest` 通过；当前工作树与提交历史的凭据形态扫描无命中。`.venv`、`.research`、模型权重未上传，其他 Git 远程保持不变。
+- GitHub 直连超时后通过受限本地代理隧道复用现有 SSH 身份；未扩大 OAuth 授权范围。
+
+## 2026-10-02 02:46（Asia/Shanghai）· 修复轮分类、SVG 质量复测与响应式 UI
+
+- Harness 现在区分“创建 SVG”和“修复已有 SVG”：修复提示不再带重复的创建指令；如模型返回完整 SVG，只能回写明确指定且已存在的文件。通用系统提示要求编辑时保留未涉及内容。
+- SVG 检查支持语义 ID 位于 `<g>`、分组继承与简单 CSS class；可一次反馈多项几何问题，并按部件生成局部修复指引。
+- 原始输入严格为 `Generate an SVG of a pelican riding a bicycle`。本机 Qwen2.5-Coder-7B 本轮仍失败：17 次 loopback 请求，约 284.9 秒，183 KB 请求体/5.32 MB 响应体；两轮修复后最终 SVG 缺少全部 17 个语义 ID，渲染质量不合格。此为本机回环流量，不是外网传输；未下载模型。
+- 新鲜离屏截图覆盖 1500×920、1180×760、940×620、820×600、780×480，编辑器/版本树 smoke 均通过；原生窗口未发现可控应用，故真实桌面交互仍未验收。
+- `python -m pytest -q`：128 项、86 子测试通过；`compileall` 与 `git diff --check` 通过。修改尚未提交。
+
+## 2026-10-02 00:56（Asia/Shanghai）· 本地模型 SVG 烟测与请求计量
+
+- 流式计时现覆盖完整响应体，并分开统计首个可见输出、正文/推理/工具参数字节及请求/响应体积；失败诊断不保存请求正文或 shell 命令。SVG 写入/替换识别与修复路径有回归测试。
+- Qwen2.5-Coder-7B 最新真实运行 15 次本地请求，请求累计耗时约 72.9 秒；请求体合计约 164 KiB，响应体约 1.28 MiB（SSE 正文约 14 KiB）。生成图因重复语义 ID 被拒绝，预览也未达可用质量；不等同于 Harness 冒报成功，也不代表远端网络流量。
+- 全套 `python -m pytest -q`：115 项、86 子测试通过；`git diff --check` 通过。未提交、未推送。
+- 原生窗口验收未完成：计算机使用工具返回 `apps=[]`，没有可截图的桌面应用；不以离屏图替代。
+
+## 2026-10-01 23:51（Asia/Shanghai）· 新建公开仓库并上传
+
+- 新建公开仓库 [ljk00000/SciDevHarness-IDE](https://github.com/ljk00000/SciDevHarness-IDE)，推送完整 Git 历史到 `master`；本地与远端 SHA 均为 `3c4cfe09fc2be9d17023ac9c0bb9d66066e6c70a`。新增 `ide-public` 远程，旧 `origin` 与 `desktop-public` 未改动。
+- 107 项单测通过；常见凭据格式扫描无命中，历史中无超过 20 MiB 的文件对象；虚拟环境、模型权重与 `.research` 数据未提交。仓库沿用 Apache-2.0。代码提交 `3c4cfe0` 的 [Windows CI](https://github.com/ljk00000/SciDevHarness-IDE/actions/runs/36887597180) 在 Python 3.12/3.13/3.14 全部通过（测试、依赖 smoke、普通/125% DPI 截图、QML lint）。
+
+## 2026-10-01 23:30（Asia/Shanghai）· 低分辨率工作台响应式适配
+
+- 把三栏工作台最小尺寸从 940×620 降到 780×480，并加入紧凑宽度阈值；Explorer、编辑器、Agent 始终可见。窄屏总结 chip 使用短文案，同时保留完整 tooltip/accessibility 状态；Explorer 版本树入口防止副标题裁切。
+- Git 页面低高度时收起非关键统计卡片，给树和详情区留空间；QML 画布依据实际尺寸隐藏第二行说明并缩短缩放提示，修复节点卡与说明重叠。
+- 截图 smoke 覆盖宽、中、窄、最小窗口及宽屏短高度，在 100%/125% DPI 下通过；分支节点完整可见，标题栏、chip、入口文案无裁切。另有 107 项测试、编译、QML lint、diff 检查通过。
+- Computer-use 未返回可见桌面应用；本轮使用 Qt 离屏真实控件截图，未声称完成原生桌面验收。改动当时留在本地，随后于 23:51 随提交 `3c4cfe0` 上传至 `SciDevHarness-IDE`。
+
+## 2026-10-01 23:01（Asia/Shanghai）· 新建并验证公开桌面客户端仓库
+
+- 创建公开仓库 [ljk00000/SciDevHarness-Desktop](https://github.com/ljk00000/SciDevHarness-Desktop)，推送 `master`；功能提交 `aeb342d1b17b091d0a32f8f532efc60c38ba4d3d` 与远端哈希一致。原有公开仓库保留为 `origin`，新仓库使用 `desktop-public` 远端。
+- 107 项本地测试通过；GitHub Windows CI 在 Python 3.12、3.13、3.14 均通过测试、编译、依赖检查/smoke、普通与 125% DPI UI 截图及 QML lint。
+- 发布前检查未发现已跟踪的大型模型文件或常见密钥格式；新仓库与旧项目仓库互不覆盖。
+
+## 2026-10-01 22:41（Asia/Shanghai）· 收紧鹈鹕触把的实际几何门槛
+
+- 人工看图发现前伸翼与车把仍有可见小间隙；把触点验收从包围框重叠改为第一段三次曲线端点落在把手轮廓附近（2 SVG 单位容差），并要求闭合填充曲线。复合 path 辐条按子路径而非元素数计数。
+- 同一原始提示再次通过本机 Qwen2.5-Coder-7B + Harness：71.1 秒，8 次 loopback 请求，每次 `max_tokens=12000`；2 次 `write_file`，无文本恢复，安全/结构验收和 Qt 1200×800 渲染通过。人工复看确认翼尖接到车把；风格仍是简洁矢量图。
+- 临时 Git commit `8879ed8bea707fec3c97996b1fd7884c7a749a96`、事件账本与摘要齐全，临时工作区干净。最终完整单测 107 项、编译、依赖 smoke、`pip check`、QML lint、`git diff --check` 全通过；项目修改未提交。
+
+## 2026-10-01 22:34（Asia/Shanghai）· SVG 工具恢复与质量验收闭环
+
+- 一次真实 Qwen 运行因重复生成大量 SVG 路径未产出文件；发现补救轮次会把整段失败回答带入新上下文，现改为压缩失败轮次文本，并保留一次有界自动恢复。多项错误一并反馈，避免修一个后才发现另一个。
+- 视觉检查新增车轮/车架/前叉/辐条、鞍座与踏板连接、真实曲线触把等约束；修正复合 SVG path 的辐条计数，避免将合法的一条多子路径误判为缺失。结构和渲染单测覆盖这些回归。
+- 精确原始提示本机闭环通过：Qwen2.5-Coder-7B，9 次 loopback 调用、每次 12000 tokens，耗时 247.9 秒；SVG 安全解析和语义检查通过，Qt 1200×800 实际渲染，事件账本/Git 自动提交/会话总结齐备，临时工作区干净。视觉检查为可辨认的简洁矢量图，尚非精修作品。
+- 完整 107 项单测、编译、依赖 smoke、`pip check`、QML lint、`git diff --check` 通过。生成物和测试提交仅在临时目录，不进入项目工作区；项目修改未提交。
+
+## 2026-10-01 21:54（Asia/Shanghai）· 流式 LLM、工具恢复与 SVG 实测
+
+- OpenAI-compatible 调用改用可配置 SSE 流式响应，支持分片 tool-call 重组和 UI 实时气泡；本机 Qwen 启动器使用进程级 240 秒超时默认值。
+- 修复 fenced XML 中 JSON `write_file` 未转成工具调用的问题；无 SVG 输出时最多补救一次，仍无文件则任务失败。新增安全解析、队列/UI、诊断及质量回归。
+- SVG 渲染验收现检查 fill/stroke 色值、部件几何比例、头身连接、翅膀位置、长喙和闭合喉囊。104 项单测、依赖 smoke、`pip check`、QML lint、常规与 125% DPI 响应式截图通过。
+- 精确 Qwen 任务能写入并渲染，但最近一次运行仍未通过视觉质量门槛；预览中鸟身比例错误、喙太短。随后加入精确路径提示，尚待新一轮模型实测。
+
+## 2026-10-01 20:04（Asia/Shanghai）· 项目文档归并
+
+- 将 `SUMMARY_AND_TREE.md` 的对话总结、2.5D 版本树和 IDE 工作流说明并入 `SCIDEV_HARNESS.md`，保留功能细节；Markdown 文件总数从 6 降至 5。
+
+## 2026-10-01 19:54（Asia/Shanghai）· SVG 安全恢复与生成质量验收
+
+- 收紧 SVG 修复目标选择：只在用户明确要求修复已有 `.svg` 时原位覆盖；普通创建仍避免覆盖已有文件。提示词增加可见眼睛、对比度等要求。
+- 增强本机烟测的语义结构检查与定向修复，并新增重复 ID、短鸟喙等回归测试。完整单测 80 项通过；编译、`pip check`、依赖 smoke、QML lint 通过。
+- 本机 Qwen 实测虽然通过 Harness 工具写出 SVG 并成功渲染，但画面仍难辨认且缺少可见眼睛，验收脚本正确判失败；没有把可渲染误报成生成质量合格。
+- 提交 `d4840dd` 已推送至公开仓库 `ljk00000/SciDevHarness`；远端 `master` SHA 一致，仓库确认公开、工作区干净。GitHub Actions Python 3.12/3.13/3.14 全部通过：[CI #36858516069](https://github.com/ljk00000/SciDevHarness/actions/runs/36858516069)。
+
+## 2026-10-01 19:37（Asia/Shanghai）· GitHub CI 路径兼容修复通过
+
+- `ab23f79` 的远端 CI 在 Python 3.12/3.13/3.14 均通过单测、编译和运行时预检，但 `smoke_dependency.py` 把 `EventLedger` 解析后的路径与 Windows 临时目录未解析路径直接比较，因路径别名失败。
+- 修正为两侧都解析后比较；本地 dependency smoke、78 项单测、`py_compile` 与 `git diff --check` 通过。提交 `6461244` 已推送，GitHub Actions 的 3.12/3.13/3.14 矩阵全绿：[Windows CI #36856282996](https://github.com/ljk00000/SciDevHarness/actions/runs/36856282996)。
+
+## 2026-10-01 19:28（Asia/Shanghai）· 发布 CI 修复与 SVG 实测
+
+- 修复 Windows CI/打包环境未把虚拟环境脚本目录加入 `PATH` 的问题，并补上回归测试及手动打包说明。
+- 对明确的 SVG 创建请求，新增安全恢复：模型若只返回单个 fenced SVG/XML 代码块，且 XML 无脚本、事件处理器、外部资源等风险，Harness 将其转为受路径保护的 `write_file` 工具调用；同名文件不覆盖，事件仍进入现有 Git/账本链路。
+- 新增 SVG 安全、渲染及结构检查。78 项单测、Python 编译、`pip check`、依赖 smoke、启动器预检、QML lint 和 1500×920/940×620 UI 截图通过。原始 `Generate an SVG of a pelican riding a bicycle` 本机 Qwen 实测在一次修复后仍未通过图形结构检查，故结果记为失败，不能据此声称生成质量合格。
+
+## 2026-10-01 18:25（Asia/Shanghai）· GitHub 公开上传完成
+
+- 创建公开仓库 [ljk00000/SciDevHarness](https://github.com/ljk00000/SciDevHarness)，推送 `master`；GitHub API 确认公开，`git ls-remote` 验证远端 SHA 与本地一致。仓库包含 Apache-2.0 LICENSE。
+- 上传前审查提交树：无 >10 MiB 文件、模型权重/敏感文件名及常见 GitHub/AWS/私钥/API key 格式命中。单测 69 项连续 3 轮、Qwen 编码烟测与客户端依赖 smoke 通过；远端 Actions 是否通过尚未检查。
+
+## 2026-10-01 14:01（Asia/Shanghai）· 本地提交与 GitHub 目标确认
+
+- 当前工作区已提交：`c7c7ada`，包含 31 个项目文件；提交后 Git 工作区干净。提交前暂存检查通过，未发现大文件、模型权重或常见密钥格式。
+- GitHub CLI 登录有效，但当前仓库无远端，认证账号下未找到同名 SciDevHarness 仓库；未擅自创建新远端。上传需用户提供目标仓库 URL，或确认在当前账号创建仓库并指定公开/私有。
+
+## 2026-10-01 12:30（Asia/Shanghai）· Qwen 工具往返与 Windows 行尾兼容
+
+- 本机模型实测中先后暴露三处问题：Ollama 模板会在助手消息同时含正文和工具调用时丢掉调用；Qwen 偶尔使用 `<tool_request>` 标签；Windows CRLF 文件无法匹配模型根据行文本给出的 LF 片段。现已修复消息序列化、增加仅接受已声明工具和合法参数的标签兼容，并让精确替换适配/保留源文件换行。工具说明也明确了行号标记和已授权文件编辑的执行方式。
+- 修复后一次完整隔离运行通过：Qwen 实际写入并运行固定安全脚本，4 个代码任务共 18 个用例全过；既有 bug 修复真实调用 `read_file` 与 `replace_in_file`。所有模型请求仅发往回环 Ollama，`max_tokens=12000`；逐项验证 diff、自动 Git commit、对话总结及临时仓库干净。前面几次烟测曾失败，均保留为诊断事实。
+- 新增消息往返、`<tool_request>` 和 CRLF 回归。69 项单测连续 3 轮；依赖/UI smoke、运行时预检、`pip check`、QML lint、Python 编译、`git diff --check` 通过。用户选择 Apache-2.0；`LICENSE` 文件已存在。无提交；远端 CI、MSVC 构建、Qt 第三方许可证人工审核和原生桌面验收待完成。
+
+## 2026-10-01 12:07（Asia/Shanghai）· Qwen 多题验证与未保存修改保护
+
+- 本机 Qwen 经 Harness 完成奇偶判断、正数过滤求和、区间夹取；每轮 13/13 边界样例通过，连续 3 次完整通过。首次运行曾未生成第二题目标文件并被烟测判失败；未把它藏进重试。每次成功运行包含 16 个本地请求，逐题使用 `write_file`、提交前 diff、单文件自动 commit、自动总结；AST runner 拒绝导入/调用/属性/顶层代码，并限制循环只遍历输入。
+- 应用关闭时新增单个“保存全部/放弃修改/继续编辑”确认，覆盖多编辑器组；保存失败或取消不丢内容，干净窗口不弹窗。65/65 单测连续 3 轮；依赖/UI smoke 和常规/125% DPI 截图（包括确认框）通过。远端 CI、MSVC standalone、Qt 打包许可人工审查及原生桌面验收未完成；未提交。
+
+## 2026-10-01 11:35（Asia/Shanghai）· Agent 失败/重试后的编辑器同步
+
+- Agent 可能先写入文件、随后遇到网络重试或最终失败；此前 GUI 只在成功完成后刷新打开的文件，导致编辑器与磁盘分叉。现在重试/失败事件刷新未修改的编辑器，同时明确保留用户未保存文本。
+- 新增 Qt ClientWindow 回归测试，模拟磁盘上的 Agent 部分修改并验证 retry/failure 两条路径；58/58 单测连续 3 轮，真实客户端依赖 smoke 通过。未提交。
+
+## 2026-10-01 11:07（Asia/Shanghai）· 本机模型输出执行保护测试
+
+- 将 Qwen 烟测的生成文件检查和执行抽为 `_execute_verified_sample`。新增单测证明固定样例能运行并返回预期输出；若模型文件内容有任何偏差则拒绝执行，且不会启动子进程。
+- 57/57 单测连续 3 轮；本机 Qwen 再次实测 4 次请求均 loopback、`max_tokens=12000`，生成文件安全运行，提交仅含目标文件，最终总结产生且临时仓库干净。编译、依赖、QML lint、启动器和 diff 检查通过。未提交。
+
+## 2026-10-01 10:48（Asia/Shanghai）· 当前 UI 双 DPI 实图复核
+
+- 在显式保留的临时目录生成 100% 与 125% DPI 截图，并目视检查宽屏编辑器、窄屏编辑器及窄屏版本树；布局无重叠/裁切，版本树分支与详情可读，拖拽、平移、缩放和自适应断言通过。原生桌面截图通道仍不可用。
+- 发布候选文件清单只读检查未发现大于 10 MB 的非忽略文件，也未命中扫描的常见密钥格式/个人 Windows 路径；此为有限模式扫描，不代表完整安全审计。项目仍未提交。
+
+## 2026-10-01 10:44（Asia/Shanghai）· Qwen 生成代码运行复验与许可证确认
+
+- 本机 Qwen 回环烟测通过：模型调用 `write_file` 创建 `hello_qwen.py`，脚本先严格比对固定安全内容，再运行并得到预期输出；提交前 diff、仅目标文件的自动 commit、总结和干净临时仓库均通过。4 次请求 `max_tokens=12000`，未下载模型。
+- 55/55 单测连续 3 轮；依赖 smoke、`pip check`、编译、QML lint、启动器检查与 `git diff --check` 通过。项目源码采用 Apache-2.0；独立版 Qt 第三方组件审查仍为人工待办。未提交。
+
+## 2026-10-01 10:36（Asia/Shanghai）· 本地 LLM 烟测暂存入口回归
+
+- 新增暂存目录中的 `smoke_local_ollama.py --help` 无网络启动测试，确保 README 给出的本地验证命令在源码暂存版中可用；烟测拒绝远端 endpoint，且只在临时仓库操作。
+- 最终本机 Qwen 实跑再次通过：`write_file`、提交前 diff、目标文件单文件 commit、总结事件全部存在；4 次 loopback 请求均 `max_tokens=12000`，临时工作区清洁。
+- 55/55 单测连续 3 轮；100%/125% 双 DPI 截图与像素断言、依赖 smoke、编译、`pip check`、QML lint、启动器、暂存版测试和 `git diff --check` 通过。远端 CI/MSVC standalone/许可证实包审查/原生桌面验收待完成，未提交。
+
+## 2026-10-01 10:29（Asia/Shanghai）· 本地 Qwen 编码闭环实测与可复用烟测
+
+- 确认本机 Ollama 已缓存 `scidev-qwen2.5-coder-7b:q4_k_m`，未下载或拉取模型。实际 Agent 在外部临时 Git 仓库调用 `write_file` 创建精确脚本；提交前 diff 检查成功，自动 commit 仅包含目标文件，账本写入完成/提交事件，并生成最终对话总结；临时仓库结束前状态干净。
+- 新增 `scripts/smoke_local_ollama.py` 与 3 项本地保护测试：拒绝远端 URL、回环请求、低于 10k 的 token 预算；烟测只连 loopback、为本进程设置代理绕过规则、从不执行模型下载，并只输出请求元数据。真实运行 4 次请求均为 loopback、`max_tokens=12000`。
+- README 提供手动复测命令，源码暂存与 CI 编译检查包含该脚本。54/54 单测连续 3 轮通过；双 DPI 全套截图、依赖/启动器/QML/编译和 diff 检查通过。远端 CI、MSVC standalone、Qt 许可审查及原生桌面验收仍待完成；未提交。
+
+## 2026-10-01 09:47（Asia/Shanghai）· 双 DPI 分支像素级截图断言
+
+- 截图几何断言曾与 QML 画面不同步；现在窄屏截图会在目标卡片缩放后的位置核验失败分支强调色像素，避免仅凭 QML 属性判定卡片已绘制。
+- 普通与 `QT_SCALE_FACTOR=1.25` 两套截图烟测通过并目视复核；两套图均含完整首个尝试分支和可见详情。CI 的 125% 渲染工件路径也有静态回归保护。
+- 51/51 单测连续 3 轮通过；编译、依赖 smoke、`pip check`、QML lint、启动器、`git diff --check` 通过。离屏结果仍不等于原生桌面验收；未执行远端 CI/MSVC，未提交。
+
+## 2026-10-01 09:40（Asia/Shanghai）· 高 DPI 场景图截图回归
+
+- 125% DPI 烟测发现截图首帧仍显示 100% 旧树画面，尽管 Qt/QML 属性已经更新；`QQuickWidget` 截图前现在等待连续 3 次事件/渲染循环，画面与几何断言保持同步。
+- Windows CI 新增隔离 `QT_SCALE_FACTOR=1.25` 的完整 UI 截图烟测，并将两种 DPI 的截图一起保留为定时/手动审查工件。目视复核高 DPI 窄屏图：78% 缩放、首个分支完整，详情标题/状态/说明可见。
+- 51/51 单测连续 3 轮通过；125% DPI 截图、依赖 smoke、编译、`pip check`、启动器、QML lint 与 `git diff --check` 通过。截图仍为离屏渲染；未运行远端 CI、MSVC standalone 或原生桌面验收，未提交。
+
+## 2026-10-01 09:21（Asia/Shanghai）· 窄屏版本树与全量回归
+
+- 修复版本树窄屏详情区仅约 88px且首个尝试卡片裁切：详情区提高到约 38%，窄屏画布自适配到 78% 缩放以完整显示首个分支；回宽屏恢复原缩放/平移，并尊重紧凑模式中的手动缩放。
+- 新增截图断言覆盖分栏高度、卡片可见边界、滚动详情及宽窄屏状态往返。目视 940×620 离屏图确认分支、详情标题/状态/说明均可见；拖拽、平移、滚动和 Ctrl+滚轮缩放仍通过。
+- 50/50 单测连续 3 轮通过；依赖 smoke、Python 编译、`pip check`、QML lint、启动器 runtime check、`git diff --check` 通过。截图为 Qt 离屏渲染，不代替原生桌面验收；未提交 Git。
+
+## 2026-10-01 09:10（Asia/Shanghai）· standalone 依赖与许可证审计清单
+
+- 手动 Windows standalone workflow 过去只输出 exe 哈希与总文件数，无法直接核对实际打包的 Qt/PySide native runtime。新增 `scripts/audit_standalone.py`：输出 DLL/PYD/EXE 路径、字节数、SHA-256，以及安装分发包的许可证声明和 `License-File` 哈希；发现声明的许可文本缺失、缺 `Qt6Core.dll` 或包目录含 symlink/junction 时失败。
+- workflow 只上传审计 JSON，不上传 standalone 二进制，并明确 `manual-review-required`；该清单是审查证据而非许可证结论。针对完整/不完整包、缺许可文件、实际 site-packages 元数据及 Windows 外部 junction 的回归通过。MSVC workflow 尚未实际执行。
+- 原生截图 helper 本轮仍报 `native pipe unavailable`；UI 继续以宽/中/窄 Qt 离屏截图验证。Git remote 缺失；未提交。
+
+## 2026-10-01 08:55（Asia/Shanghai）· 发布风险复核与本地模型数据隔离
+
+- `.gitignore` 原先未排除常见本地权重/数据格式，现忽略 GGUF、safetensors、ONNX、PyTorch checkpoint 和生成的数据/产物目录；新增 `git check-ignore --no-index` 回归，确认源代码与 `.env.example` 仍可跟踪。
+- 对当前可提交文件及 4 个本地提交作定向私钥/API-token 特征扫描，未命中；机器未安装 Gitleaks 等完整扫描器，故不把此结果表述为完整凭据审计。当前仓库没有 Git remote。
+- 官方 Qt 文档说明 Community 版采用 LGPL/GPL/商业许可组合、个别模块仅 GPL，并建议针对实际使用的 PySide 第三方组件作归属声明；SBOM 与许可结果依具体安装/构建配置。当前 pip wheel 元数据包含许可表达式及商业许可提示，但尚无真实 standalone 产物，第三方清单仍未完成。Nuitka runtime exception 只按其条款适用于目标代码，不能替代编译器自身许可审查。
+- 45/45 单测连续 3 轮；客户端 smoke、1500/1180/940px 截图复核、编译、pip、启动器、QML lint 与差异检查通过。原生桌面截图接口重置后仍报 `native pipe unavailable`；未提交 Git。
+
+## 2026-10-01 08:24（Asia/Shanghai）· Agent Git 自动操作隐私与大文件保护
+
+- 隔离仓库复现：未忽略的 `.env` 会进入 Agent diff/自动提交；超过 Agent diff 展示上限的二进制也可能被自动提交。修复后，常见敏感/内部路径及其改名差异不发给模型、不进入 Agent 自动提交；自动提交另跳过链接、超过 240,000 字节及二进制/非 UTF-8 文件，保留在工作区并在聊天提示。
+- `.env.example` 等模板仍可用；Git 面板手动查看/提交不变。新增凭据内容/改名、密钥和大文件自动提交回归。44/44 单测连续 3 轮通过；客户端交互、1500/1180/940px 离屏截图复核、启动器、编译、pip、QML lint 与 `git diff --check` 通过。
+- 截图为 Qt 离屏渲染，不替代原生桌面捕获；未提交 Git。远端 CI、MSVC 独立包及 Qt 第三方许可清单仍待真实验证。
+
+## 2026-10-01 07:46（Asia/Shanghai）· 畸形版本树布局不再导致启动崩溃
+
+- `tree_layout.json` 中 `NaN` 会让版本树在 `int(offset.y())` 崩溃；`Infinity`/超大坐标会污染画布与滚动高度，非法 UTF-8/超大 JSON 整数也可能在解析阶段抛错。
+- 统一布局加载现设置 1 MB 文件上限、±50,000 px 坐标边界，拒绝布尔和非有限坐标，忽略损坏/无效项；旧版与 QML 版复用该加载器。新增两项 GUI 回归覆盖 NaN/Infinity/超大值以及坏编码、坏 JSON、超大整数和超限文件。
+- 40/40 单测连续 3 轮通过；窗口/文件编辑交互 smoke、拖拽持久化、8 张响应式截图、启动器/编译/依赖/QML 全通过，复看宽窄截图未见新异常。新 GUI 测试已加入 Windows CI 编译列表。
+- 离屏截图不是原生桌面验证；远端 CI、独立 Windows 包与第三方 Qt 许可清单仍待验证。
+
+## 2026-10-01 07:36（Asia/Shanghai）· Windows junction 越界文件树泄露修复
+
+- 隔离复现发现：NTFS junction 的 `is_symlink()` 为 false，递归文件树会列出 junction 外目录的文件名与大小；Agent 的 `read_file`/`write_file` 已通过根路径解析拒绝越界，但 listing 没有同等保护。
+- `list_files()` 现对每个子项解析后确认仍在项目根内，并跳过 symlink/junction。新增 Windows 回归验证外部哨兵不出现在树中，且经 junction 的读取和写入均被拒绝。测试先失败复现、修复后通过。
+- 38/38 单测连续 3 轮；桌面依赖 smoke、8 张响应式截图、启动器/编译/pip/QML 检查通过。真实 Qwen 持久队列隔离项目再次成功，确认 junction 外部哨兵未进入对话、只提交 `hello.py` 且总结落盘（12k tokens，无 shell）。
+- 本机 UI 捕获工具未提供可控原生窗口；远端 CI、独立包与 Qt 第三方许可清单仍待验证。
+
+## 2026-10-01 07:28（Asia/Shanghai）· Qwen 持久队列端到端复验
+
+- Ollama `scidev-qwen2.5-coder-7b:q4_k_m` 经真实持久任务队列在临时隔离项目成功创建 `hello.py`；Harness 提交前 diff、精确文件级自动提交及 LLM 总结均落盘，任务/会话状态成功，max_tokens=12000，未执行 shell。
+- 随后全量 37 项单测连续 3 轮通过。此端到端覆盖本地模型/API/队列/Agent/Git/总结链，不代表原生 GUI 点击链验证。
+- 原生桌面捕获接口本轮无可控应用；远端 Actions、MSVC 独立包与第三方许可清单仍未验证。模型 E2E 临时目录已自动清理。
+
+## 2026-10-01 07:20（Asia/Shanghai）· 回归测试环境定位修复
+
+- 首次完整测试发现部署 dry-run 用 `Path(sys.executable).with_name(...)` 定位工具，在 Windows 实际会漏掉 `Scripts` 目录；改为按 `sys.prefix` 和平台脚本目录定位。
+- 37/37 单测连续 3 轮通过；客户端交互 smoke 与 8 张宽/中/窄离屏截图通过。启动器预检、编译、依赖、QML lint、差异空白检查均通过。
+- Apache-2.0 已获用户确认，`LICENSE` 完整文本与 `pyproject.toml` 声明一致。本地截图非原生桌面；远端 CI 和 Windows 独立包尚未实测。
+
+## 2026-10-01 07:02（Asia/Shanghai）· 提交前 diff 确定性门禁
+
+- Qwen 实测会忽略显式 `git_diff` 请求却照常结束。现在 Agent 有改动时必须先检查最新 diff 才能提交；缺少检查就由 Harness 自动执行只读 diff 并回传模型，屏蔽未验证的临时答复。后续工具修改会使已验证版本失效并触发复查。
+- 回归覆盖 Harness 补检先于提交、模型在 diff 后再次修改需二次检查。36/36 单测连续 3 轮通过；真实 Ollama Qwen 经过持久任务队列写入、自动 diff、仅 `hello.py` 提交、LLM 总结落盘；未批准/执行 shell，max_tokens=12000，临时项目已清理。
+- 客户端交互 smoke、1500/1180/940px 共 8 张截图、py_compile、pip check、启动器、QML lint 全通过。截图为 Qt 离屏而非原生桌面；远端与 Windows 独立包仍待验证。
+
+## 2026-10-01 06:49（Asia/Shanghai）· Qwen 裸 JSON 工具调用与未验证完成修复
+
+- Qwen 偶发返回完整裸 JSON 工具调用，旧兼容层未解析，Agent 错把未执行的写文件请求标记完成。兼容开关开启时现只解析整条回复、精确 envelope、已声明工具和完整参数；普通说明文本、未知工具或额外字段均不转为执行调用。
+- 加强 Agent 规则：用户明确要求的工具/检查必须执行并据工具结果汇报。35/35 单测通过；本地 Qwen2.5-Coder-7B 通过隔离真实编码链路：`write_file`→`git_diff`→自动提交 `hello.py`→持久化会话总结；关闭 shell 审批且未执行 shell，max_tokens=12000。临时项目已清理。
+- Action SHA 在线核验受直连网络超时影响，未使用代理；其真实 tag 对应关系、远端 CI、独立包仍未证实。
+
+## 2026-10-01 06:20（Asia/Shanghai）· 版本树中等窗口裁切修复
+
+- 1180px 页面下版本树 splitter 因方向变化自动切成水平 `Preferred` 策略，宽 360px 而页面宽 567px；明确设为双轴 `Expanding` 后，1500/1180/940px 分栏宽度均与页面一致，消除右侧空洞。
+- 截图 smoke 新增内层 splitter 方向、填充宽度、尺寸策略和子面板边界检查。33/33 单测与 8 张截图/拖拽/平移/滚轮交互回归通过，已人工复看新版宽、中、窄图。
+- 仅为 Qt 离屏渲染；原生桌面、远端 CI、Windows 独立包及第三方运行时许可清单仍待验证。
+
+## 2026-10-01 06:01（Asia/Shanghai）· Essentials-only 隔离启动验证
+
+- 临时 hardlink overlay 只含 PySide6-Essentials 与 Shiboken；发行包门禁确认无 Addons。应用从隔离路径成功导入，8 张 Qt 离屏截图及 UI/版本树交互 smoke 通过。
+- 验证不下载文件、不改写 `.venv`，并清理了隔离目录；它仍不能替代干净 pip venv、Windows CI 或 standalone 包验证。
+
+## 2026-10-01 05:33（Asia/Shanghai）· Essentials-only CI 门禁与完整回归
+
+- `requirements.txt`、`pyproject.toml` 和打包约束改为 PySide6-Essentials；启动器检测对应发行元数据，CI 构建清单报告准确的 distribution 名称。实装文件清单确认所需 Qt 模块及 deploy/qmllint 工具均由 Essentials 提供。
+- 移除项目对 PySide6-Addons 的直接依赖；当前 venv 中 Addons 文件合计约 456.6 MB，项目依赖解析不再要求安装它们。新增 Apache-2.0 元数据/许可证/Qt 第三方许可边界回归。32/32 单测连续 3 轮通过；源码/QML/交互 smoke、启动器、`py_compile`、`pip check` 和 QML lint 通过。
+- 临时 import hook 屏蔽本机所有 Addons Python 原生模块后，完整 8 张 Qt 离屏布局/交互截图 smoke 仍通过；pip cache 禁用，未下载 wheel。该模拟不是干净安装结果，真实 Essentials-only 环境仍待远端 CI。
+- 新增最小 Qt 发行包检测脚本，并挂到三版本 Windows CI 与手动打包 workflow 安装后；33/33 单测连续 3 轮、8 张布局截图 smoke 及交互/启动/编译/依赖/QML 门禁通过。当前工作机仍未执行这个“Addons 缺席”门禁，因为旧 `.venv` 有既存 Addons。
+- Qt 官方说明 Essentials 与 Addons 是独立发行组件，许可只需审查实际使用的组件；仍未构建 standalone，不能据当前 venv 声称完成最终第三方许可清单。
+
+## 2026-10-01 04:59（Asia/Shanghai）· 窄屏聊天控制项裁切修复与视觉回归
+
+- 修正窄屏右侧聊天栏状态 chip 的截断：可见“重试”，完整含义保留在辅助名称与悬浮说明；截图 smoke 新增文字裁切断言。
+- 修复后 8 张 Qt 离屏截图、版本树拖拽/平移/位置持久化/滚动/缩放检查通过；29/29 单测连续 3 轮通过，依赖 smoke、`py_compile`、`pip check`、QML lint、启动器 runtime 检查通过。源码凭据/个人绝对路径扫描未命中。
+- Computer Use 返回空应用/浏览器，未取得原生窗口截图；当前图像为隔离数据上的 Qt 离屏渲染，不代表真实桌面窗口捕获。
+
+## 2026-10-01 04:53（Asia/Shanghai）· Apache 许可证确认与本地 Qwen 端到端验证
+
+- 用户确认采用 Apache-2.0；现有许可证文件、包元数据和 README 一致，README 区分项目代码、Qt/PySide 运行时与模型权重许可。
+- 隔离临时 Git 项目中的本机 Ollama Qwen2.5-Coder-7B 实测通过：Harness 实际调用 `write_file`，生成脚本输出 `5`，写入会话总结与事件日志，并自动创建提交 `e7362eb49342f0e39773455296f87d356df9eb6e`。
+- 项目 `.venv` 下 29/29 测试通过；系统 Python 环境缺少 PySide deploy 命令导致的单测失败已确认是解释器环境不匹配，不是代码故障。
+- 未触发下载；该结果证明本机模型至 Harness 的编码、记录和 Git 链路，不代表 Windows standalone 打包或公开发布许可审计已完成。
+
+## 2026-10-01 04:48（Asia/Shanghai）· 可复现 Windows standalone 构建门禁
+
+- 新增仅手动触发的 Windows Server 2022 构建工作流：显式加载 MSVC x64 环境，使用固定 Python 3.14、PySide6 6.11.2、Nuitka 4.1.1；完成 standalone 后运行 exe 的 `--smoke-test` 检查 QML 启动。
+- 工作流只上传 7 天的构建元数据清单（版本、文件数、QML 相对路径、exe 大小与 SHA-256），不传可执行文件、不创建 Release；避免第三方组件许可清单尚未完成时意外分发 Qt 二进制。
+- 增加 `requirements-build.txt` 固定打包 Qt 版本，并将 pip / GitHub Actions 更新都交由每周 Dependabot；新增配置回归。
+- 29/29 单测、隔离暂存/实际源码 smoke、deploy dry-run、客户端交互 smoke、编译、pip check、QML lint、启动器预检通过。[官方 PyPI 元数据](https://pypi.org/project/PySide6/6.11.2/)显示 PySide6 6.11.2 支持 Python 3.14 且提供 win_amd64 wheel；仅核验元数据，未下载。
+- 本地无 MSVC，未实际构建；无 Git remote，workflow 未远端执行；Qt runtime 随包许可证仍需按真实构建产物审查；原生桌面截图接口不可用。项目未提交/发布。
+
+## 2026-10-01 04:31（Asia/Shanghai）· 发布暂存副本实际启动测试
+
+- 在新建隔离暂存目录运行 `scidev_client.py`，验证窗口构造、QML 版本树 Ready、root object 有效且没有 QML 错误；这覆盖发布清单和资源路径，而非原仓库副本。
+- 27/27 单测、客户端交互 smoke、独立暂存运行、打包器 dry-run、Python 编译、pip check、QML lint、启动器预检及 8 张宽/中/窄 Qt 截图通过。
+- 本轮尝试 Computer Use 原生窗口核验，但接口返回空应用列表；仅有离屏截图证据。MSVC/真实二进制、远端 CI、Git remote 均缺，项目未提交/发布。
+
+## 2026-10-01 04:26（Asia/Shanghai）· Windows 发布暂存与打包配置回归
+
+- 补全独立打包暂存清单中的依赖、启动批处理和 bootstrap；回归实际执行暂存脚本，要求文件集合精确匹配并排除 `.venv`、`.research`、`.git`。
+- PySide 打包器未指定 spec 时 dry-run 会错误选用 `main.py` 和 onefile。文档现明确使用 `--config-file pysidedeploy.spec --nuitka-version=4.1.1`；新回归在隔离暂存目录实际运行 dry-run，断言 `scidev_client.py`、standalone、无控制台参数、固定 Nuitka 版本和 QML 文件。
+- 26/26 单测、打包 dry-run、客户端/QML smoke、启动器、编译、依赖、QML lint 与差异检查通过；1500×920、1180×760、940×620 的 8 张 Qt 离屏截图生成并目视复核。
+- 本机没有 `cl.exe`/`vswhere.exe`，未下载 Nuitka 或实际编译；无 Git remote，远端 CI 和发布仍未验证，改动未提交。
+- 后续门槛：具备 MSVC 的 Windows 构建与 Qt 第三方许可审查；提供 Git remote 后实际运行 Python 3.12–3.14 CI。
+
+## 2026-10-01 04:14（Asia/Shanghai）· 工作区标题省略与回归修复
+
+- 发现并修复长工作区名称在响应式布局中被直接裁切的问题：侧栏名称中间省略，宽屏标题栏保留可读项目名，紧凑布局隐藏该标题栏标签但保留完整路径提示。
+- 回归测试补充标签溢出/省略符检查与三栏尺寸门禁；1500×920、1180×760、940×620 共 8 张 Qt 截图生成并目视检查，分栏宽度均达标。
+- 24/24 单测、客户端/QML 交互 smoke、启动器、编译、依赖、QML lint、`git diff --check` 全通过；截图并非原生桌面验收。远端 CI 与 Windows 安装包未验证；无 Git remote，未提交。
+
+## 2026-10-01 03:47（Asia/Shanghai）· 可执行的响应式截图门禁
+
+- `smoke_screenshot.py` 现在检查主工作区三栏最小宽度、可见性、相邻无重叠、Agent 输入区宽度和截图非空，不再只验证 PNG 保存成功。
+- 三种窗口尺寸的栏宽检查通过：1500px→365/716/409，1180px→284/567/319，940px→240/410/280；24/24 单测及客户端/QML smoke、编译、依赖、lint 均通过。
+- 新截图复看宽屏编辑器与窄屏版本树无明显视觉异常；原生桌面捕获仍不可用，当前截图为离屏渲染。
+
+## 2026-10-01 03:42（Asia/Shanghai）· CI 供应链更新后复验
+
+- Actions 固定 SHA、Python 版本矩阵防漂移及启动器测试在内共 24/24 单测通过；客户端/QML smoke、运行时预检、编译、依赖、QML lint 和 `git diff --check` 均通过。
+- 重新生成 8 张响应式 Qt 截图；UI 代码未变，已在前一轮复看宽屏拖拽树与窄屏编辑器/版本树。
+- 未运行 GitHub 远端 workflow 或 Dependabot；当前未配置 remote。
+
+## 2026-10-01 03:41（Asia/Shanghai）· GitHub Actions 可复现性
+
+- CI 使用的三个 GitHub Actions 固定为完整 commit SHA，标注对应 release 版本；新增每周 GitHub Actions Dependabot 更新计划。
+- 单测覆盖 SHA 格式和更新配置，定向测试通过；GitHub 远端无配置，workflow/Dependabot 仍需首次推送后实际运行验证。
+
+## 2026-10-01 03:36（Asia/Shanghai）· 完整回归与发布能力边界
+
+- 最终本机 Python 3.14 验证：23/23 单测、客户端/QML 交互 smoke、启动器检查、8 张 Qt 响应式截图、编译、依赖检查、QML lint、`git diff --check` 通过；拖拽树与窄屏布局已人工复看。
+- Python 3.12/3.13 仅纳入 Windows CI 矩阵，尚未运行远端工作流；本机找不到 MSVC C++ 工具链，Nuitka 安装包未构建；未获得原生桌面截图。
+- 当前仓库没有 Git remote，因此没有推送或发布；所有改动保持未提交。
+
+## 2026-10-01 03:35（Asia/Shanghai）· 支持版本矩阵防漂移
+
+- CI 加入 Python 3.13，现逐一覆盖声明支持的 3.12–3.14；单测解析 `pyproject.toml` 与 workflow 矩阵，校验版本列表一致，定向测试通过。
+- Qt 官方发行说明确认 PySide6 支持 Python 3.13，并记录 3.14 支持；本机实测仍限于 Python 3.14，远端矩阵尚未运行。
+
+## 2026-10-01 03:32（Asia/Shanghai）· RetryQueue 停止中的重启保护
+
+- 回归测试复现：`stop()` 等待超时后旧 worker 仍存活，`start()` 无提示返回，旧任务结束后队列停止服务。
+- `start()` 现在区分运行中与停止中 worker：正常运行时重复启动仍幂等；停止未完成时明确报错，不创建并行 worker；退出后重启通过。
+- 23/23 单测、客户端依赖/QML smoke、8 张响应式截图、编译、pip check、QML lint 和 `git diff --check` 通过；截图为 Qt 离屏渲染，未替代原生桌面验收。
+
+## 2026-10-01 03:18（Asia/Shanghai）· 项目级 Python 启动器
+
+- 增加 `scripts/bootstrap.py` 与启动器测试：支持 Python 3.12–3.14、校验 PySide6、仅按需安装依赖；不覆盖既有虚拟环境。批处理启动器与 CI 加入只读运行环境预检。
+- 在隔离临时目录实测 Python 3.11 经 `py` 启动器选中 3.14 并创建 venv；实际 `start_client.bat --check-runtime` 通过，不触发额外下载。
+- 单测 22/22；客户端依赖 smoke、8 张响应式 Qt 截图、编译、pip check、QML lint、`git diff --check` 均通过。已人工复看宽屏编辑器和窄屏版本树；不是原生桌面截图验收。
+- 无 Git remote，未运行远端 CI 或安装包构建；改动未提交。
+
+## 2026-10-01 02:53（Asia/Shanghai）· 原生桌面截图接口复核
+
+- 按桌面自动化流程重新查询 Windows 应用；`sky.list_apps()` 连续两次因 native pipe 缺失失败，未取得原生窗口截图。已明确区分 Qt 离屏截图与真实桌面截图，不据此宣称原生视觉验收通过。
+
+## 2026-10-01 02:52（Asia/Shanghai）· 队列中断恢复与完整回归
+
+- 新增模拟“任务已写入 running 后进程中断”的恢复测试，验证队列重启后恢复执行并完成；与幂等启动/停止/重启及退避重试一起，17/17 单测通过。
+- Qwen2.5-Coder-7B 经真实 RetryQueue→CodingAgent 全链路通过；工具事件、任务完成事件、仅提交目标文件与干净工作区均核验。
+- 客户端交互 smoke、Python 编译、依赖检查、QML lint 和 `git diff --check` 通过；此前本轮 8 张响应式截图已人工复看。
+- 原生桌面截图、Python 3.12 远端 CI、GitHub remote 与安装包构建仍待验证；`vswhere` 未发现 MSVC C++ 工具链；改动未提交。
+
+## 2026-10-01 02:50（Asia/Shanghai）· 队列生命周期修复与模型全链路复测
+
+- 复现并修复 RetryQueue 重复 `start()` 会恢复正在运行任务并启动第二个 worker、`stop()` 后重启未清除停止标志的问题；增加幂等启动/停止/重启回归。
+- 16/16 单测通过；本机 Qwen2.5-Coder-7B 经真实 RetryQueue→CodingAgent 流程调用 `write_file`，任务成功事件、工具事件、隔离仓库单文件提交与干净工作区均验证通过。
+- 客户端双击打开/Ctrl+S、工作区恢复、多窗口、8 张宽中窄布局截图及版本树拖拽/平移/滚动/缩放、编译、依赖、QML lint 和差异检查通过；截图为 Qt 离屏图，人工复看无新外观异常。
+- 仍待原生 Windows 截图、Python 3.12/远端 CI、配置 Git remote 与真实安装包构建；没有提交项目改动。
+
+## 2026-10-01 02:45（Asia/Shanghai）· 文件编辑与 Git 路径回归
+
+- 增加 Git 中文目录/空格文件名的受限提交测试，状态枚举和提交都使用 NUL 分隔路径；15/15 单测通过，未混入其他文件。
+- 宽屏编辑器、窄屏版本树 Qt 截图人工复看无新布局异常；客户端双击打开/Ctrl+S、工作区恢复、多窗口、拖拽/平移/滚动/缩放 smoke 通过。
+- 本机 Qwen 在文件工具安全修复后仍完成 `write_file`、事件记录和隔离 Git 提交；编译、依赖、QML lint、差异检查通过。
+- 原生桌面截图、Python 3.12 远端 CI、GitHub remote 与安装包构建仍待验证；未提交项目更改。
+
+## 2026-10-01 02:25（Asia/Shanghai）· 安全修复后 Qwen 端到端复测
+
+- 补齐替换结果边界检查：拒绝 NUL 内容，且替换扩容后仍受单文件写入上限约束。
+- 文件工具保护改动后重新运行本机 Qwen2.5-Coder-7B；真实 `write_file` 创建文件，事件账本有记录，临时仓库自动提交仅包含 `hello.py`，工作区干净。
+- 14/14 单测通过；客户端交互、8 张多尺寸 Qt 离屏截图及版本树拖拽/平移/滚动/缩放、Python 编译、依赖检查、QML lint 与 `git diff --check` 通过。
+- 真实桌面截图和 GitHub 远端 CI/发布仍待具备窗口枚举接口及配置 Git remote 后验证。
+
+## 2026-10-01 02:22（Asia/Shanghai）· 文件工具数据保护与全面回归
+
+- 复查发现 `replace_in_file` 对空匹配串会意外插入文本；对含 NUL 的二进制或非法 UTF-8 文件则可能以替换字符解码后写回，造成静默破坏。新增拒绝空匹配、NUL、无效 UTF-8、超大既有文件及非普通文件的保护；README 补充该安全边界。
+- 新增回归覆盖二进制和无效编码的替换/覆盖拒绝、原始字节不变及 NUL 文本拒绝；14/14 单测通过。
+- 客户端交互 smoke、8 张宽/中/窄布局截图与分支拖动/画布平移/滚动/缩放、`py_compile`、`pip check`、QML lint、`git diff --check` 通过；此前本机 Qwen→工具事件→隔离 Git 提交闭环已实测通过。
+- Windows 桌面截图接口、远端 GitHub CI、Python 3.12 与 MSVC 二进制构建仍未验证；项目修改保留未提交状态。
+
+## 2026-10-01 02:01（Asia/Shanghai）· Qwen 实际编码闭环与最终回归
+
+- 已安装的 `scidev-qwen2.5-coder-7b:q4_k_m` 经 Ollama 接入 Harness，真实完成 `write_file` 工具调用；临时 Git 项目记录工具事件并自动提交，提交文件仅 `hello.py`，工作区干净。未重复下载 4.7 GB 模型。
+- 13/13 单测、IDE 双击打开/Ctrl+S、工作区恢复、多窗口、QML/响应式截图与版本树拖拽/平移/滚动/缩放、`py_compile`、`pip check`、QML lint、`git diff --check` 通过。
+- 两次首轮烟测断言分别过严地要求末尾换行、未考虑根提交 `diff-tree` 默认不列文件；修正临时验证条件后完整闭环通过，未发现产品代码缺陷。
+- 原生 Windows 窗口截图工具当前不可用，8 张图为 Qt 离屏截图；无 Git remote，未运行 GitHub CI、未构建安装包、未提交或发布。
+
+## 2026-10-01 01:55（Asia/Shanghai）· 版本树交互与自动提交隔离
+
+- 真实 Qt 控件烟测证明普通滚轮原先被 QQuickWidget 消费，不能滚动外层窄屏画布；已改为普通滚轮滚动、Ctrl+滚轮缩放，并验证滚动后的卡片可见。
+- 分支拖拽截图发现同级尝试卡片容易重叠；增大布局槽距，并测试拖拽、位置重载和节点不遮挡。窄屏 splitter 调整后首个尝试卡片完整显示。
+- 自动提交由 `git add -A` 改为会话路径 + 临时 index；13 个单测、IDE 双击打开/Ctrl+S、工作区恢复、多窗口、画布平移/滚动/缩放、分支拖动与截图/QML、编译和依赖检查通过。Computer Use 无原生应用枚举，截图为 Qt 离屏控件图；未运行远端 CI 或二进制构建。
+
+## 2026-10-01 01:24（Asia/Shanghai）· 发布准备与响应式界面复查
+
+- 确认项目代码许可证为 Apache-2.0；README 明确 Qt/PySide6 运行时许可独立于项目代码。
+- 1500×920、1180×760、940×620 五种代表布局截图回归通过；修复窄屏资源栏状态文案溢出和少数字符图标缺字，并将状态栏宽度检查加入截图烟测。
+- 本机验证通过：12/12 单测、依赖/客户端/QML 烟测、命令审批拒绝、QML lint、Python 编译及 `git diff --check`。无 Git remote；未运行远端 CI、未发布。
+- 在独立目录对允许发布的源码做清单暂存与打包 dry-run；确认不包含 `.venv`、`.research`、Git/CI 数据，并通过 `--nuitka-version=4.1.1` 固定 Nuitka。缺少 MSVC `dumpbin`，因此没有执行或声称完成二进制构建。
+
+## 2026-09-30 19:53 · 开源发布与命令安全
+
+- 根据用户选择加入 Apache-2.0（与 Apache 官方文件逐字核验）；增加 Python 3.12/3.14 Windows CI。README 移除开发机绝对模型路径，Ollama 标签可覆盖；架构文档已与当前 Qt 实现对齐。
+- Agent 文件工具现阻止项目外路径和常见凭据路径；shell 命令需逐条 UI 批准，拒绝时不会启动，并记录决策。`.env.example` 等模板保留可读性。
+- 本机 Python 3.14 / PySide6 6.11.2 回归通过：12 个单测、编译、依赖检查、客户端/QML 启动与命令拒绝桥接 smoke、QML lint、`git diff --check`。
+- 安全改动后再次使用本地 Qwen 经 Harness 真实创建文件、记录 `write_file` 并自动提交；纯文件编辑未请求 shell 审批，测试目录已清理。
+- GitHub CI 尚未远端运行：当前没有配置 Git remote。
+
+## 2026-09-27 17:56 · 本机 Qwen2.5-Coder-7B 接入（Asia/Shanghai）
+
+- 从 ModelScope Qwen GGUF 仓库固定 revision `9bc02b77c486bb4b40e119970821bf8cfeaaf267` 下载 Q4_K_M 单文件（4,683,073,536 字节）；SHA-256 `509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c` 核验一致，存放于项目外本地模型目录，不随仓库分发，Apache-2.0。
+- 导入 Ollama：`scidev-qwen2.5-coder-7b:q4_k_m`，上下文设为 32K；新增 `start_qwen_local.bat` 本地启动入口，不改全局环境变量或默认启动方式。
+- 为该入口增加 opt-in 文本工具调用兼容：仅接受已声明工具、参数完整且无未知参数的 `<tool_call>` / JSON fenced call；其他 provider 默认不启用。
+- 验证：9 个单测通过；Harness 经本机 Ollama 实际调用 `write_file`，在隔离临时项目创建文件、记入工具事件并生成 Git commit。未在正式项目内生成测试文件。
+
+## 2026-09-27 17:16 · 客户端 UI 与布局修复（Asia/Shanghai）
+
+- 深色配色改为蓝灰分层表面，统一字体、留白、边框和状态栏；编辑区工具收进“更多”，对话输入区改用紧凑状态标签。
+- 活动栏整理为资源管理器、项目搜索、开发版本树三个有效入口；修复重复导航和错误高亮。
+- 工作区最低窗口调整为 940×620；标题栏和版本树工具随窄屏缩短，手动拖动三栏后窗口缩放仍保留比例。
+- 版本树卡片与说明文字提升可读性；科研总结默认输出 12000 tokens，配置上限 32000。
+- 截图复核 1500×920 与 940×620 工作区及版本树；LLM 当前未配置，未发起真实模型请求。
+
+## 2026-09-02
+
+- 已完成科研 Harness 方向设计文档。
+- 根据需求确认使用原生桌面客户端，不使用网页端。
+- 已移除第一版中的“运行实验”主流程，优先实现 Codex 式编码闭环。
+- 已完成 Tkinter 桌面客户端：编码会话、LLM 工具调用、文件修改、必要命令检查、任务重试、会话 transcript、Git 自动提交和项目文件树。
+- 已完成 VSCode + Codex 风格 UI 重构：深色 IDE 主题、左侧资源管理器、中间任务问卷/代码工作区、右侧对话栏、任务历史和 Git 弹窗。
+- 已安装 PySide6 6.11.2，完成表现层从 Tkinter 迁移到 Qt，保留现有 CodingAgent 核心。
+- Qt 客户端已通过窗口构造、显示、关闭和截图布局检查；代码编辑器支持行号、基础 Python 语法高亮和 Ctrl+S 保存。
+- 已创建项目 `.venv` 并在其中安装 PySide6，新增 `start_client.bat` 自动准备依赖并启动客户端。
+- 已通过 4 个核心单元测试和客户端启动/关闭冒烟测试。
+- 已按 VS Code + Codex 工作台重做客户端布局：活动栏、资源管理器、中央任务入口/代码编辑器、右侧 Agent 对话和底部状态栏。
+- 已修复客户端中文文案编码错乱，并统一为高对比度 VS Code 深色主题；完成实际窗口截图检查。
+- 已去除主窗口、任务历史和 Git 窗口的 Windows 原生标题栏，增加统一的自定义窗口控制和拖动支持。
+- 已将左侧活动栏增宽并放开侧栏可调范围，三栏使用 QSplitter 响应式伸缩；文件搜索可过滤资源树，任务问卷支持 Ctrl+Enter 提交。
+- 已修复双击启动时依赖当前工作目录的问题，客户端现在始终以自身目录作为项目根目录。
+- 已将 UI 基准字号提升至 10pt、编辑器提升至 11pt，文件树和聊天正文同步放大；活动栏提升至 70px，左侧资源管理器范围调整为 340–520px。
+- 已完成 1500px 常用窗口和 1180px 最小窗口截图检查，确认三栏无横向溢出。
+- 已将 Git 做成主工作区页面，加入主线/尝试方向树、节点详情、统计卡片和失败方向直接重试；树节点来自 `.research` 任务账本，不冒充 Git 正式分支。
+- 已移除任务历史和 Git 状态的常规弹窗，任务历史并入开发版本树，开发树支持随节点数量增高并纵向滚动。
+- 已修复同一主线下多个尝试方向的节点重叠问题，并通过 9 节点示例树渲染检查。

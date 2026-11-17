@@ -8,7 +8,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from PySide6.QtWidgets import QApplication
 
-from scidev_editor import CodeEditor
+from scidev.desktop.editor import CodeEditor
 
 
 class EditorDiffHighlightTests(unittest.TestCase):

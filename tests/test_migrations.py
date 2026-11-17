@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from scidev_migrations import SCHEMA_VERSION, migrate_project
+from scidev.runtime.migrations import SCHEMA_VERSION, migrate_project
 
 
 class MigrationTests(unittest.TestCase):

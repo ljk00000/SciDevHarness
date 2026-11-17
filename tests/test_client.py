@@ -40,7 +40,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
 from shiboken6 import delete as delete_qt_object  # noqa: E402
 
-from scidev_client import (  # noqa: E402
+from scidev.desktop.client import (  # noqa: E402
     CodeEditor,
     ClientWindow,
     DevelopmentTreeView,
@@ -55,8 +55,8 @@ from scidev_client import (  # noqa: E402
     default_sample_workspace,
     resolve_startup_workspace,
 )
-from scidev_core import CodingToolbox, SummarySettings  # noqa: E402
-from scidev_ui import ACTIVITY_RAIL_WIDTH, _scale_stylesheet_metrics, ui_scale_for_resolution  # noqa: E402
+from scidev.agent.core import CodingToolbox, SummarySettings  # noqa: E402
+from scidev.desktop.theme import ACTIVITY_RAIL_WIDTH, _scale_stylesheet_metrics, ui_scale_for_resolution  # noqa: E402
 from tests.qt_temp import QtTemporaryDirectory  # noqa: E402
 
 tempfile.TemporaryDirectory = QtTemporaryDirectory
@@ -303,7 +303,7 @@ class UIResolutionScalingTests(unittest.TestCase):
             isolated_settings = QSettings(
                 str(Path(temp) / "ui.ini"), QSettings.Format.IniFormat
             )
-            settings_patch = patch("scidev_client.QSettings", return_value=isolated_settings)
+            settings_patch = patch("scidev.desktop.client.QSettings", return_value=isolated_settings)
             settings_patch.start()
             self.addCleanup(settings_patch.stop)
             window = ClientWindow(Path(temp))
@@ -642,7 +642,7 @@ class UIProfileTests(unittest.TestCase):
             root = Path(temp)
             # Isolated settings: a test must never rewrite the developer's theme.
             settings = QSettings(str(root / "ui.ini"), QSettings.Format.IniFormat)
-            with patch("scidev_client.QSettings", return_value=settings):
+            with patch("scidev.desktop.client.QSettings", return_value=settings):
                 window = ClientWindow(root)
                 try:
                     window.ui_theme_actions["paper"].trigger()
@@ -1062,7 +1062,7 @@ class ProjectContextUiTests(unittest.TestCase):
                 "report": "Python 3.13 · pip check clean",
             }
             try:
-                with patch("scidev_client.ProjectEnvironmentInspector", return_value=inspector) as factory:
+                with patch("scidev.desktop.chat_workflow.ProjectEnvironmentInspector", return_value=inspector) as factory:
                     window.project_environment_check.click()
                     deadline = time.monotonic() + 3
                     while window._environment_check_running and time.monotonic() < deadline:
@@ -1493,7 +1493,7 @@ class EditorOutlineTests(unittest.TestCase):
                     parsed.append(1)
                     return real_parse(source_text, *args, **kwargs)
 
-                with patch("scidev_client.ast.parse", side_effect=counting):
+                with patch("scidev.desktop.editor_workspace.ast.parse", side_effect=counting):
                     for index in range(5):
                         editor.insertPlainText(f"# keystroke {index}\n")
                     self.app.processEvents()
@@ -1504,7 +1504,7 @@ class EditorOutlineTests(unittest.TestCase):
 
                 # Oversized documents fall back to a line scan instead of parsing.
                 window.CODE_INTEL_MAX_PARSE_CHARS = 10
-                with patch("scidev_client.ast.parse", side_effect=AssertionError("must not parse")):
+                with patch("scidev.desktop.editor_workspace.ast.parse", side_effect=AssertionError("must not parse")):
                     window._refresh_code_intel()
                 self.assertGreater(window.outline_tree.topLevelItemCount(), 0)
             finally:
@@ -1519,7 +1519,7 @@ class TaskPlanClientTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_plan_mode_is_persisted_and_plan_progress_is_visible_and_clearable(self) -> None:
-        from scidev_planning import TaskPlan
+        from scidev.agent.planning import TaskPlan
 
         with tempfile.TemporaryDirectory(prefix="scidev-plan-panel-") as temporary:
             window = ClientWindow(Path(temporary))
@@ -2159,7 +2159,7 @@ class SymbolNavigationTests(unittest.TestCase):
                 cursor.setPosition(original.index("value"))
                 editor.setTextCursor(cursor)
 
-                with patch("scidev_client.QInputDialog.getText", return_value=("count", True)):
+                with patch("scidev.desktop.editor_workspace.QInputDialog.getText", return_value=("count", True)):
                     window._rename_current_symbol()
 
                 self.assertEqual(
@@ -2186,7 +2186,7 @@ class SymbolNavigationTests(unittest.TestCase):
                 cursor.setPosition(original.index("变量"))
                 editor.setTextCursor(cursor)
 
-                with patch("scidev_client.QInputDialog.getText", return_value=("计数", True)):
+                with patch("scidev.desktop.editor_workspace.QInputDialog.getText", return_value=("计数", True)):
                     window._rename_current_symbol()
 
                 renamed = "计数 = 1\nprint(计数)\n文本 = '变量'\n"
@@ -2196,7 +2196,7 @@ class SymbolNavigationTests(unittest.TestCase):
                 cursor.setPosition(renamed.index("计数"))
                 editor.setTextCursor(cursor)
 
-                with patch("scidev_client.QInputDialog.getText", return_value=("class", True)):
+                with patch("scidev.desktop.editor_workspace.QInputDialog.getText", return_value=("class", True)):
                     window._rename_current_symbol()
 
                 self.assertEqual(editor.toPlainText(), renamed)
@@ -2218,7 +2218,7 @@ class SymbolNavigationTests(unittest.TestCase):
                 cursor.setPosition(original.index("value"))
                 editor.setTextCursor(cursor)
 
-                with patch("scidev_client.QInputDialog.getText", return_value=("count", True)):
+                with patch("scidev.desktop.editor_workspace.QInputDialog.getText", return_value=("count", True)):
                     window._rename_current_symbol()
 
                 self.assertEqual(editor.toPlainText(), original)
@@ -2919,6 +2919,77 @@ class WorkspaceSearchTests(unittest.TestCase):
 
 
 class WorkspaceLifecycleTests(unittest.TestCase):
+    def test_close_stops_code_intel_and_late_edits_do_not_restart_it(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-close-intel-") as temp:
+            window = ClientWindow(Path(temp))
+            window._code_intel_timer.start(10000)
+            try:
+                window.close()
+                self.assertFalse(window._code_intel_timer.isActive())
+                window._schedule_code_intel()
+                self.assertFalse(window._code_intel_timer.isActive())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_closed_window_does_not_start_a_new_language_server(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-close-lsp-") as temp:
+            window = ClientWindow(Path(temp))
+            try:
+                window.close()
+                with patch("scidev.desktop.editor_workspace.ResidentLSPBridge") as create_bridge:
+                    window._schedule_lsp_diagnostics(Path(temp) / "module.py", "value = 1\n")
+                create_bridge.assert_not_called()
+                self.assertIsNone(window._resident_lsp_bridge)
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_workspace_settings_honor_an_explicit_default_ini_format(self) -> None:
+        script = '''
+import os
+from pathlib import Path
+import sys
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+os.environ['QT_QUICK_BACKEND'] = 'software'
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings
+from PySide6.QtWidgets import QApplication
+from scidev.desktop.client import ClientWindow
+root = Path(sys.argv[1])
+QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(root/'preferences'))
+first_root, second_root = root/'first', root/'second'
+first_root.mkdir()
+second_root.mkdir()
+app = QApplication([])
+first = ClientWindow(first_root)
+second = None
+try:
+    assert first.ui_settings.format() == QSettings.Format.IniFormat, 'default settings format ignored'
+    second = first._open_workspace_root(second_root)
+    first.ui_settings.sync()
+    persisted = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, 'SciDevHarness', 'SciDevHarness')
+    assert persisted.value('lastWorkspace') == str(second_root.resolve()), 'workspace selection was not persisted'
+    assert first._open_workspace_root(first_root) is first
+    first.ui_settings.sync()
+    persisted.sync()
+    assert persisted.value('lastWorkspace') == str(first_root.resolve()), 'existing window selection was not persisted'
+finally:
+    if second is not None:
+        second.close()
+        second.deleteLater()
+    first.close()
+    first.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+os._exit(0)
+'''
+        with tempfile.TemporaryDirectory(prefix="scidev-settings-format-") as temp:
+            result = subprocess.run([sys.executable, "-B", "-c", script, temp],
+                                    cwd=Path(__file__).resolve().parents[1],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=40)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
@@ -2965,7 +3036,7 @@ class WorkspaceLifecycleTests(unittest.TestCase):
             workspace_b = root / "workspace-b"
             workspace_a.mkdir()
             workspace_b.mkdir()
-            with patch("scidev_client.QSettings", return_value=settings):
+            with patch("scidev.desktop.client.QSettings", return_value=settings):
                 first = ClientWindow(workspace_a)
                 second = ClientWindow(workspace_b)
                 try:
@@ -3117,7 +3188,7 @@ class UnsavedCloseTests(unittest.TestCase):
             root = Path(temp)
             window, _source, _editor = self._open_window_with_file(root)
             try:
-                with patch("scidev_client.QMessageBox.exec") as show_dialog:
+                with patch("scidev.desktop.client.QMessageBox.exec") as show_dialog:
                     self.assertTrue(window.close())
                 show_dialog.assert_not_called()
             finally:
@@ -3461,7 +3532,7 @@ class SummarySettingsUiTests(unittest.TestCase):
                 saved_provider = Mock(
                     base_url="https://example.test/v1", model="model-x", api_key="secret", source="saved",
                 )
-                with patch("scidev_client.save_provider_config", return_value=saved_provider) as save_provider:
+                with patch("scidev.desktop.agent_settings.save_provider_config", return_value=saved_provider) as save_provider:
                     window.provider_base_edit.setText("https://example.test/v1")
                     window.provider_model_edit.setText("model-x")
                     window.provider_key_edit.setText("secret")
@@ -3756,11 +3827,31 @@ class TaskControlUiTests(unittest.TestCase):
                 self.assertTrue(window.stop_task_button.isEnabled())
                 with patch.object(window.agent, "request_cancel") as cancel:
                     window.cancel_active_task()
-                cancel.assert_called_once_with()
+                cancel.assert_called_once_with("task-running")
                 self.assertFalse(window.stop_task_button.isEnabled())
                 window.active_task_id = None
                 window._sync_stop_button()
                 self.assertFalse(window.stop_task_button.isVisible())
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_stop_while_queued_is_not_cleared_when_the_agent_starts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-queued-stop-") as temp:
+            window = ClientWindow(Path(temp))
+            window.worker.stop()
+            provider = Mock(spec=["chat", "model"])
+            provider.model = "queued-stop-model"
+            provider.chat.return_value = {"content": "finished", "tool_calls": []}
+            try:
+                window.active_task_id = "queued-stop"
+                window.cancel_active_task()
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
+                    with self.assertRaisesRegex(Exception, "任务已取消"):
+                        window.agent.run({"task_id": "queued-stop", "payload": {
+                            "session_id": "queued-stop", "prompt": "explain this project", "planning_mode": "off",
+                        }})
+                provider.chat.assert_not_called()
             finally:
                 window.close()
                 self.app.processEvents()
@@ -3870,7 +3961,7 @@ class TerminalUiTests(unittest.TestCase):
                     "sys.stderr.buffer.write(bytes([0xad,0x97])); sys.stderr.buffer.flush()"
                 )
                 window.terminal_input.setText(subprocess.list2cmdline([sys.executable, "-c", script]))
-                with patch("scidev_client.PTYSession.available", return_value=False):
+                with patch("scidev.desktop.client.PTYSession.available", return_value=False):
                     window._run_terminal_command()
                 self._wait_terminal(window)
 

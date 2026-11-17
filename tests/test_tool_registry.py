@@ -4,9 +4,9 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from scidev_core import CodingToolbox, EventLedger
-from scidev_tool_registry import READ_ONLY_TOOL_NAMES, ToolRegistry
-from scidev_tool_schema import tool_definitions
+from scidev.agent.core import CodingToolbox, EventLedger
+from scidev.agent.tool_registry import READ_ONLY_TOOL_NAMES, ToolRegistry
+from scidev.agent.tool_schema import tool_definitions
 
 
 class ToolRegistryTests(unittest.TestCase):

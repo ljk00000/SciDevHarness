@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from scidev_core import CodingAgent, EventLedger, GitManager, SummarySettings
+from scidev.agent.core import CodingAgent, EventLedger, GitManager, SummarySettings
 
 
 class BudgetSettingsTests(unittest.TestCase):

@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_core import (
+from scidev.agent.core import (
     CodingAgent,
     CodingToolbox,
     EventLedger,
@@ -16,7 +16,7 @@ from scidev_core import (
     OpenAICompatibleProvider,
     SummarySettings,
 )
-from scidev_multi_agent import (
+from scidev.agent.multi_agent import (
     DELEGATE_PARALLEL_RESEARCH_TOOL,
     DELEGATE_RESEARCH_TOOL,
     MAX_SPECIALIST_TURNS,
@@ -502,7 +502,7 @@ class MultiAgentTests(unittest.TestCase):
             }}
 
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     outcome = agent.run(task)
                 self.assertEqual(outcome["text"], "已根据只读调查核对目标位置。")
                 saved = json.loads((root / ".research" / "sessions" / "team-session.json").read_text(encoding="utf-8"))
@@ -555,7 +555,7 @@ class MultiAgentTests(unittest.TestCase):
             }}
 
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     outcome = agent.run(task)
                 saved = json.loads(
                     (root / ".research" / "sessions" / "parallel-session.json").read_text(encoding="utf-8")
@@ -615,7 +615,7 @@ class MultiAgentTests(unittest.TestCase):
             }}
 
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     agent.run(task)
                 saved = json.loads(
                     (root / ".research" / "sessions" / "parallel-stale-session.json").read_text(encoding="utf-8")
@@ -711,7 +711,7 @@ class MultiAgentTests(unittest.TestCase):
                 "context_files": ["main.py"],
             }}
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     agent.run(task)
                 saved = json.loads((root / ".research" / "sessions" / "retry-session.json").read_text(encoding="utf-8"))
                 records = saved["specialist_calls"]
@@ -765,7 +765,7 @@ class MultiAgentTests(unittest.TestCase):
                 "context_files": ["src/main.py"],
             }}
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     outcome = agent.run(task)
                 saved = json.loads((root / ".research" / "sessions" / "manager-coder-session.json").read_text(encoding="utf-8"))
                 self.assertIn("reviewed diff", outcome["text"])
@@ -813,7 +813,7 @@ class MultiAgentTests(unittest.TestCase):
                 "context_files": ["src/main.py"],
             }}
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     with self.assertRaisesRegex(Exception, "拒绝了补丁"):
                         agent.run(task)
                 saved = json.loads((root / ".research" / "sessions" / "denied-coder-session.json").read_text(encoding="utf-8"))
@@ -867,7 +867,7 @@ class MultiAgentTests(unittest.TestCase):
                 "context_files": ["src/main.py"],
             }}
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     with self.assertRaisesRegex(Exception, "其余补丁块未获批准"):
                         agent.run(task)
                 saved = json.loads((root / ".research" / "sessions" / "partial-coder-session.json").read_text(encoding="utf-8"))
@@ -908,7 +908,7 @@ class MultiAgentTests(unittest.TestCase):
                 "context_files": [],
             }}
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     agent.run(task)
                 self.assertNotIn("delegate_research", {
                     item["function"]["name"] for item in main.calls[0]["tools"]
@@ -952,7 +952,7 @@ class MultiAgentTests(unittest.TestCase):
                 "context_files": [],
             }}
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     agent.run(task)
                 self.assertEqual(len(child.calls), 3)
                 self.assertEqual(len(json.loads(
@@ -994,7 +994,7 @@ class MultiAgentTests(unittest.TestCase):
                 "context_files": [],
             }}
             try:
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=main):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=main):
                     agent.run(task)
                 self.assertEqual(len(child.calls), 2)
                 saved = json.loads((root / ".research" / "sessions" / "stale-session.json").read_text(encoding="utf-8"))

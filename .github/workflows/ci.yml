@@ -78,10 +78,9 @@ jobs:
         run: |
           $targets = @(
             Get-ChildItem -LiteralPath $PWD -Filter "scidev_*.py" -File
+            Get-ChildItem -LiteralPath (Join-Path $PWD "scidev") -Filter "*.py" -File -Recurse
             Get-ChildItem -LiteralPath (Join-Path $PWD "tests") -Filter "*.py" -File
             Get-ChildItem -LiteralPath (Join-Path $PWD "scripts") -Filter "*.py" -File
-            Get-Item -LiteralPath (Join-Path $PWD "smoke_dependency.py")
-            Get-Item -LiteralPath (Join-Path $PWD "smoke_screenshot.py")
           ) | ForEach-Object { $_.FullName }
           & .\.venv\Scripts\python.exe -m py_compile @targets
 
@@ -89,15 +88,15 @@ jobs:
         run: .\.venv\Scripts\python.exe -m pip check
 
       - name: Smoke-test dependencies
-        run: .\.venv\Scripts\python.exe smoke_dependency.py
+        run: .\.venv\Scripts\python.exe scripts\smoke_dependency.py
 
       - name: Render IDE and version-tree layouts
-        run: .\.venv\Scripts\python.exe smoke_screenshot.py --output-dir "$env:RUNNER_TEMP\scidev-ui-shots"
+        run: .\.venv\Scripts\python.exe scripts\smoke_screenshot.py --output-dir "$env:RUNNER_TEMP\scidev-ui-shots"
 
       - name: Render IDE layouts at 125% DPI scale
         env:
           QT_SCALE_FACTOR: "1.25"
-        run: .\.venv\Scripts\python.exe smoke_screenshot.py --output-dir "$env:RUNNER_TEMP\scidev-ui-shots-125dpi"
+        run: .\.venv\Scripts\python.exe scripts\smoke_screenshot.py --output-dir "$env:RUNNER_TEMP\scidev-ui-shots-125dpi"
 
       - name: Lint QML
         run: .\.venv\Scripts\pyside6-qmllint.exe ui\qml\DevelopmentTree.qml

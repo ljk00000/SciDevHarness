@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scidev_tool_schema import tool_definitions
+from scidev.agent.tool_schema import tool_definitions
 
 
 class ToolSchemaTests(unittest.TestCase):

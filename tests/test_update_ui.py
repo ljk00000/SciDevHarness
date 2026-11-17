@@ -11,8 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from scidev_update import DownloadedAsset, UpdateError, UpdateInfo
-from scidev_update_ui import UpdateDialog, _CheckWorker, _DownloadWorker
+from scidev.integrations.update import DownloadedAsset, UpdateError, UpdateInfo
+from scidev.desktop.update_ui import UpdateDialog, _CheckWorker, _DownloadWorker
 
 
 def _info(available: bool = True) -> UpdateInfo:
@@ -84,7 +84,7 @@ class UpdateDialogTests(unittest.TestCase):
             raise UpdateError("offline")
 
         with tempfile.TemporaryDirectory(prefix="scidev-update-ui-", ignore_cleanup_errors=True) as temp:
-            with patch("scidev_update_ui.QMessageBox.warning") as warning:
+            with patch("scidev.desktop.update_ui.QMessageBox.warning") as warning:
                 dialog = UpdateDialog.show_for_workspace(Path(temp), checker=checker)
         self.assertIsNone(dialog)
         warning.assert_called_once()
@@ -99,7 +99,7 @@ class UpdateDialogTests(unittest.TestCase):
             worker.completed.connect(completed.append)
             worker.failed.connect(failed.append)
             with patch(
-                "scidev_update_ui.download_asset",
+                "scidev.desktop.update_ui.download_asset",
                 return_value=DownloadedAsset(target, "a" * 64, 10),
             ):
                 worker.run()
@@ -113,7 +113,7 @@ class UpdateDialogTests(unittest.TestCase):
             failed: list[str] = []
             worker.completed.connect(completed.append)
             worker.failed.connect(failed.append)
-            with patch("scidev_update_ui.download_asset", side_effect=UpdateError("offline")):
+            with patch("scidev.desktop.update_ui.download_asset", side_effect=UpdateError("offline")):
                 worker.run()
             self.assertEqual(completed, [])
             self.assertEqual(failed, ["offline"])
@@ -130,14 +130,14 @@ class UpdateDialogTests(unittest.TestCase):
                 return DownloadedAsset(target, "a" * 64, 10)
 
             worker.progress.connect(lambda done, total: updates.append((done, total)))
-            with patch("scidev_update_ui.download_asset", side_effect=fake_download):
+            with patch("scidev.desktop.update_ui.download_asset", side_effect=fake_download):
                 worker.run()
             self.assertEqual(updates, [(5, 10)])
 
     def test_check_worker_emits_release_info(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-check-worker-", ignore_cleanup_errors=True) as temp:
-            with patch("scidev_update_ui.detect_repo", return_value="owner/repo"), patch(
-                "scidev_update_ui.check_for_update",
+            with patch("scidev.desktop.update_ui.detect_repo", return_value="owner/repo"), patch(
+                "scidev.desktop.update_ui.check_for_update",
                 return_value=_info(),
             ):
                 worker = _CheckWorker(Path(temp))
@@ -151,8 +151,8 @@ class UpdateDialogTests(unittest.TestCase):
 
     def test_check_worker_reports_check_failure(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-check-worker-", ignore_cleanup_errors=True) as temp:
-            with patch("scidev_update_ui.detect_repo", return_value="owner/repo"), patch(
-                "scidev_update_ui.check_for_update",
+            with patch("scidev.desktop.update_ui.detect_repo", return_value="owner/repo"), patch(
+                "scidev.desktop.update_ui.check_for_update",
                 side_effect=UpdateError("offline"),
             ):
                 worker = _CheckWorker(Path(temp))
@@ -173,8 +173,8 @@ class UpdateDialogTests(unittest.TestCase):
             return 0
 
         with tempfile.TemporaryDirectory(prefix="scidev-check-async-", ignore_cleanup_errors=True) as temp:
-            with patch("scidev_update_ui.detect_repo", return_value="owner/repo"), patch(
-                "scidev_update_ui.check_for_update",
+            with patch("scidev.desktop.update_ui.detect_repo", return_value="owner/repo"), patch(
+                "scidev.desktop.update_ui.check_for_update",
                 return_value=_info(),
             ), patch.object(UpdateDialog, "exec", fake_exec):
                 worker = UpdateDialog.show_for_workspace_async(Path(temp))

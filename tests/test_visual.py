@@ -9,8 +9,8 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray
 from PySide6.QtGui import QImage
 
-from scidev_core import CodingToolbox, EventLedger
-from scidev_visual import VisualArtifactReviewer, VisualReviewError
+from scidev.agent.core import CodingToolbox, EventLedger
+from scidev.integrations.visual import VisualArtifactReviewer, VisualReviewError
 
 
 SIMPLE_SVG = b'''<svg xmlns="http://www.w3.org/2000/svg" width="240" height="140" viewBox="0 0 240 140">

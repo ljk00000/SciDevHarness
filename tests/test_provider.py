@@ -8,9 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 import uuid
 
-import scidev_credentials as credentials
-import scidev_provider as provider
-from scidev_core import CodingAgent, EventLedger, GitManager, PermanentError
+import scidev.runtime.credentials as credentials
+import scidev.integrations.provider as provider
+from scidev.agent.core import CodingAgent, EventLedger, GitManager, PermanentError
 
 
 class ProviderSettingsTests(unittest.TestCase):
@@ -281,7 +281,7 @@ class ProviderSettingsTests(unittest.TestCase):
                 require_verification=False,
             )
             with patch.dict(os.environ, {"SCIDEV_API_KEY": "env-key"}, clear=False), \
-                    patch("scidev_core.OpenAICompatibleProvider.from_env", side_effect=AssertionError("env path used")):
+                    patch("scidev.agent.core.OpenAICompatibleProvider.from_env", side_effect=AssertionError("env path used")):
                 built = agent._build_provider()
             self.assertEqual(built.base_url, "https://example.test/v1")
             self.assertEqual(built.model, "saved-model")

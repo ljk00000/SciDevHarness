@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 import unittest
 
-from scidev_pty import PTYSession, PTYUnavailable, strip_ansi
+from scidev.runtime.pty import PTYSession, PTYUnavailable, strip_ansi
 
 
 class PTYTests(unittest.TestCase):

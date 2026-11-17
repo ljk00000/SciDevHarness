@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from scidev_client import ClientWindow
+from scidev.desktop.client import ClientWindow
 
 
 class DebugCommandTests(unittest.TestCase):

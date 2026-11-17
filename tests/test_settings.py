@@ -18,9 +18,9 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit
 from shiboken6 import delete as delete_qt_object
 
-from scidev_client import ClientWindow
-from scidev_preferences import AppearancePreferences
-from scidev_ui import accent_text_color, create_ui_font
+from scidev.desktop.client import ClientWindow
+from scidev.runtime.preferences import AppearancePreferences
+from scidev.desktop.theme import accent_text_color, create_ui_font
 from tests.qt_temp import QtTemporaryDirectory
 
 tempfile.TemporaryDirectory = QtTemporaryDirectory
@@ -56,7 +56,7 @@ class WorkbenchSettingsTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="scidev-settings-test-")
         self.root = Path(self.temp.name)
         self.settings = QSettings(str(self.root / "ui.ini"), QSettings.Format.IniFormat)
-        self.settings_patch = patch("scidev_client.QSettings", return_value=self.settings)
+        self.settings_patch = patch("scidev.desktop.client.QSettings", return_value=self.settings)
         self.settings_patch.start()
         self.window = ClientWindow(self.root)
         self.window.show()

@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scidev_checkpoint import WorkspaceCheckpoint
-from scidev_core import CodingAgent, CodingToolbox, EventLedger, GitManager
+from scidev.workspace.checkpoint import WorkspaceCheckpoint
+from scidev.agent.core import CodingAgent, CodingToolbox, EventLedger, GitManager
 
 
 class WorkspaceCheckpointTests(unittest.TestCase):

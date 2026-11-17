@@ -8,6 +8,27 @@ SciDevHarness 是一个原生 Windows 桌面编码客户端，第一阶段仿照
 
 顶栏“主题”菜单可随时切换三套完整界面方案：Studio 深色均衡、Paper 明亮浅色、Focus 专注宽编辑器。选择会保存到本机设置；颜色同步覆盖编辑器语法、版本树与 Git 面板，Focus 保留项目导航空间、收窄对话栏，把更多宽度留给代码区。
 
+## 项目结构
+
+```text
+scidev/             Python 应用代码
+  agent/            Agent 执行、工具、会话、计划与验证
+  desktop/          桌面窗口、编辑器、面板与界面工作流
+  workspace/        Git、补丁、检查点、项目检索与环境诊断
+  integrations/     模型、浏览器、LSP、MCP、PR 与更新
+  runtime/          进程、队列、持久化、配置与运行支持
+  evaluation/       评测与结果统计
+scripts/            启动准备、测试、冒烟与发布工具
+ui/                 QML 与图标资源
+tests/             自动化测试
+docs/              当前工作、历史结果与能力说明
+evals/             评测题集
+examples/          示例项目
+packaging/         安装器配置
+```
+
+源码使用 `scidev.*` 包路径导入。根目录的 `scidev_client.py`、`scidev_cli.py` 是兼容启动入口；也可运行 `python -m scidev` 启动桌面端，或用 `python -m scidev.cli --help` 查看命令行。维护进度见 [当前工作](docs/CURRENT_WORK.md)，已完成记录见 [历史与结果](docs/HISTORY_RESULTS.md)，模块说明见 [能力说明](docs/SCIDEV_HARNESS.md)。
+
 ## 许可证与依赖
 
 - 项目代码采用 [Apache-2.0](LICENSE)；Qt/PySide6 与可选模型权重使用各自许可证，模型权重不随仓库分发。
@@ -275,8 +296,8 @@ $env:SCIDEV_VISION_REASONING_EFFORT="none"
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe smoke_dependency.py
-.\.venv\Scripts\python.exe smoke_screenshot.py --output-dir "$env:TEMP\scidev-ui-shots"
+.\.venv\Scripts\python.exe scripts/smoke_dependency.py
+.\.venv\Scripts\python.exe scripts/smoke_screenshot.py --output-dir "$env:TEMP\scidev-ui-shots"
 .\start_client.bat --check-runtime
 ```
 

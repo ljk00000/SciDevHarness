@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_core import CodingAgent, EventLedger, GitManager, PermanentError, SummarySettings
-from scidev_verification import TestCommandDiscovery, VerificationTracker
+from scidev.agent.core import CodingAgent, EventLedger, GitManager, PermanentError, SummarySettings
+from scidev.agent.verification import TestCommandDiscovery, VerificationTracker
 
 
 class VerificationTrackerTests(unittest.TestCase):
@@ -116,6 +116,100 @@ class VerificationTrackerTests(unittest.TestCase):
             "scope_limited",
         )
         self.assertEqual(VerificationTracker.summarize([], before, edit_revision=0)["status"], "not_run")
+
+    @staticmethod
+    def _check(
+        command: str, status: str = "passed", *, edit_revision: int = 2,
+        fingerprint: str = "same", complete: bool = True,
+    ) -> dict:
+        snapshot = {"fingerprint": fingerprint, "complete": complete}
+        return VerificationTracker.record(
+            {"command": command, "status": status, "exit_code": 0 if status == "passed" else 1},
+            snapshot, snapshot, edit_revision=edit_revision, turn=1,
+        )
+
+    def test_unresolved_failures_survive_other_checks_and_inconclusive_reruns(self) -> None:
+        snapshot = {"fingerprint": "same", "complete": True}
+        for failure in ("failed", "timed_out", "start_failed"):
+            for command, outcome, complete in (
+                ("ruff check .", "passed", True),
+                ("pytest tests/other.py -q", "passed", True),
+                ("pytest -q", "not_run", True),
+                ("pytest -q", "passed", False),
+            ):
+                with self.subTest(failure=failure, command=command, outcome=outcome, complete=complete):
+                    records = [
+                        self._check("pytest -q", failure),
+                        self._check(command, outcome, complete=complete),
+                    ]
+                    report = VerificationTracker.summarize(records, snapshot, edit_revision=2)
+                    self.assertEqual(report["status"], failure)
+                    self.assertEqual([item["command"] for item in report["blocking_checks"]], ["pytest -q"])
+
+    def test_each_failed_command_requires_its_own_successful_rerun(self) -> None:
+        snapshot = {"fingerprint": "same", "complete": True}
+        records = [
+            self._check("pytest tests/a.py -q", "failed"),
+            self._check("pytest tests/b.py -q", "failed"),
+            self._check("ruff check ."),
+            self._check("pytest tests/a.py -q"),
+        ]
+        report = VerificationTracker.summarize(records, snapshot, edit_revision=2)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual([item["command"] for item in report["blocking_checks"]], ["pytest tests/b.py -q"])
+
+        records.append(self._check("pytest tests/b.py -q"))
+        report = VerificationTracker.summarize(records, snapshot, edit_revision=2)
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["blocking_checks"], [])
+        self.assertEqual(report["failed_attempts"], 2)
+
+    def test_whitespace_check_alone_is_not_code_verification(self) -> None:
+        snapshot = {"fingerprint": "same", "complete": True}
+        records = [self._check("git diff --check")]
+        report = VerificationTracker.summarize(records, snapshot, edit_revision=2)
+        self.assertEqual(report["status"], "not_run")
+        self.assertEqual(report["check_count"], 1)
+
+        records.append(self._check("ruff check ."))
+        self.assertEqual(VerificationTracker.summarize(records, snapshot, edit_revision=2)["status"], "passed")
+
+    def test_successful_code_checks_still_satisfy_verification(self) -> None:
+        snapshot = {"fingerprint": "same", "complete": True}
+        for command in ("pytest -q", "ruff check .", "mypy .", "python -m py_compile module.py", "make"):
+            with self.subTest(command=command):
+                report = VerificationTracker.summarize([self._check(command)], snapshot, edit_revision=2)
+                self.assertEqual(report["status"], "passed")
+
+    def test_unresolved_failure_requires_rerun_after_code_changes(self) -> None:
+        failed = self._check("pytest -q", "failed")
+        for revision, fingerprint in ((3, "same"), (2, "changed"), (3, "changed")):
+            with self.subTest(revision=revision, fingerprint=fingerprint):
+                snapshot = {"fingerprint": fingerprint, "complete": True}
+                records = [failed, self._check("ruff check .", edit_revision=revision, fingerprint=fingerprint)]
+                report = VerificationTracker.summarize(records, snapshot, edit_revision=revision)
+                self.assertEqual(report["status"], "stale")
+
+                records.append(self._check("pytest -q", edit_revision=revision, fingerprint=fingerprint))
+                report = VerificationTracker.summarize(records, snapshot, edit_revision=revision)
+                self.assertEqual(report["status"], "passed")
+                self.assertEqual(report["blocking_checks"], [])
+
+    def test_resolved_historical_failure_does_not_block_new_code(self) -> None:
+        snapshot = {"fingerprint": "changed", "complete": True}
+        records = [
+            self._check("pytest -q", "failed"),
+            self._check("pytest -q"),
+            self._check("ruff check .", edit_revision=3, fingerprint="changed"),
+        ]
+        report = VerificationTracker.summarize(records, snapshot, edit_revision=3)
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["blocking_checks"], [])
+
+    def test_earlier_success_cannot_hide_a_later_failure(self) -> None:
+        snapshot = {"fingerprint": "same", "complete": True}
+        records = [self._check("pytest -q"), self._check("pytest -q", "failed"), self._check("ruff check .")]
+        self.assertEqual(VerificationTracker.summarize(records, snapshot, edit_revision=2)["status"], "failed")
 
 
 class TestCommandDiscoveryTests(unittest.TestCase):
@@ -494,6 +588,7 @@ class VerificationAgentTests(unittest.TestCase):
         *,
         approved: bool = True,
         exit_code: int = 0,
+        exit_codes: list[int] | None = None,
         execution_mode: str = "manual",
     ):
         (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
@@ -512,16 +607,17 @@ class VerificationAgentTests(unittest.TestCase):
         provider = _ScriptedProvider(responses)
         real_popen = __import__("subprocess").Popen
         executed_shell_commands = []
+        command_exit_codes = iter(exit_codes or [])
 
         def fake_command_popen(command, *args, **kwargs):
             if isinstance(command, str):
                 executed_shell_commands.append(command)
-                return self._Process(returncode=exit_code)
+                return self._Process(returncode=next(command_exit_codes, exit_code))
             return real_popen(command, *args, **kwargs)
 
         with (
-            patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
-            patch("scidev_core.subprocess.Popen", side_effect=fake_command_popen),
+            patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider),
+            patch("scidev.agent.toolbox.subprocess.Popen", side_effect=fake_command_popen),
         ):
             try:
                 result = agent.run({
@@ -707,6 +803,100 @@ class VerificationAgentTests(unittest.TestCase):
             self.assertEqual(session["verification_runs"][-1]["approval_source"], "policy")
             self.assertIn("python -m pytest", executed[-1])
             self.assertTrue(any(name == "verification_auto_completed" for name, _ in events))
+
+    def test_inadequate_checks_block_completion_and_auto_commit(self) -> None:
+        cases = [
+            ([("pytest -q", 1), ("ruff check .", 0)], "failed"),
+            ([("git diff --check", 0)], "not_run"),
+        ]
+        for checks, expected in cases:
+            with self.subTest(checks=checks), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                responses = [
+                    _tool_call("write_file", {"path": "module.py", "content": "value = 1\n"}, "write"),
+                    *[
+                        _tool_call("run_command", {"command": command}, f"check{index}")
+                        for index, (command, _code) in enumerate(checks)
+                    ],
+                    *[{"role": "assistant", "content": "Done.", "tool_calls": []} for _ in range(4)],
+                ]
+                result, session, events, _ledger, executed = self._run(
+                    root, "verification_inadequate", responses,
+                    exit_codes=[code for _command, code in checks],
+                )
+
+                self.assertIsInstance(result, PermanentError)
+                self.assertEqual(len(executed), len(checks))
+                for actual, (command, _code) in zip(executed, checks):
+                    self.assertTrue(actual.endswith(command), actual)
+                self.assertEqual(session["verification_runs"][-1]["check_status"], "passed")
+                self.assertEqual(session["verification_report"]["status"], expected)
+                self.assertEqual(session["status"], "verification_required")
+                self.assertEqual(session["git_result_sha"], "")
+                self.assertTrue((root / "module.py").exists())
+                self.assertTrue(any(name == "verification_blocked" for name, _payload in events))
+
+    def test_successful_matching_rerun_allows_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            responses = [
+                _tool_call("write_file", {"path": "module.py", "content": "value = 1\n"}, "write"),
+                _tool_call("run_command", {"command": "pytest -q"}, "failed_test"),
+                _tool_call("run_command", {"command": "ruff check ."}, "lint"),
+                _tool_call("run_command", {"command": "pytest -q"}, "passed_test"),
+                {"role": "assistant", "content": "Done.", "tool_calls": []},
+                {"role": "assistant", "content": "Done.", "tool_calls": []},
+            ]
+            result, session, _events, _ledger, executed = self._run(
+                root, "verification_recovered", responses, exit_codes=[1, 0, 0],
+            )
+
+            self.assertIsInstance(result, dict)
+            expected_commands = ["pytest -q", "ruff check .", "pytest -q"]
+            self.assertEqual(len(executed), len(expected_commands))
+            for actual, command in zip(executed, expected_commands):
+                self.assertTrue(actual.endswith(command), actual)
+            self.assertEqual(session["verification_report"]["status"], "passed")
+            self.assertEqual(session["verification_report"]["blocking_checks"], [])
+            self.assertTrue(session["git_result_sha"])
+
+    def test_unresolved_failure_survives_verification_history_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            agent = CodingAgent(
+                root, EventLedger(root), GitManager(root),
+                summary_settings=SummarySettings(enabled=False),
+            )
+            snapshot = {"fingerprint": "same", "complete": True}
+            failed = VerificationTracker.record(
+                {"command": "pytest -q", "status": "failed", "exit_code": 1},
+                snapshot, snapshot, edit_revision=0, turn=1,
+            )
+            lint_execution = {"command": "ruff check .", "status": "passed", "exit_code": 0}
+            lint = VerificationTracker.record(
+                lint_execution, snapshot, snapshot, edit_revision=0, turn=2,
+            )
+            session = {"verification_edit_revision": 0, "verification_runs": [failed] + [lint] * 100}
+            with patch.object(agent, "_save_session"):
+                agent._record_command_verification(
+                    session, "verification_history", 3, lint_execution, snapshot, snapshot, 0,
+                )
+
+                self.assertEqual(session["verification_report"]["status"], "failed")
+                self.assertIn(failed, session["verification_runs"])
+
+                recovered = VerificationTracker.record(
+                    {"command": "pytest -q", "status": "passed", "exit_code": 0},
+                    snapshot, snapshot, edit_revision=0, turn=4,
+                )
+                session["verification_runs"].extend([recovered] + [lint] * 100)
+                agent._record_command_verification(
+                    session, "verification_history", 5, lint_execution, snapshot, snapshot, 0,
+                )
+
+            self.assertEqual(session["verification_report"]["status"], "passed")
+            self.assertEqual(session["verification_report"]["blocking_checks"], [])
+            self.assertNotIn(failed, session["verification_runs"])
 
 
 if __name__ == "__main__":

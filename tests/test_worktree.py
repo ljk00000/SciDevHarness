@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from scidev_worktree import WorktreeError, WorktreeManager
+from scidev.workspace.worktree import WorktreeError, WorktreeManager
 
 
 def _git(repo: Path, *args: str) -> str:

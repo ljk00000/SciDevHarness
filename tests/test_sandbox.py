@@ -5,8 +5,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from scidev_core import CodingToolbox, EventLedger, PermanentError, SummarySettings
-from scidev_sandbox import DockerSandbox, SandboxError
+from scidev.agent.core import CodingToolbox, EventLedger, PermanentError, SummarySettings
+from scidev.runtime.sandbox import DockerSandbox, SandboxError
 
 
 class SandboxSettingsTests(unittest.TestCase):
@@ -97,7 +97,7 @@ class DockerSandboxTests(unittest.TestCase):
             assert toolbox.sandbox is not None
             toolbox.sandbox.docker_path = "docker"
             toolbox.sandbox.checker = lambda: "24.0"
-            with patch("scidev_core.subprocess.Popen", return_value=Process()) as popen:
+            with patch("scidev.agent.toolbox.subprocess.Popen", return_value=Process()) as popen:
                 result = toolbox.run_command("python -V")
             argv = popen.call_args.args[0]
             self.assertEqual(argv[0], "docker")

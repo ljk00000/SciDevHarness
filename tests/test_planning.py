@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scidev_planning import PLAN_TOOL, TaskPlan, planning_mode
+from scidev.agent.planning import PLAN_TOOL, TaskPlan, planning_mode
 
 
 class TaskPlanTests(unittest.TestCase):

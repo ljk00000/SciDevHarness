@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from scidev_mcp_server import MCPServer, serve_stdio
+from scidev.integrations.mcp_server import MCPServer, serve_stdio
 
 
 class MCPServerTests(unittest.TestCase):

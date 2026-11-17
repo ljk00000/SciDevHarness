@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scidev_core import SvgArtifactAdapter
+from scidev.agent.core import SvgArtifactAdapter
 
 
 SAFE_SVG_RESPONSE = """Here is the illustration; save it as `pelican_bicycle.svg`.

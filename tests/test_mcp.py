@@ -8,8 +8,8 @@ import tempfile
 import threading
 import unittest
 
-from scidev_core import CodingToolbox, EventLedger, PermanentError
-from scidev_mcp import MCPManager
+from scidev.agent.core import CodingToolbox, EventLedger, PermanentError
+from scidev.integrations.mcp import MCPManager
 
 
 FAKE_SERVER = r'''

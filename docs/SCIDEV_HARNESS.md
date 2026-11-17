@@ -1,0 +1,323 @@
+# SciDevHarness Harness 能力与实现状态
+
+第一阶段先做一个仿 Codex 的原生桌面编码客户端。核心不是自动跑论文实验，而是让 LLM 能在本地项目中可靠地读代码、改代码、做检查，并留下完整过程记录。
+
+> 本文按当前仓库代码和测试盘点（2026-10-05），描述“已经实现到什么程度”，不表示与 Codex、Claude Code 或 Cursor 功能对等。
+
+## 能力状态总表
+
+| 能力 | 状态 | 已实现 | 尚缺 / 边界 |
+|---|---|---|---|
+| Agent 循环 | ✅ 已实现 | 最多 32 轮模型/工具交互；工具结果回传给模型，允许根据报错继续处理；结束时核对 Git diff | 模型仍可能误判；达到轮数上限会失败，不保证一次完成 |
+| 会话恢复 | ✅ 基础已实现 | Agent 设置列出最近会话，恢复后复用原 session id 和 messages 继续对话；CLI `sessions` 列出会话，`exec --session-id` 继续；不会自动重放已完成的工具调用 | 恢复的是会话上下文，不是完整 UI 消息回放；不自动恢复已中断的命令/进程；会话文件损坏时拒绝恢复 |
+| 任务预算 | ✅ 基础已实现 | Agent 设置可配置单任务最多模型轮次（1–64）和最多 token（0 = 不限）；token 按任务起点扣除历史累计，用尽后失败并保留未提交改动；服务端不返回 usage 时（如 Ollama）按任务内请求/响应 UTF-8 字节数除以 4 估算并继续执行硬限，事件标记 `estimated=true` | 估算不是真实计费；字节/token 比例因语言和 tokenizer 而异；没有货币成本换算；预算用尽只停止任务，不自动回滚已改文件 |
+| 代码智能 | 🟡 Python 诊断/补全/跳转已实现，TypeScript 诊断可选 | Python 文件使用常驻 Ruff LSP 进程，异步发送 didOpen/didChange 并把诊断显示在“问题”面板；同一窗口复用进程，输入请求合并；双击跳到行列。TypeScript/JavaScript（`.ts/.tsx/.js/.jsx/.mjs/.cjs`）在找到 `typescript-language-server` 或设置 `SCIDEV_TYPESCRIPT_LSP` 时使用独立常驻进程，Python/TS 互不重启。编辑器 `Ctrl+Space` 用本机 Jedi 显示补全，`Ctrl+F12` 用 Jedi 跳转到工作区内定义；原有 `F12` 符号跳转保留。语法错误仍由 AST 即时显示。`F5` 在集成终端用项目解释器启动标准库 `pdb`，自动在当前光标行设断点并继续，支持交互式单步/继续；“更多 → Pdb 控制”可发送 continue/step/return/quit | Ruff/TS 进程按窗口常驻，不是全局共享；TS 服务器未安装时静默跳过，未做真实 TS 项目 E2E；Jedi 只支持 Python，补全同步执行、首次可能较慢；无重命名/引用/调用层级；pdb 只作为终端便捷入口，不计划做 DAP 图形调试器；Codex 本身也没有内置调试器，VS Code 调试器属于宿主 IDE；Ruff 或 Jedi 未安装时静默跳过；诊断不保证每个版本都送达 |
+| 模型接入 | ✅ 基础已实现 | Agent 设置内可填写 API Base URL、模型、推理强度、回退模型和 API Key；Key 存入 Windows 凭据管理器，非敏感配置存 `.research/provider.json`；环境变量作为后备；内置 OpenAI、DeepSeek、Anthropic Claude（兼容层）、OpenRouter、Ollama/LM Studio/llama.cpp 预设与输入框模型下拉，本地服务自动探测；CLI 显式 provider 参数强制覆盖；可异步测试 `/models` 连通性，并用一次极小 ping 工具调用探测工具调用/上下文/视觉元数据；HTTP 404/模型不存在 400 时自动用回退模型重试一次 | 不是 OpenAI/ChatGPT 账号登录或 OAuth；Key 仍可被同一 Windows 用户下的进程读取；只支持 OpenAI-compatible Chat Completions；能力探测依赖 endpoint 报告且会消耗少量 token；回退只覆盖模型解析错误，不覆盖认证/限流/网络错误 |
+| 编码工具 | ✅ 核心已实现 | `search_code`、`get_project_context`、`list_files`、`read_file`、`write_file`、`apply_patch`、精确/批量 `replace_in_file`、`run_command`、`git_diff`；按用户意图启用网页搜索/打开/点击/截图；可选视觉制品检查 | 网页操作逐次审批且不复用登录态；截图只本机保存；符号提取不是完整语言服务器 |
+| MCP 扩展 | 🟡 stdio/HTTP 工具已接入，另有只读服务端 | `.research/mcp.json` 显式启用后启动 stdio server 或 HTTP server，`initialize`/`tools/list`，把工具以 `mcp__<server>__<tool>` 加入模型工具列表；`tools/call` 结果回传；支持 JSON/SSE 响应和 `Mcp-Session-Id`；CLI `mcp` 和 GUI `> mcp` 可列出 tools/resources/prompts、读取资源、渲染 prompt 并显式插入输入框；每次工具调用仍走命令审批；只读模式禁用；网络策略 deny 拒绝 HTTP server；失败只记录错误；CLI `mcp-serve` 可按 MCP stdio 只读暴露 search_code/read_file/list_files/get_project_context/git_diff | 不支持 WebSocket MCP；资源/prompt 不会自动进入模型上下文；无 MCP 采样；无配置向导；HTTP 只实现 POST 请求/响应，不是完整流式会话；服务配置由用户文件信任；mcp-serve 只读、无认证、仅 stdio |
+| 生命周期 hooks | 🟡 基础已实现 | `.research/hooks.json` 显式启用后可配置 `task_start`/`before_tool`/`after_tool`/`before_commit`；不经 shell、工作区内、超时和输出有界；前三个事件非零退出阻止继续，`after_tool` 只记录；事件与有界 JSON 上下文经环境变量传入 | 只有固定四个事件；无异步/并行 hooks；无 hooks 的 UI 配置或权限声明；hooks 命令由项目配置文件信任，不是 OS 沙箱 |
+| 项目上下文 | ✅ 核心已实现 | 本地增量缓存、代码/标识符检索、任务相关片段与符号、中英术语及复合短语加权（含旋转/碰撞等游戏机制）、环境/依赖/目录指令；未保存编辑器缓冲参与预览、搜索和读取，Agent 对这些文件只读；任务/重试/编辑后刷新 | 有界关键词检索，不含向量索引或完整依赖图；快照最多 8 个文件/1 MB，超预算的草稿排除且禁止读取旧磁盘内容；扫描/输出有界；缓存仅在当前进程内 |
+| 任务规划 | ✅ 核心已实现 | Agent `update_plan` 工具、自动/必须/关闭三种模式、步骤状态、右侧计划面板、会话持久化与重试恢复；新任务会归档上一计划 | 没有逐步人工批准、可拖动 DAG 或独立验证模型报告的完成状态；科研实验仍不在范围 |
+| 记忆与过程记录 | ✅ 核心已实现 | SQLite 任务/会话索引、JSONL 事件、会话 transcript 与最终总结；新任务可从本项目旧总结中词法检索，限制数量/长度，重试复用快照 | 非向量语义检索；失败且未生成最终总结的尝试不会成为记忆；密钥脱敏仅覆盖常见格式 |
+| 可观测性 | 🟡 已实现 | `> errors` 打开只读错误趋势：统计 1–90 天内任务开始/完成/失败、成功率、按 `error_kind` 分布、可重试标记和每日失败 sparkline；数据直接读 `.research/runs.db` | 只统计本机本地事件；不区分模型/任务类型；旧事件无 `error_kind` 时按错误文本重新分类；没有导出/告警/远程遥测 |
+| 执行与验证反馈 | 🟡 核心证据闭环已实现 | 静态发现根/嵌套项目测试命令、Node 自定义测试脚本、tox/nox 与 Make/Just 入口；经批准命令记录状态并绑定当前代码指纹；代码改动可要求当前代码检查通过；执行策略支持只读/手动审批/工作区可写/完全访问，工作区可写自动批准可识别的验证命令；网络策略 deny/ask/allow 对 curl/wget/ssh 等命令硬阻断或按策略放行；项目命令白名单按精确前缀自动批准；pytest/ruff/mypy/tsc 输出解析为文件、行号、错误码的结构化诊断并回传模型；任务结束时 Harness 可按 test/lint/typecheck 类别各选一个安全候选自动运行，失败诊断进入后续修复轮次；CLI 无审核界面时默认自动应用已校验补丁块（`--patch-approval reject` 可关闭）；弱模型只输出完整 `*** Begin Patch` 文本时会转成 `apply_patch` 调用，仍走原路径校验和审核；可选 Docker 后端把命令放进只挂载工作区、默认断网、cap-drop/资源受限的容器 | 候选不是已验证命令；自动批准只覆盖单条验证命令，不自动安装依赖；网络识别基于命令词法，间接联网（测试代码、包管理器）无法拦截；白名单只做前缀匹配，用户需自行确认前缀范围；未知运行器/脚本约定仍可能漏检；退出码不证明目标语义正确；文本补丁恢复只接受完整且有文件头的块；默认 local 后端不是 OS 沙箱；Docker 后端要求 daemon/镜像，未做真实项目 E2E |
+| 独立语义验收 | 🟡 可选核心流程已实现 | 可关闭/建议/必需；向不同模型 ID 发送任务、完整受限 diff、验证摘要；结构化标准须逐项引用变更文件；必需模式不通过不自动提交，并可有限修复后复核；复核期间 diff 变化会作废结论 | 默认关闭且会增加一次 LLM 调用；同一服务商的不同模型 ID 不等于机构独立；模型判断不是形式化正确性证明；不完整/超限 diff 不调用模型且必需模式阻止提交 |
+| 环境感知 | 🟡 项目上下文与按需工具链核验已实现 | 区分 Harness 与项目环境；识别 OS/架构、Python/Node/Rust/Go 版本约束、依赖清单/锁文件；有界读取 `pyvenv.cfg` 安全元数据；上下文页“核验环境”按根清单检查 Python 项目虚拟环境、Node、Rust、Go 版本，附加检查可用的 NVIDIA/CUDA 工具；整组一次审批、异步执行并记录结果 | Python 不回退到 Harness 解释器；不联网、不安装/解析依赖、不运行项目脚本或构建/测试；`pip check` 不验证清单声明依赖齐全/可导入，工具链版本不证明项目可编译/运行；目前只发现根清单，未支持嵌套 monorepo 运行时发现 |
+| 精确代码修改 | ✅ 核心已实现 | `apply_patch` 解析 Codex 风格补丁并在聊天中逐块预览/勾选；可打开“补丁 diff”编辑器标签，彩色显示增删行并在其中勾选/应用/拒绝；路径、上下文唯一性、文件摘要与大小受校验；Agent 开始时已存在的文件强制走此审核，新建文件可在任务内迭代 | 补丁受文件数、块数和字节预算限制；编辑器 diff 标签只读，不是主编辑器内联逐行编辑；新建文件的后续内容仍可直接迭代 |
+| 终端 | 🟡 ConPTY 已实现 | Windows 优先用 `pywinpty` 的 ConPTY 运行终端命令，保留交互式 stdin；输出做 ANSI 清理；命令运行中可继续输入；ConPTY 不可用时回退隐藏窗口管道；显示退出码 | 每条命令一个 ConPTY，不是持久 shell；无完整 VT 仿真/颜色/光标；不是 OS 沙箱；pywinpty 需安装，失败自动回退 |
+| 多模态输入 | 🟡 图片附件已实现 | 聊天“图片”或 CLI `--image` 附加 PNG/JPEG/GIF/WebP；最多 4 张、单张 5 MB、总计 12 MB；校验 MIME/魔数并转成 data URL，作为 `image_url` 随任务发送；会话保存附件元数据 | 只支持图片，不支持 PDF/音频/视频；模型必须支持视觉；会话 JSON 会保存 base64 图片；无图片缩放/压缩或 OCR |
+| 评测与回归 | 🟡 固定任务 harness 已实现 | `scidev_cli.py eval` 读取 suite JSON，在隔离副本中跑固定任务，确定性 check 判成功；支持 `--jobs` 并行；suite 可用 `environment` 设置受限的 `SCIDEV_*` 变量；报告完成率、平均轮数、prompt/completion token、耗时、按定价估算的成本和相对上次 pass rate 的回归；`evals/smoke/` 3 项、`evals/standard/` 20 项，`evals/local/` 为弱本地模型基线（3 项 1/3；standard 20 项首轮 1/20，开启无头补丁自动应用后 2/20），测试验证标准任务修复前均失败 | 默认调用真实 CLI/模型；check 是外部命令，不能证明语义完全正确；成本依赖用户填写价格；本地模型常不返回 usage；基线样本仍小且强依赖模型能力；suite 无 Web UI |
+| 网络重试与省流 | 🟡 部分实现 | Provider 显式直连优先；只有公网主机 DNS 失败或明确 TCP 拒绝连接（请求体尚未发出），且已配置代理并未被 `NO_PROXY` 排除时，才单次代理回退；超时、其他网络错误、HTTP 错误、本机地址不回退；有持久任务队列、429/5xx 的 `Retry-After`（秒/HTTP 日期，最多等待 1 小时）与指数退避；请求幂等键按任务/阶段/轮次区分并绑定 JSON 请求体摘要；工具调用有 pending/started/completed 持久化及重启恢复，避免自动重放未决副作用；按会话统计请求/响应体字节、尝试/重试/失败、代理回退、耗时和 token；成功阶段总结压缩后续上下文 | 重试本身仍会增加流量；服务端可能不支持/不遵守幂等键，传输中断仍可能被计费；不承诺外部副作用 exactly-once，未知结果需检查现状，模型仍可能产生新的调用；模型请求未缓存；总结只在短 `Retry-After` 内等待，较长时跳过本次辅助总结重试；字节不含 HTTP/TLS 头，完整 transcript 保存在本地 |
+| Git 与版本追溯 | ✅ 已实现 | 记录基线/结果 SHA；任务结束可安全地自动提交本次改动；Git 面板支持查看、暂存和手动提交；开发树记录成功/失败/取消尝试；每次任务写入前保存文件检查点，可回滚本次任务写过的文件并删除新文件 | 不自动 push；开发树的尝试分支是 Harness 记录，不等于真实 Git 分支；检查点只保留最近 10 个，回滚会覆盖任务开始后的人工修改 |
+| IDE 客户端 | 🟡 核心已实现 | 原生桌面文件树、代码编辑器、多标签、搜索、集成终端、问题面板、Git 视图和 Agent 对话 | 不是完整 VS Code：语言服务器级 IntelliSense 仍有限；不计划内置 DAP 调试器，调试仅保留 pdb 终端入口（Codex 同样依赖宿主 IDE 调试器） |
+| 无界面/CI | 🟡 基础已实现 | `scidev_cli.py exec` 复用 Agent、执行策略、Git 自动提交与审计；支持 JSON 输出、退出码、临时 provider 参数、`--no-verify`、`--restore-on-failure`、`--allow-no-changes`、`--worktree` 隔离运行、`--patch-approval auto|reject`、`--sandbox docker`、`--max-turns`/`--max-tokens` 本次任务预算和 `--result-file` 原子结果落盘；`sandbox-check` 报告后端是否就绪及是否 OS 沙箱；`doctor` 离线检查运行时/provider 密钥来源/Git/沙箱/LSP，`--online` 才做最小模型能力探针；默认应用已校验补丁块，无审核界面也能修改已有文件；默认“完成但无改动”按失败处理；自动读取桌面端保存的模型配置 | 无流式 UI/交互审批；手动审批模式在 CLI 中无法批准命令；worktree 只保证文件隔离，不限制网络/进程；Docker 后端依赖 daemon/镜像；worktree 默认保留，需要手动清理；结果文件限制在工作区内 |
+| GitHub PR | 🟡 CLI + GUI 已实现 | `scidev_cli.py pr` 从当前任务分支 push 并调用已登录的 `gh pr create`；`pr-view` 读取 PR 元数据；`pr-diff` 读取有界 diff（最多 100 万字符，默认 30 万）；`pr-review` 支持 approve/comment/request-changes；桌面 `> pr` 可加载元数据和 diff、查看 review 状态并提交 review；支持 base/title/body/draft、`--dry-run`、JSON 输出；网络 deny 项目需 `--allow-network` | 需要本机 `gh` 已认证且有推送/审查权限；不创建 GitHub App/OAuth；不自动修复 review finding；不管理团队权限；失败后不自动清理远端分支；diff 是纯文本，不支持逐行评论或本地 hunk 联动 |
+| 分发与签名 | 🟡 脚本已实现 | `scidev_cli.py update` 检查 GitHub latest Release，只报告 HTTPS 安装包地址、名称、大小和 `digest`；`--download PATH` 流式下载到同目录临时文件，强制 HTTPS/大小上限/Release 大小/SHA-256 校验后原子改名；`--install` 必须配合 `--download`，启动前再校验一次摘要并打开安装器 UI（不静默、不提权）；`scidev.integrations.update.verify_downloaded_asset()` 可校验已有文件；桌面端 `> update` 显示 Release 结果、可打开页面，或后台下载并校验（可取消），不执行；`scripts/sign_release.ps1` 用证书存储中的 SHA-1 thumbprint 对 .exe/.dll/.msi 做 SHA-256 Authenticode 签名 + RFC 3161 时间戳（默认 HTTP 端点，因部分 signtool 拒绝 HTTPS），随后 `/pa` 验证；`scripts/build_installer.ps1` + `packaging/windows/scidev.iss` 从 staged deployment 构建 per-user Inno Setup 安装器，可选签名并输出 SHA-256；手动 Windows Package Verification workflow 会安装 Inno Setup、构建并上传 installer/manifest；推送 `v*` tag 的 Release workflow 复用该 job 并创建 GitHub Release；配置 PFX secrets 时导入证书、签名并在结束时删除 | 仓库没有签名证书，默认 CI/Release 产物 unsigned；只有配置 `WINDOWS_SIGNING_PFX_BASE64`/`WINDOWS_SIGNING_PFX_PASSWORD` 才签名；未在真实证书/远端 runner 上验证签名；桌面端检查在后台 QThread 执行并显示可取消进度，取消只忽略结果、不中断阻塞中的 HTTP；没有下载安装器的自动执行；没有 MSIX/MSI 打包；没有跨平台；zip 内二进制未被单独签名 |
+| 工程化迁移 | 🟡 已实现 | `scidev_cli.py migrate` 迁移 settings/session/事件库 schema；写入 `schema_version` 与 SQLite `user_version`；规范化执行/网络/白名单设置；修改前备份，幂等，坏 JSON 不覆盖；`scidev_cli.py update` 检查 GitHub latest Release 并给出安装包地址，不自动下载/安装；桌面端未捕获异常写本地脱敏崩溃报告 | 只迁移已知字段；不迁移旧二进制/数据库结构；备份保留 5 份；更新检查需要 GitHub API 可达且仓库有 Release；无自动下载、签名校验或自动安装；崩溃报告不压缩、不上传、不收集局部变量 |
+| 错误分类 | 🟡 已实现 | 工作线程 `task_failed`/`task_retry` 和 CLI 失败附带 `error_kind`（auth/rate_limit/timeout/network/approval/tool/verification/workspace/internal）、`user_message`、`retryable`、有界 `detail`；桌面失败气泡显示分类前缀；支持中英文关键词 | 基于异常类型和消息词法，可能误分类；分类不改写 provider 的原始错误；不自动修复/重试策略仍由队列统一决定；`detail` 仍可能含路径 |
+| 对话总结配置 | ✅ 已实现 | 可配置启用、模型、上下文长度、输出 token、重试次数、总结指令和每 N 轮频率；会话结束总结 | 总结质量依赖所选模型；只有成功保存的最终总结会进入项目记忆 |
+| 命令与文件安全 | 🟡 部分实现 | 文件工具限制在项目内并过滤敏感路径；执行策略分只读/手动审批/工作区可写/完全访问，工作区可写自动批准窄范围验证命令，其他命令逐条审批；拦截破坏性命令和 Harness 自有 Git 操作；可选 Docker 后端只挂载工作区，默认 `--network none`、`--cap-drop ALL`、`no-new-privileges` 和资源限制，daemon/镜像不可用时拒绝执行而不回退；桌面端 Agent 设置和 CLI/环境变量均可切换；同一项目任务有跨进程文件锁，第二个进程失败并建议 worktree | 默认 local 后端的命令仍以当前 Windows 用户权限运行；Docker 后端依赖用户安装的 daemon/镜像，未做真实项目 E2E；自动批准是策略而非网络/文件系统隔离 |
+| 浏览器 Agent | ✅ 核心已实现 | 可见外部 Edge + 本机 CDP；显式网页意图才声明工具；搜索、打开、CSS 点击、页面文字与截图；逐次用户审批与事件记录；下载默认拒绝 | 使用独立临时配置，不共享 Edge 登录态；只允许 HTTP/HTTPS；拒绝单段、本机/局域网常见后缀主机名及非公网 IP 字面值；不做 DNS 解析钉扎，故不是网络沙箱；页面文字最多 12000 字符；截图最多 8 MB，每项目最多 20 张，达到上限需手动清理；截图不上传给模型 |
+| 多 Agent 协作 | 🟡 部分实现 | Manager 可委派架构/测试/安全调查、受范围限制的编码专员和 Reviewer；2–3 个互相独立的只读调查可并行（最大并发 2）；批次前后核对工作区指纹，变更时报告标为过期且不缓存；Coder 由 Harness 按 `focus_paths` 预取脱敏上下文，首轮只声明必需 `apply_patch`；补丁范围校验、逐块人工审核、主 Agent 上下文刷新/验证/提交前 diff；报告、状态和事件持久化并在聊天显示；未真正应用审核补丁时标记未完成；本机 Qwen2.5-Coder-7B 单文件 E2E 成功 | 默认关闭；每任务最多 3 个子任务、每子 Agent 最多 5 轮/8 次工具调用；并行批次拒绝 Coder，所有写入仍串行；没有独立工作区分支或自动冲突合并；子 Agent 不执行测试/命令、不浏览网页或操作 Git；Qwen 仅验证一个简单单行改动，不能外推复杂任务/其他模型；不同模型 ID 不代表独立机构 |
+| 科研实验执行器 | ⬜ 当前不在范围 | 会记录编码会话及代码版本，可用于回溯 Agent 改动 | 不运行训练/论文实验，不管理数据集、实验指标或科研实验 DAG；这是有意的产品边界 |
+
+**当前定位：**带有项目检索、结构化任务计划、跨会话项目记忆、静态测试命令发现、可选独立语义验收、受控浏览器访问、受审批门控的多 Agent 编码协作、会话记录和 Git 可追溯能力的本地 Coding Agent / IDE。多 Agent 只读调查支持有限并行；GUI/CLI 可创建独立 worktree 并行跑任务，GUI 可列出/打开/删除 worktree；Coder 写入仍串行，无冲突自动合并；科研实验执行器仍不在第一阶段范围。
+
+## 1. 核心闭环
+
+核心对象定义为 `Coding Session`：
+
+```text
+用户任务
+  → 项目文件树和指令
+  → LLM 分析
+  → 工具调用
+  → 读取/修改代码
+  → 测试或静态检查
+  → Git diff
+  → 可选独立语义验收
+  → 自动提交
+```
+
+Agent 不能只返回一段代码，而要真正操作当前项目。工具执行结果会回传给模型，模型可以根据报错继续修改，直到任务完成或达到步数上限。
+
+## 2. LLM 与网络层
+
+客户端使用 OpenAI-compatible Chat Completions 接口，要求模型支持 function/tool calling。接口地址、密钥和模型通过环境变量配置，因此可以接入 OpenAI、国内兼容网关或本地模型服务。
+
+```text
+用户任务
+  → 本地 SQLite 任务队列
+  → LLM 请求
+  → 成功 / 暂时失败 / 永久失败
+```
+
+网络策略：
+
+- 请求和任务状态持久化，客户端崩溃后可以恢复。
+- 网络错误、超时、429、5xx 使用持久队列和指数退避；429/5xx 的 `Retry-After` 秒数或 HTTP 日期优先于较短退避，等待最多 1 小时。
+- 认证、参数、权限错误立即失败，不无限重试。
+- Provider 显式忽略环境代理先直连；仅公网目标发生 DNS 解析失败或明确 TCP 拒绝连接时，才使用系统/环境里已配置的代理尝试一次。遵循 `NO_PROXY`；超时、其他网络错误、HTTP 响应（包括 429/5xx）和 localhost/单段内网名/私有 IP/常见本地域名不走代理。代理失败后由同一持久队列进行有上限的重试，不并发探测或下载。
+- 每个逻辑任务/轮次/总结阶段有独立请求 ID；HTTP `Idempotency-Key` 由该 ID 和精确 JSON 请求体摘要生成。同一请求重试保持 key，任务/会话内容改变不会复用旧 key；此机制只有服务端支持时才能避免重复处理或计费。
+- 会话 transcript 持久化；模型请求失败后从上一次工具结果继续，不重新发送整个任务。
+- 通过项目树、相关文件、Git diff 和工具结果分层提供上下文，不把整个项目反复塞给模型。
+
+“省流量”主要依靠上下文控制：
+
+- 先发文件树，再按需读取文件。
+- 文件按行号局部读取，限制单次输出大小。
+- 局部修改优先用 `apply_patch` 并逐块审核；精确替换工具仍可用于窄范围变更，避免重复发送整个大文件。
+- 工具输出截断并保留最后的错误和结果。
+- 成功的阶段总结会压缩后续模型请求携带的历史轮次；后续 checkpoint 总结只合并上次摘要与压缩点之后的新消息，避免重复发送已总结的旧 transcript。损坏的压缩游标会退回有预算限制的全量来源；完整 transcript 与工具输出仍保存在本地，重试沿用持久化上下文。
+- 总结是辅助流程：短服务端退避最多等待 5 秒；若 `Retry-After` 更长则放弃本次立即重试并记录失败，不拖住已经完成的编码任务。
+- 会话用量芯片显示请求体/客户端读取的响应体字节、尝试/重试/失败、代理回退次数、耗时及接口报告的 token；不保存提示词/响应内容或代理地址，且不计 HTTP/TLS 头。
+
+本机省流实测（2026-10-05）：用 Qwen2.5-Coder-7B 对两份独立的 10 轮合成会话，比较真实 Provider JSON 请求和 Ollama 返回的 usage。下一次请求体从 21,976 B 降至 2,945/3,097 B（85.9–86.6%）；prompt tokens 从 5,051 降至 642/686（86.4–87.3%）。生成总结消耗 4,646/4,689 tokens；按请求体字节或 prompt tokens 分别约两次后续调用回本。该结果仅代表本机模型和合成输入，不能外推云端/其他模型；字节统计不含 HTTP/TLS 头。回归测试同时断言压缩后的 Provider 请求体确实更小。
+
+## 3. Coding Agent 工具
+
+当前 Agent 提供以下工具：
+
+```text
+search_code      搜索代码，返回路径、行号和相邻行
+get_project_context  刷新项目概况、相关片段与路径指令
+list_files       查看项目结构
+read_file        按行读取文本文件
+write_file       创建或完整写入文件
+replace_in_file  精确替换已有代码
+apply_patch     预览补丁并逐块选择应用
+run_command      执行测试、检查或构建命令
+git_diff         查看工作区状态和代码差异
+update_plan      创建/更新本任务的可见步骤与状态
+delegate_research  将代码调查委派给只读架构/测试/安全子 Agent
+delegate_parallel_research  并行委派 2-3 个只读调查（最多同时 2 个）
+browser_search   经用户批准，在 Bing 搜索并读取有限页面文字
+browser_open     经用户批准，打开指定 HTTP/HTTPS 公网页面
+browser_click    预览目标后经用户批准，点击 CSS 选择器
+browser_screenshot 经用户批准，将当前可视区域截图保存在本机状态目录
+```
+
+只有任务明确要求网页搜索/浏览时才把浏览器工具加入模型请求，普通编码任务不会承担额外 token 开销。浏览器由 `scidev/integrations/browser.py` 使用标准库通过本机 CDP 控制系统 Edge；每次启动用独立临时 profile，不触碰用户原有 Edge 会话。搜索、导航、点击和截图分别等待一次 UI 审批，拒绝后本轮移除浏览器工具，避免重复弹窗/隐式重试；页面文字作为不可信数据交给模型。只允许 HTTP/HTTPS，拒绝单段主机名、`localhost`/`.local`/`.lan`/`.internal`/`home.arpa`/`.test` 等本机常见名称及非公网 IP 字面地址；CDP 监听回环地址、随机端口，下载策略为拒绝。截图限 8 MB，每项目最多 20 张于 `.research/browser/`；达到上限后提示手动清理，不会自动删除用户文件；截图不上传给 LLM，也不自动纳入代码自动提交。此策略不钉扎 DNS 解析结果，也不是网络沙箱：域名重绑定、重定向、脚本子请求及用户明确批准的点击仍可能访问局域网/外网或改变远端状态。
+
+多 Agent 通过设置启用，默认关闭以避免额外模型调用。主 Agent 承担 Manager/Coder 职责：`delegate_research` 单项委派架构、测试、安全、coder 或 reviewer；`delegate_parallel_research` 可一次委派 2–3 个互相独立的架构、测试、安全或 Reviewer 只读调查，线程池最多同时运行 2 个。并行批次不接受 Coder；所有文件写入继续串行，不会让子 Agent 争抢同一工作区。每任务最多 3 个子 Agent 调用，每个子 Agent 最多 5 轮、8 次工具调用。批次开始和结束时检查工作区指纹；可完整核验且期间变化时，报告标记为过期并禁止缓存；范围不完整时报告会提示无法保证版本稳定，也不会缓存。架构/测试/安全/Reviewer 只能调用 `search_code`、`get_project_context`、`list_files`、`read_file`。Coder 必须指定现有文件/目录作为 focus path；Harness 在本地按该范围预取脱敏上下文，子 Agent 只声明一次 `apply_patch`，并从首轮强制工具调用，不允许子模型以重复检索替代补丁。补丁目标仍逐一校验是否位于 focus 范围，聊天逐块人工审核；拒绝时立即停止且不得回退其他写入工具，部分批准只保留获批块并阻止自动提交。改动路径并入主 Agent 的会话、工作区上下文刷新、验证指纹和提交前 diff。Coder 若只输出文字 diff 或未成功应用经审查的补丁，会记录为未完成，不将其当作成功结果。子 Agent 不运行测试/命令、不浏览网页或操作 Git；测试命令仍由主 Agent 逐条申请用户批准。会话保存调用状态、报告与修改路径，JSONL 记录开始、工具、成功/失败、复用和限额事件，客户端实时展示进度与结果。同一完整工作区版本、问题、角色、范围和模型下只复用成功报告；失败/不可用不会被缓存成成功。并行子任务的会话状态/用量由主线程顺序持久化，结果按用户请求顺序返回；缓存只复用相同且完整的工作区版本。协作模型可单独指定，留空跟随主模型；不同模型 ID 仍可能属于同一服务商，报告需主 Agent 核验。本机 Qwen2.5-Coder-7B 已在隔离临时项目验证简单单行补丁；复杂任务和其他模型未验收。当前没有并行编码、独立工作区分支或冲突自动合并。
+
+`apply_patch` 使用 `*** Begin Patch` / `*** Update File` / `@@` 格式；桌面客户端默认不勾选任何修改块，用户可逐块批准或全部拒绝。拒绝、部分批准、审核界面不可用或预览后文件已变化时，Agent 停止且不以其他写文件工具绕过；通过审核的文件先全部校验，再以临时文件替换，应用失败会尝试回滚。操作受项目路径、单文件/总字节数、文件数与修改块数限制，并写入事件账本。传统 `write_file` 和 `replace_in_file` 仍可用于相应场景，故现阶段不宣称每种写操作都必经补丁审核。
+
+项目上下文由独立 `scidev/workspace/context.py` 提供：按任务与当前文件/目录检索、提取符号、读取项目清单与适用指令，指定目录会优先选择其后代文件；中文查询可离线扩展为有限的常见英文软件标识符，直接查询词权重更高，已知复合短语加权参与排序，不是通用翻译或语义检索。合成中英/标识符基准为 Top-1 11/11、Top-5 11/11；真实仓库 7 类工作流回归均在 Top-5 命中预期目标（含 Tetris 引擎和测试）。没有关键词命中时，聚焦文件仍提供少量代码行。快照最多 18000 字符。扫描限制为 5000 文件/8 MB 文本/单文件 2 MB，达到限制会提示缩小检索范围；大文件不会静默标成完整结果。局部读取最多 400 行/25000 字符。源文件按时间和大小增量缓存；任务、重试、修改后替换当前快照并写入会话记录，旧版内嵌目录快照会迁移移除。发给模型的快照只标记“当前工作区”，不发送本机绝对路径。客户端 `@` 菜单和底部“上下文”页提供异步预览/刷新，不调用 LLM。
+
+提交任务或预览上下文时，会捕获最多 8 个未保存编辑器文件、合计不超过 1 MB；这些快照参与上下文片段、`search_code`、`get_project_context` 和 `read_file`，项目清单也按缓冲区版本解析。快照被明确标成数据而非指令，并限制为只读：`write_file`、替换及补丁工具不能修改这些文件，避免磁盘旧版本覆盖编辑器草稿。超预算的脏文件不会按旧磁盘版本参与检索或读取，Agent 会要求先保存后重试。快照不写回源文件。为支持断网/重启续跑，待处理及可重试任务的原始快照暂存在本机 `.research/runs.db`；任务创建事件不记录快照源码正文，只记录路径和字节数，任务成功后清除队列副本，最终失败但仍可手动重试的任务保留快照。上下文片段与 `read_file` 工具结果按既有会话机制保存在 `.research/sessions/`；上下文页也会保留有限摘要供查看。
+
+环境快照区分 Harness 当前进程解释器和项目自己的解释器：显示 OS/架构、Python 版本/实现、解释器是否位于项目内，以及 `.venv`、`venv`、`env` 中 Python 可执行文件的存在状态（普通上下文生成不运行它们）。对项目环境的 `pyvenv.cfg` 最多读取 4 KB，只提取创建 Python 版本和 `include-system-site-packages`；链接/越界/超限配置不读取，也不向模型暴露 `home`、`executable` 等绝对路径。该版本仅为配置元数据，不证明当前解释器真实版本或可启动。从 `pyproject.toml`、根目录 `requirements*.txt`、`package.json`、`Cargo.toml`、`go.mod` 和常见锁文件提取声明版本/依赖名；依赖摘要不发送 PEP 508 条件或直接 URL。发给模型的项目上下文/检索副本会遮盖 URL 账号信息、常见密钥字段字面量、若干常见 Token 格式及 PEM 私钥块，不修改源文件；这是启发式遮盖，不是完整秘密扫描。显式 `read_file` 仍按项目内可读路径提供原文。
+
+上下文页的“核验环境”是独立的用户主动操作，不会随打开项目、预览上下文或发送编码任务触发。Python 只选择项目内 `.venv`/`venv`/`env` 解释器，不回退到 Harness Python；拒绝虚拟环境目录链接和越界解释器，Unix venv 的标准解释器软链接则按 venv 入口路径启动。根目录声明 `package.json`/`Cargo.toml`/`go.mod` 时，分别只探测 `node --version`、`rustc/cargo --version`、`go version`；不运行 npm/pnpm/yarn、Cargo 构建或 Go 模块命令。系统 PATH 可用时另探测 `nvidia-smi`/`nvcc`。整组只请求一次审批，Python 使用 `-I -B -S`，所有进程均 `shell=False`，45 秒总超时；不联网、不安装/解析依赖、不运行项目脚本/构建/测试，运行期间暂停新的编码任务和重试。结果显示在上下文页并写入本地事件账本。`pip check` 只核验已安装 Python 分布元数据冲突，不证明清单声明依赖均已安装或可导入；Node/Rust/Go 只证明版本命令可启动，不证明依赖或工程可构建；没有 `nvidia-smi`/`nvcc` 不足以证明没有 GPU/CUDA，检测到它们也不代表框架可用 GPU。当前仅识别根清单，未做嵌套 monorepo 运行时发现。
+
+工具执行限制：
+
+- 所有文件路径限制在项目根目录内。
+- 禁止访问 `.git`、`.research`、虚拟环境和常见凭据路径（`.env`、`.ssh`、`.aws`、`.npmrc`、`secrets/` 等）；模板 `.env.example` 可读。
+- 执行策略分四档：只读（禁止写入和命令）、手动审批（每条命令确认）、工作区可写（自动批准窄范围验证命令，其他命令确认）、完全访问（自动批准所有命令）。
+- 自动批准只接受单条、无 shell 链接/管道/重定向、无绝对路径或上级目录、无网络下载的 pytest/unittest、npm/pnpm/yarn test、ruff/eslint、mypy/pyright、`tsc --noEmit` 等验证命令。
+- 测试/lint/typecheck 输出会解析为文件、行号、错误码的结构化诊断，附加在工具结果后供模型继续修复。
+- 手动审批和完全访问以外的命令缺少审批界面或用户拒绝时命令不执行；批准后的命令仍以当前 Windows 用户权限运行，这不是操作系统级沙箱。
+- 默认不运行长时间科研训练、实验或大文件下载。
+- 屏蔽 `git reset --hard`、`git clean`、递归删除等破坏性命令。
+- 命令只在当前项目根目录执行，并有超时限制。
+
+典型交互：
+
+```text
+用户：给这个项目加一个配置文件读取功能
+
+Agent：list_files
+Agent：read_file
+Agent：apply_patch（聊天内逐块预览/批准；也可按场景使用 write_file / replace_in_file）
+Agent：run_command（测试）
+Agent：git_diff
+Agent：总结修改并自动提交
+```
+
+## 4. 科研过程记录
+
+虽然第一阶段不运行科研实验，但所有编码过程已经按科研可追溯方式记录：
+
+```text
+coding_session_started
+task_created
+model_call_started
+tool_called
+command_execution_recorded
+file_changed
+tool_result
+verification_recorded
+verification_report_recorded
+task_retry_scheduled
+tool_call_started
+tool_call_recovered
+coding_session_completed
+git_commit_created
+```
+
+每个会话保存一份 transcript：
+
+```text
+.research/
+├── events.jsonl             # append-only 事件日志
+├── runs.db                  # SQLite 查询索引
+└── sessions/
+    └── session_xxx.json     # 消息、工具调用、验证证据和 Git SHA
+```
+
+工具调用恢复以本地 SQLite journal 为准：完整结果先持久化、再写入会话 transcript；进程在执行前退出的 pending 调用会明确标记为未运行，已启动但结果缺失的调用标记为结果不确定且不自动重放。旧会话没有 journal 时也不猜测其是否执行。会话 JSON 通过同目录临时文件与原子替换保存，减少崩溃产生截断 JSON 的风险。该机制防止 Harness 自动重放同一调用，不是任意外部操作的 exactly-once 保证；模型后续仍可能生成新调用，`run_command` 仍须逐条审批；恢复到可能改代码的调用会要求验证后才能自动提交。
+
+`get_project_context` 静态检查可读文件和配置，给出 Python pytest/unittest、Node 根/嵌套 package（含 `test:*`）、Go、Rust、Maven/Gradle、.NET、tox/nox、Makefile 与 Justfile 的候选命令；子项目命令会限定项目路径，Python 项目若有普通 `.venv`/`venv`/`env` 解释器文件则优先使用该路径。Node 会参考 `packageManager` 与最近的锁文件；tox/nox、Make/Just 只接受明确包含测试语义的入口。候选来自有限约定/文本证据，不探测解释器/依赖是否可用，也不会执行或安装；未知脚本约定、路径含 shell 元字符、配置冲突或读取预算耗尽时可能漏掉候选。发现过程拒绝路径越界/链接并受文件数、单文件和总字节上限限制。候选会出现在任务上下文和桌面“上下文”预览中，实际命令仍须逐条批准。
+
+`run_command` 仍逐条等待用户批准；批准后保存命令状态（通过/失败/超时/启动失败）、退出码和耗时，拒绝或审批不可用则明确记为未运行。常见测试、lint、类型检查、编译、构建命令会被分类。检查前后对 Git 变更路径做有上限的内容指纹，并纳入 HEAD SHA；无 Git 提交基线时由项目上下文安全清单枚举源码路径。后续修改或检查期间工作区变化时，旧通过结果不再视为当前验证。
+
+桌面 Agent 默认启用完成门槛：本次改动涉及代码或配置时，必须有绑定当前代码的成功检查才允许自动提交；最多反馈续作两轮。用户拒绝命令、检查失败或证据范围受限时立即停止，不拆分/改写命令规避审批，不自动提交，改动保留在工作区供用户检查。无 Git、安全路径受限或文件数/体积超预算会显示“范围受限”。客户端在聊天中显示每次检查及最终状态。
+
+任务完成前的可选独立语义验收是额外 LLM 调用，默认关闭。它只证明另一个模型给出了基于所提供 diff 的判断，不是形式化证明，也不保证不同模型处于不同服务商。完整配置和数据发送边界见 README 的“独立语义验收”。
+
+`run_command` 的退出码和源码指纹是执行证据，不是目标达成的证明。可选独立语义验收会在用户明确配置后，使用不同模型 ID、无工具调用的单独请求审查任务、受限完整 diff 和检查摘要；它要求结构化标准及变更文件引用，并在请求结束后重新核对 diff。必需模式下，未满足的需求可触发一次有限修正；审查不可用、证据不完整或最终不通过时保留工作区且不自动提交。
+
+因此可以查询：
+
+- 用户当时提出了什么任务。
+- Agent 读取和修改了哪些文件。
+- 哪些工具调用失败过，后来如何修复。
+- 哪次 LLM 请求因为网络失败而重试。
+- 最终代码对应哪个 Git commit。
+
+## 5. Git 与文件树
+
+Git 默认采用“编码任务完成后自动提交，推送由用户决定”：
+
+- 客户端显示当前分支、工作区状态和提交记录。
+- 每次编码会话完成后自动生成 `[codex] ...` commit。
+- 自动提交只纳入任务开始时干净、且在本会话内变化的路径；已有暂存和未提交内容保留在原位，不混入 Agent commit。
+- 会话提交使用隔离的临时 Git index，提交后只刷新本次安全路径的真实 index 项。
+- 会话记录 `git_base_sha` 和 `git_result_sha`。
+- Agent 自动 diff 隐藏常见凭据/内部路径；自动提交跳过敏感路径、链接路径、超过 240,000 字节的文件及二进制/非 UTF-8 文件，跳过项保留在工作区并通过对话提示。敏感文件重命名时，来源与目标一并跳过。
+- Git 面板手动 diff/提交仍由用户显式操作；Agent 的自动筛选不会拦截手动审核。
+- 不自动 push、不自动合并、不删除用户分支。
+- `.env`、`.research` 数据库和缓存默认进入 `.gitignore`。
+
+客户端采用 VSCode + Codex 的布局：左侧为活动栏和项目文件树，中间为代码编辑工作区，右侧为固定的 Agent 对话栏；开发版本树是主工作区入口，集中展示主线提交、开发尝试和任务历史。
+
+## 6. 技术架构
+
+```text
+原生桌面客户端 PySide6 / Qt Widgets
+  ├─ 编码对话
+  ├─ 项目文件树
+  ├─ 任务队列
+  ├─ 多标签代码编辑器
+  ├─ Git / 开发版本树
+  └─ Agent 对话与实时日志
+
+Qt Quick / QML 通过 QQuickWidget 承载可拖拽、缩放的 2.5D 开发版本树；Git、会话、工具权限与持久化仍由 Python 核心管理。
+
+应用核心
+  ├─ Coding Agent Loop
+  ├─ Request Broker / Retry Queue
+  ├─ Coding Toolbox
+  ├─ Git Manager
+  └─ Event Ledger
+
+本地存储
+  ├─ SQLite：任务、会话索引
+  ├─ JSONL：不可变事件日志
+  ├─ JSON：会话 transcript
+  └─ Git：代码版本和 diff
+```
+
+当前实现使用 Python、PySide6/Qt、Qt Quick/QML、SQLite、Git CLI 和 OpenAI-compatible HTTP 接口；版本树通过 QQuickWidget 嵌入桌面客户端，不新增前端运行时依赖。后续再完善 Windows 安装包和语言服务集成。
+
+2026-11-17 · 维护入口：
+
+| 修改内容 | 主要模块 |
+|---|---|
+| 窗口状态、生命周期、跨面板连接 | `scidev/desktop/client.py` |
+| 窗口构建、缩放与响应式布局 | `scidev/desktop/window_builders.py`、`scidev/desktop/window_layout.py` |
+| Agent 面板、模型与任务设置 | `scidev/desktop/agent_panel.py`、`scidev/desktop/agent_settings.py` |
+| 编辑器、资源管理、Git、终端、对话交互 | `scidev/desktop/editor_workspace.py`、`scidev/desktop/explorer_workspace.py`、`scidev/desktop/git_workspace.py`、`scidev/desktop/terminal_workspace.py`、`scidev/desktop/chat_workflow.py` |
+| Agent 装配、项目上下文、计划和会话适配 | `scidev/agent/core.py` |
+| 任务准备与请求/响应/完成阶段 | `scidev/agent/run.py`，阶段共用单次任务的 `CodingRunState` |
+| 工具批次、验收收尾、会话总结 | `scidev/agent/tools.py`、`scidev/agent/completion.py`、`scidev/agent/summary.py` |
+| 模型通信、持久化、文件/命令工具 | `scidev/integrations/model.py`、`scidev/agent/session.py`、`scidev/agent/toolbox.py` |
+
+窗口与 Agent 统一持有状态和服务；工作流 mixin 不初始化状态、不反向导入宿主入口。修改时优先进入对应职责模块，原入口保留已有导出兼容；审批、验证和提交仍走原有流程。
+
+## 7. 后续科研能力
+
+实验运行、数据集、指标、图表和实验 DAG 不放在当前第一阶段。等 Codex 式编码闭环稳定后，再把它们作为独立的科研插件接入，避免编码 Agent 和实验执行器一开始互相干扰。
+
+## 8. 客户端功能补充
+
+### 任务规划
+
+聊天栏内置轻量计划面板；计划模式可选“自动规划”“必须先规划”或“关闭”，选择保存在客户端设置中。自动模式下，模型判断为多步骤任务时可调用 `update_plan`；必须模式下，首轮只提供计划工具并要求先创建步骤，再开放编码工具。计划最多 12 步，每步为待处理、进行中、已完成、受阻或已跳过，同一时刻最多一个进行中步骤；跳过、删除未完成步骤或重开已完成步骤须给出原因。
+
+计划每次修订先写入 `.research/sessions/<session>.json`，随后把完整步骤快照记入 `.research/events.jsonl` 并通知界面；网络重试/队列恢复时恢复同一份计划。同一会话的新任务会把旧计划归档（最多保留 20 份）。Agent 返回最终答复但仍有未完成步骤时，Harness 对连续未完成的答复最多给两次继续机会；计划取得进度后重新计数。仍未完成则标记失败、保留计划且不自动提交，用户可从任务历史重试。计划状态由模型报告，不是独立的验收证明；明确要求的测试仍须实际运行。当前没有逐步人工批准或图形 DAG。
+
+### 对话总结
+
+Agent 可每隔 N 轮发起一次轻量总结请求，并在会话结束时生成最终总结。总结包含精简 transcript、当前 Git SHA 和配置的总结指令，展示在对话面板并保存为独立记录：
+
+```text
+.research/summaries/<session>_<summary_id>.json
+```
+
+成功的阶段总结会进入后续模型请求的系统上下文，并从请求消息列表中省略已总结轮次；后续 checkpoint 总结只携带上一份摘要与压缩点后的新消息，不再重复打包已总结的旧对话。无效压缩游标会安全退回全量 transcript 摘要，并严格限制在配置的字符预算内。完整 transcript 与工具调用仍留在本地会话文件。总结失败不会改变已完成编码任务的状态；每次会话单独保存，不覆盖旧总结。聊天栏可配置启用状态、总结模型、最大输出 token、transcript 上下文长度、重试次数、每 N 轮总结（`0` 表示仅最终总结）和自定义总结指令。设置写入被 Git 忽略的 `.research/settings.json`，也可用 `SCIDEV_SUMMARY_ENABLED`、`SCIDEV_SUMMARY_MODEL`、`SCIDEV_SUMMARY_INTERVAL_TURNS` 环境变量覆盖。
+
+### 跨会话项目记忆
+
+每个新任务从当前项目 `.research/summaries/` 的最终总结中检索相关记录，采用本地中英文词项倒排与相关度排序；不生成 embedding、不下载模型、不发额外网络请求。当前会话会被排除，瞬时重试沿用首次检索快照；历史总结会先做常见 API key、Bearer、GitHub/AWS token 与 URL 密码格式脱敏。原始会话/总结只留在项目本地，不跨项目共享。
+
+索引保存在 Git 忽略的 `.research/memory.sqlite3`，最多保留 1000 条；启动后按上限回填最近 400 个总结文件/12 MB。每次任务默认最多注入 3 条、6000 字符，可在聊天栏“总结与项目记忆”设置中调整开关、条数和长度。无法读取记忆库只记事件，不会阻断编码。它是关键词检索，不保证语义召回；通用密钥脱敏不能保证识别所有私有凭据，历史内容会作为不可信背景而非指令提供给模型。
+
+### 2.5D 开发版本树
+
+Git 入口打开主工作台。竖直主干表示已完成的编码工作；侧边节点表示已取消、失败、运行中或等待中的尝试方向，它们不是 Git 分支。
+
+- 左键拖动尝试卡片可移动分支，连接线随卡片更新；拖动空白区平移画布；滚轮以光标位置为中心缩放。
+- 点击卡片查看详情；失败和等待节点可从详情面板重试。
+- 卡片用阴影层、高光边缘、深度偏移和状态强调色表现层次。
+- 卡片位置保存到 `.research/tree_layout.json`，项目重开后恢复。
+
+### 编辑器工作流
+
+- 文件树单击打开临时预览标签，双击固定为正式标签；多个文件可同时打开，标签可移动或关闭。
+- 有未保存修改的标签显示圆点，并在关闭前保护；`Ctrl+S` 保存并记录 `file_changed` 事件。
+- `+` 创建项目内文件；`@` 将当前文件和选中代码加入下一条 Agent 提示词；Agent 完成后，干净的已打开编辑器会从磁盘刷新。
+- `Ctrl+P` 或顶部搜索打开匹配文件；`>` 命令模式可切换终端、问题面板和替换视图。
+- `Ctrl+F` 搜索当前文件；`Ctrl+H` 支持替换、全部替换、大小写和全词选项；`Ctrl+`` 切换项目根目录下的集成终端。
+- 问题面板保留任务和终端错误；状态栏展示光标位置、编码、语言和 Git 状态；差异以只读编辑器标签打开。
+- Git 页面支持变更文件列表、双击差异、选择/全部暂存、取消暂存、工作区状态和手动提交。
+- `Ctrl+Shift+F` 搜索项目可读文件并跳转结果；`Ctrl+Shift+O` 显示 Python 类与函数大纲；`F12` 跳转定义，`Shift+F12` 查找全词引用，`Alt+Left/Right` 浏览位置历史。
+- `Shift+Alt+F` 清理行尾空格并规范文件末尾换行；编辑器上下文菜单提供导航、重命名和格式化。
+- 工具栏可打开并排编辑组；各组拥有独立标签，共享保存、差异、诊断和未保存保护。
+- `Ctrl+Space` 提供本地确定性补全；语义 IntelliSense 仍需语言服务器支持。
+- Python 语法检查支持双击跳转到错误行列；文件树上下文菜单可创建文件/目录、重命名、删除项目内资源，或在指定目录打开终端。
+- `Ctrl+Shift+P` 打开命令面板，可切换终端、问题、搜索和替换，无需额外弹窗。
+
+整体遵循 VS Code 工作台模型：左侧文件树、中间编辑器标签、右侧 Agent 对话栏，底部终端与问题面板。

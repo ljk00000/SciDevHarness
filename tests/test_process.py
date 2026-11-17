@@ -11,20 +11,20 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from scidev_context import ProjectContext
-from scidev_core import CodingToolbox, EventLedger, GitManager, PermanentError
-from scidev_process import background_process_options
+from scidev.workspace.context import ProjectContext
+from scidev.agent.core import CodingToolbox, EventLedger, GitManager, PermanentError
+from scidev.runtime.process import background_process_options
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_QUICK_BACKEND"] = "software"
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
-from scidev_client import ClientWindow
+from scidev.desktop.client import ClientWindow
 
 
 class BackgroundProcessTests(unittest.TestCase):
     def test_non_windows_options_are_empty(self):
-        with patch("scidev_process.os", SimpleNamespace(name="posix")):
+        with patch("scidev.runtime.process.os", SimpleNamespace(name="posix")):
             self.assertEqual(background_process_options(), {})
 
     @unittest.skipUnless(os.name == "nt", "Windows process flags")
@@ -39,8 +39,8 @@ class BackgroundProcessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             manager = GitManager(Path(temporary))
             completed = subprocess.CompletedProcess(["git", "status"], 0, "clean", "")
-            with patch("scidev_git.background_process_options", return_value={"creationflags": 123}):
-                with patch("scidev_git.subprocess.run", return_value=completed) as run:
+            with patch("scidev.workspace.git.background_process_options", return_value={"creationflags": 123}):
+                with patch("scidev.workspace.git.subprocess.run", return_value=completed) as run:
                     result = manager._run(["status"], check=True, env={"TEST": "preserve"})
             self.assertIs(result, completed)
             kwargs = run.call_args.kwargs
@@ -54,8 +54,8 @@ class BackgroundProcessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             context = ProjectContext(Path(temporary), protected=lambda _path: False)
             completed = subprocess.CompletedProcess([], 0, b"index.html\0note.txt\0", b"")
-            with patch("scidev_context.background_process_options", return_value={"creationflags": 123}):
-                with patch("scidev_context.subprocess.run", return_value=completed) as run:
+            with patch("scidev.workspace.context.background_process_options", return_value={"creationflags": 123}):
+                with patch("scidev.workspace.context.subprocess.run", return_value=completed) as run:
                     files = context._git_files()
             self.assertEqual([file.name for file in files], ["index.html", "note.txt"])
             self.assertEqual(run.call_args.kwargs["creationflags"], 123)
@@ -70,15 +70,15 @@ class BackgroundProcessTests(unittest.TestCase):
             process = Mock(returncode=7)
             process.communicate.return_value = (b"failure detail", None)
             try:
-                with patch("scidev_core.background_process_options", return_value={"creationflags": 123}):
-                    with patch("scidev_core.subprocess.Popen", return_value=process) as launch:
+                with patch("scidev.agent.toolbox.background_process_options", return_value={"creationflags": 123}):
+                    with patch("scidev.agent.toolbox.subprocess.Popen", return_value=process) as launch:
                         result = toolbox.run_command("python -V", timeout_seconds=10)
                 self.assertEqual(launch.call_args.kwargs["creationflags"], 123)
                 self.assertEqual(launch.call_args.kwargs["stderr"], subprocess.STDOUT)
                 self.assertIn("failure detail", result)
                 self.assertEqual(toolbox.last_command_execution["exit_code"], 7)
                 toolbox.command_approval = lambda *_args: False
-                with patch("scidev_core.subprocess.Popen") as launch:
+                with patch("scidev.agent.toolbox.subprocess.Popen") as launch:
                     with self.assertRaisesRegex(PermanentError, "命令未执行"):
                         toolbox.run_command("python -V")
                 launch.assert_not_called()
@@ -131,7 +131,7 @@ class DesktopGitBackgroundTests(unittest.TestCase):
                     calls.append((phase, args[0]))
                 return real_run(*args, **kwargs)
 
-            with patch("subprocess.run", side_effect=run), patch("scidev_client.QSettings", return_value=settings):
+            with patch("subprocess.run", side_effect=run), patch("scidev.desktop.client.QSettings", return_value=settings):
                 GitManager(root).init()
                 window = ClientWindow(root)
                 try:
@@ -156,7 +156,7 @@ class DesktopGitBackgroundTests(unittest.TestCase):
 
 class ProcessHardeningTests(unittest.TestCase):
     def test_destructive_guard_normalises_spacing_and_flag_order(self) -> None:
-        from scidev_core import destructive_command_reason
+        from scidev.agent.core import destructive_command_reason
 
         for command in (
             "git  reset --hard",
@@ -175,7 +175,7 @@ class ProcessHardeningTests(unittest.TestCase):
             ledger = EventLedger(Path(temporary))
             toolbox = CodingToolbox(Path(temporary), ledger, command_approval=lambda *_args: True)
             try:
-                with patch("scidev_core.subprocess.Popen") as launch:
+                with patch("scidev.agent.toolbox.subprocess.Popen") as launch:
                     with self.assertRaisesRegex(PermanentError, "破坏性"):
                         toolbox.run_command("git  reset --hard")
                 launch.assert_not_called()
@@ -193,8 +193,8 @@ class ProcessHardeningTests(unittest.TestCase):
             ]
             try:
                 with (
-                    patch("scidev_core.subprocess.Popen", return_value=process),
-                    patch("scidev_core.terminate_process_tree") as stop_tree,
+                    patch("scidev.agent.toolbox.subprocess.Popen", return_value=process),
+                    patch("scidev.agent.toolbox.terminate_process_tree") as stop_tree,
                 ):
                     result = toolbox.run_command("python -V", timeout_seconds=1)
                 stop_tree.assert_called_once_with(process)
@@ -221,7 +221,7 @@ class ProcessHardeningTests(unittest.TestCase):
             self.assertNotIn("\ufffd", result)
 
     def test_utf8_command_output_is_preferred(self) -> None:
-        from scidev_core import decode_process_output
+        from scidev.agent.core import decode_process_output
 
         self.assertEqual(decode_process_output("你好".encode("utf-8")), "你好")
 
@@ -231,18 +231,18 @@ class ProcessHardeningTests(unittest.TestCase):
         "Chinese Windows console code page",
     )
     def test_gbk_command_output_falls_back_to_the_console_code_page(self) -> None:
-        from scidev_core import decode_process_output
+        from scidev.agent.core import decode_process_output
 
         self.assertEqual(decode_process_output("你好".encode("gbk")), "你好")
 
     def test_streaming_terminal_kill_stops_the_tree(self) -> None:
-        from scidev_process import StreamingCommand
+        from scidev.runtime.process import StreamingCommand
 
         process = Mock()
         process.poll.return_value = None
         command = StreamingCommand()
         command._process = process
-        with patch("scidev_process.terminate_process_tree") as stop_tree:
+        with patch("scidev.runtime.process.terminate_process_tree") as stop_tree:
             command.kill()
         stop_tree.assert_called_once_with(process)
 

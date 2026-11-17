@@ -1,4 +1,5 @@
 """External opening must use the right-clicked file and preserve editor drafts."""
+from contextlib import contextmanager
 from pathlib import Path
 import os
 import tempfile
@@ -12,7 +13,7 @@ os.environ["QT_QUICK_BACKEND"] = "software"
 from PySide6.QtCore import QPoint, QSettings
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMenu
-from scidev_client import ClientWindow
+from scidev.desktop.client import ClientWindow
 
 
 class ExternalFileOpenTests(unittest.TestCase):
@@ -24,7 +25,7 @@ class ExternalFileOpenTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="scidev-external-open-")
         self.root = Path(self.temp.name)
         self.settings = QSettings(str(self.root / "ui.ini"), QSettings.Format.IniFormat)
-        self.settings_patch = patch("scidev_client.QSettings", return_value=self.settings)
+        self.settings_patch = patch("scidev.desktop.client.QSettings", return_value=self.settings)
         self.settings_patch.start()
         self.window = ClientWindow(self.root)
         self.window.resize(1280, 720)
@@ -57,6 +58,7 @@ class ExternalFileOpenTests(unittest.TestCase):
         self.fail(f"File row did not load: {path}")
 
     @staticmethod
+    @contextmanager
     def intercept_menu(label, captured):
         def create_menu(parent):
             menu = QMenu(parent)
@@ -69,7 +71,14 @@ class ExternalFileOpenTests(unittest.TestCase):
             # patched; replace this instance's exec instead of entering a loop.
             menu.exec = choose
             return menu
-        return patch("scidev_client.QMenu", side_effect=create_menu)
+        # Each workspace owns its imported constructor; cover both menus and
+        # the legacy client binding when running a pre-migration snapshot.
+        with (
+            patch("scidev.desktop.client.QMenu", side_effect=create_menu),
+            patch("scidev.desktop.editor_workspace.QMenu", side_effect=create_menu),
+            patch("scidev.desktop.explorer_workspace.QMenu", side_effect=create_menu),
+        ):
+            yield
 
     def test_html_context_menu_uses_clicked_file_encoded_url_and_preserves_draft(self):
         html = self.root / "俄罗斯 方块 #% INDEX.HTML"
@@ -82,7 +91,7 @@ class ExternalFileOpenTests(unittest.TestCase):
         before = editor.toPlainText()
         self.window._open_file(other)
         actions = {}
-        with patch("scidev_client.webbrowser.open_new_tab", return_value=True) as browser:
+        with patch("scidev.desktop.client.webbrowser.open_new_tab", return_value=True) as browser:
             with self.intercept_menu("在浏览器中打开", actions):
                 self.window._show_explorer_menu(self.point_for(html))
             browser.assert_called_once_with(html.resolve().as_uri())
@@ -107,12 +116,12 @@ class ExternalFileOpenTests(unittest.TestCase):
         group = self.window.editor_tabs
         self.app.processEvents()
         point = group.tabBar().tabRect(group.indexOf(html_editor)).center()
-        with patch("scidev_client.webbrowser.open_new_tab", return_value=True) as browser:
+        with patch("scidev.desktop.client.webbrowser.open_new_tab", return_value=True) as browser:
             with self.intercept_menu("在浏览器中打开", {}):
                 self.window._show_editor_tab_menu(point, group)
             browser.assert_called_once_with(html.resolve().as_uri())
         actions = {}
-        with patch("scidev_client.QDesktopServices.openUrl", return_value=True) as desktop:
+        with patch("scidev.desktop.client.QDesktopServices.openUrl", return_value=True) as desktop:
             with self.intercept_menu("使用默认程序打开", actions):
                 self.window._show_explorer_menu(self.point_for(text))
             self.assertEqual(Path(desktop.call_args.args[0].toLocalFile()), text.resolve())
@@ -135,17 +144,17 @@ class ExternalFileOpenTests(unittest.TestCase):
     def test_missing_outside_and_invalid_files_do_not_dispatch_and_failure_is_visible(self):
         text = self.root / "note.txt"
         text.write_text("keep", encoding="utf-8")
-        with patch("scidev_client.webbrowser.open_new_tab") as browser:
+        with patch("scidev.desktop.client.webbrowser.open_new_tab") as browser:
             self.assertFalse(self.window._open_external_file(self.root / "missing.html", browser=True))
             self.assertFalse(self.window._open_external_file(self.root.parent, browser=True))
             self.assertFalse(self.window._open_external_file(text, browser=True))
             browser.assert_not_called()
         html = self.root / "index.html"
         html.write_text("<title>no browser</title>", encoding="utf-8")
-        with patch("scidev_client.webbrowser.open_new_tab", return_value=False):
+        with patch("scidev.desktop.client.webbrowser.open_new_tab", return_value=False):
             self.assertFalse(self.window._open_external_file(html, browser=True))
         self.assertIn("未找到可用的浏览器", self.window.statusBar().currentMessage())
-        with patch("scidev_client.QDesktopServices.openUrl", return_value=False):
+        with patch("scidev.desktop.client.QDesktopServices.openUrl", return_value=False):
             self.assertFalse(self.window._open_external_file(text))
         self.assertIn("未找到可用的默认程序", self.window.statusBar().currentMessage())
 

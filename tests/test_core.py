@@ -19,8 +19,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from unittest.mock import Mock, patch
 
-from scidev_core import (
-    OLLAMA_DEFAULT_NUM_CTX,
+from scidev.agent.core import (
     CodingAgent,
     CodingToolbox,
     EventLedger,
@@ -37,6 +36,7 @@ from scidev_core import (
     manual_git_mutation_reason,
     parse_porcelain_z,
 )
+from scidev.integrations.model import OLLAMA_DEFAULT_NUM_CTX
 
 
 class FakeCodingProvider:
@@ -179,7 +179,7 @@ class PlanningAgentTests(unittest.TestCase):
                 },
             }
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run(task)
 
             self.assertEqual(result["text"], "检查和计划均已完成。")
@@ -227,7 +227,7 @@ class PlanningAgentTests(unittest.TestCase):
             }
 
             with (
-                patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
+                patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider),
                 patch.object(provider, "chat", side_effect=replies) as chat,
             ):
                 agent.run(task)
@@ -260,7 +260,7 @@ class PlanningAgentTests(unittest.TestCase):
                 },
             }
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "任务计划仍有未完成步骤"):
                     agent.run(task)
 
@@ -277,7 +277,7 @@ class PlanningAgentTests(unittest.TestCase):
                 planning_final_reply("重试后计划步骤全部完成。"),
             )
             with patch(
-                "scidev_core.OpenAICompatibleProvider.from_env",
+                "scidev.agent.core.OpenAICompatibleProvider.from_env",
                 return_value=manual_retry_provider,
             ):
                 result = agent.run(task)
@@ -301,7 +301,7 @@ class PlanningAgentTests(unittest.TestCase):
                 planning_tool_reply(self._initial_steps()),
                 RetryableError("暂时断网"),
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=first_provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=first_provider):
                 with self.assertRaises(RetryableError):
                     agent.run(task)
             saved = json.loads(
@@ -313,7 +313,7 @@ class PlanningAgentTests(unittest.TestCase):
                 planning_tool_reply(self._finished_steps()),
                 planning_final_reply("恢复后完成。"),
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=second_provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=second_provider):
                 agent.run(task)
 
             self.assertIn("update_plan", second_provider.tool_histories[0])
@@ -341,11 +341,11 @@ class PlanningAgentTests(unittest.TestCase):
                 planning_tool_reply(self._finished_steps()),
                 planning_final_reply("方向一完成。"),
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider_one):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider_one):
                 agent.run(first)
             second = {**first, "task_id": "task_second_direction"}
             provider_two = ScriptedPlanningProvider(planning_final_reply("方向二完成。"))
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider_two):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider_two):
                 agent.run(second)
 
             saved = json.loads(
@@ -564,7 +564,7 @@ class CoreTests(unittest.TestCase):
                 require_verification=False,
                 patch_review=approve_after_inspecting,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "reviewed_legacy_edit", "prompt": "Update value safely"}})
 
             tool_error = next(
@@ -602,7 +602,7 @@ class CoreTests(unittest.TestCase):
                 patch_review=lambda _preview: None,
             )
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaises(PermanentError):
                     agent.run({"payload": {"session_id": "patch_rejected", "prompt": "Update first"}})
 
@@ -644,7 +644,7 @@ class CoreTests(unittest.TestCase):
                 patch_review=lambda _preview: {1},
             )
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "未获批准"):
                     agent.run({"payload": {"session_id": "patch_partial", "prompt": "Update both functions"}})
 
@@ -687,7 +687,7 @@ class CoreTests(unittest.TestCase):
                 patch_review=lambda _preview: {1},
             )
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "patch_approved", "prompt": "Update first"}})
 
             self.assertEqual(len(provider.tool_histories), 3)
@@ -786,14 +786,14 @@ class CoreTests(unittest.TestCase):
             task_id = ledger.create_task("test", {}, max_attempts=5)
             self.assertEqual(ledger.claim_due_task()["task_id"], task_id)
             now = time.time()
-            with patch("scidev_core.time.time", return_value=now):
+            with patch("scidev.agent.core.time.time", return_value=now):
                 ledger.retry_or_fail(task_id, "limited", retryable=True, base_delay=5, retry_after_seconds=2)
             row = next(item for item in ledger.list_tasks() if item["task_id"] == task_id)
             self.assertEqual(row["next_retry_at"] - now, 5.0)
 
             second_task = ledger.create_task("test", {}, max_attempts=3)
             self.assertEqual(ledger.claim_due_task()["task_id"], second_task)
-            with patch("scidev_core.time.time", return_value=now):
+            with patch("scidev.agent.core.time.time", return_value=now):
                 ledger.retry_or_fail(second_task, "unreasonable hint", retryable=True,
                                      base_delay=5, retry_after_seconds=100_000)
             row = next(item for item in ledger.list_tasks() if item["task_id"] == second_task)
@@ -959,7 +959,7 @@ class CoreTests(unittest.TestCase):
                         ledger,
                         "complete_tool_call",
                         side_effect=RetryableError("simulated loss after file write"),
-                    ), patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=first_provider):
+                    ), patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=first_provider):
                         with self.assertRaises(RetryableError):
                             agent.run(task)
                 else:
@@ -978,7 +978,7 @@ class CoreTests(unittest.TestCase):
                         original_save(session)
 
                     with patch.object(agent, "_save_session", side_effect=fail_after_tool_result), patch(
-                        "scidev_core.OpenAICompatibleProvider.from_env", return_value=first_provider,
+                        "scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=first_provider,
                     ):
                         with self.assertRaises(RetryableError):
                             agent.run(task)
@@ -986,7 +986,7 @@ class CoreTests(unittest.TestCase):
                 self.assertEqual(execution_count, 1)
                 self.assertEqual((root / "once.py").read_text(encoding="utf-8"), "value = 1\n")
                 resumed_provider = FixedReplyProvider(final_reply)
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=resumed_provider):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=resumed_provider):
                     with self.assertRaises(PermanentError):
                         agent.run(task)
 
@@ -1049,7 +1049,7 @@ class CoreTests(unittest.TestCase):
             })
             agent._save_session(session)
             provider = FinalReplyProvider()
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 agent.run({"payload": {"session_id": "legacy-tool-session", "prompt": prompt}})
 
             self.assertFalse((root / "legacy.py").exists())
@@ -1071,7 +1071,7 @@ class CoreTests(unittest.TestCase):
             previous = session_path.read_bytes()
             replacement = {**original, "prompt": "after"}
 
-            with patch("scidev_core.os.replace", side_effect=OSError("injected replace failure")):
+            with patch("scidev.agent.session.os.replace", side_effect=OSError("injected replace failure")):
                 with self.assertRaises(OSError):
                     agent._save_session(replacement)
 
@@ -1125,7 +1125,7 @@ class CoreTests(unittest.TestCase):
             agent = CodingAgent(root, ledger, git, require_verification=False)
             fake_provider = FakeCodingProvider()
             task = {"payload": {"session_id": "session_smoke", "prompt": "创建 hello.py"}}
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=fake_provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=fake_provider):
                 result = agent.run(task)
             prior_tool_messages = [
                 message
@@ -1172,7 +1172,7 @@ class CoreTests(unittest.TestCase):
             )
             with (
                 patch.dict(os.environ, {"SCIDEV_REASONING_EFFORT": "none"}, clear=True),
-                patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
+                patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider),
                 patch.object(provider, "chat", return_value={"role": "assistant", "content": "Done", "tool_calls": []}) as chat,
             ):
                 agent.run({"payload": {"session_id": "reasoning_option", "prompt": "Inspect this project."}})
@@ -1233,7 +1233,7 @@ class CoreTests(unittest.TestCase):
                 require_verification=False,
             )
             provider = InvalidThenCorrectProvider()
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run(
                     {"payload": {"session_id": "invalid_tool_retry", "prompt": "Create hello.py containing print(1)."}}
                 )
@@ -1305,7 +1305,7 @@ class CoreTests(unittest.TestCase):
             provider = InvalidThenCorrectProvider()
             prompt = "Create hello.py containing print(1)."
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "single_prompt_tool_schema", "prompt": prompt}})
 
             self.assertGreater(provider.calls, 2)
@@ -1385,7 +1385,7 @@ class CoreTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
             )
             provider = SvgPolicyProvider()
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run(
                     {
                         "payload": {
@@ -1545,7 +1545,7 @@ class CoreTests(unittest.TestCase):
             agent = CodingAgent(root, ledger, GitManager(root), summary_settings=SummarySettings(enabled=False))
             provider = PreflightRepairProvider()
             prompt = "Generate an SVG of a pelican riding a bicycle"
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "svg_preflight_repair", "prompt": prompt}})
 
             self.assertTrue(result["git_result_sha"])
@@ -1665,7 +1665,7 @@ class CoreTests(unittest.TestCase):
             self.assertNotIn("enum", ambiguous_edit_schema["properties"]["path"])
             provider = ReadThenNoopThenEditProvider()
             prompt = "Generate an SVG of a pelican riding a bicycle"
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "svg_read_then_edit", "prompt": prompt}})
 
             self.assertTrue(result["git_result_sha"])
@@ -1768,7 +1768,7 @@ class CoreTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
             )
             provider = FullRewriteThenEditProvider()
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run(
                     {
                         "payload": {
@@ -1835,7 +1835,7 @@ class CoreTests(unittest.TestCase):
             agent.MAX_SVG_ARTIFACT_TURNS = 3
             provider = IgnoresPreflightProvider()
             prompt = "Generate an SVG of a pelican riding a bicycle"
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "SVG 结构预检在 3 个 Agent 回合后仍未通过"):
                     agent.run({"payload": {"session_id": "svg_preflight_exhausted", "prompt": prompt}})
 
@@ -1892,7 +1892,7 @@ class CoreTests(unittest.TestCase):
             provider = IgnoresDuplicateIdFeedback()
             prompt = "Generate an SVG of a pelican riding a bicycle"
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "SVG 结构预检连续 2 次重试后"):
                     agent.run({"payload": {"session_id": "svg_preflight_stalled", "prompt": prompt}})
 
@@ -2070,7 +2070,7 @@ class CoreTests(unittest.TestCase):
                 "Repair only these localized SVG issues in drawing.svg using replace_in_file. "
                 "Validator: adjust the subject circle."
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "svg_noop_then_edit", "prompt": prompt}})
 
             self.assertEqual(provider.calls, 5)
@@ -2129,7 +2129,7 @@ class CoreTests(unittest.TestCase):
                 root, ledger, git, summary_settings=SummarySettings(enabled=False), require_verification=False,
             )
             provider = NoopRepairProvider()
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "without changing the file after its bounded retry"):
                     agent.run(
                         {
@@ -2183,7 +2183,7 @@ class CoreTests(unittest.TestCase):
             provider = TextOnlyProvider()
             prompt = "Generate an SVG of a pelican riding a bicycle"
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "Single-user-prompt mode stopped"):
                     agent.run({"payload": {"session_id": "svg_single_prompt", "prompt": prompt}})
 
@@ -2278,7 +2278,7 @@ class CoreTests(unittest.TestCase):
             provider = InvalidSvgProvider()
             prompt = "Generate an SVG of a pelican riding a bicycle"
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaises(PermanentError):
                     agent.run({"payload": {"session_id": "svg_single_preflight", "prompt": prompt}})
 
@@ -2320,7 +2320,7 @@ class CoreTests(unittest.TestCase):
             )
             provider = MissingSvgThenWriteProvider()
             prompt = "Generate an SVG of a pelican riding a bicycle"
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "svg_creation_retry", "prompt": prompt}})
 
             self.assertTrue((root / "pelican.svg").is_file())
@@ -2396,7 +2396,7 @@ class CoreTests(unittest.TestCase):
 
             provider = RepeatedReadProvider()
             prompt = "Repair the existing SVG in drawing.svg and preserve its valid artwork."
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "超过最大 Agent 步数：2"):
                     agent.run({"payload": {"session_id": "svg_repair_turn_budget", "prompt": prompt}})
 
@@ -2423,7 +2423,7 @@ class CoreTests(unittest.TestCase):
             )
             provider = TextSvgEnvelopeProvider()
             prompt = "Generate an SVG of a pelican riding a bicycle"
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "svg_text_tool_call", "prompt": prompt}})
 
             self.assertTrue((root / "pelican.svg").is_file())
@@ -2445,7 +2445,7 @@ class CoreTests(unittest.TestCase):
             ledger = EventLedger(root)
             agent = CodingAgent(root, ledger, GitManager(root), summary_settings=SummarySettings(enabled=False))
             provider = NeverCreatesSvgProvider()
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "未创建 SVG 文件"):
                     agent.run(
                         {
@@ -2507,7 +2507,7 @@ class CoreTests(unittest.TestCase):
             agent = CodingAgent(
                 root, ledger, git, summary_settings=SummarySettings(enabled=False), require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "session_stale_diff", "prompt": "修改 hello.py"}})
 
             self.assertEqual((root / "hello.py").read_text(encoding="utf-8"), "value = 2\n")
@@ -2551,7 +2551,7 @@ class CoreTests(unittest.TestCase):
                 return execute(name, arguments)
 
             task = {"payload": {"session_id": "session_diff_failure", "prompt": "创建 hello.py"}}
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with patch.object(agent.toolbox, "execute", side_effect=fail_final_diff):
                     with self.assertRaisesRegex(PermanentError, "提交前 Git diff 检查失败"):
                         agent.run(task)
@@ -2602,7 +2602,7 @@ class CoreTests(unittest.TestCase):
             staged.write_text("value = 3\n", encoding="utf-8")
             agent = CodingAgent(root, ledger, git, require_verification=False)
             task = {"payload": {"session_id": "session_isolated_commit", "prompt": "创建 hello.py"}}
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=FakeCodingProvider()):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=FakeCodingProvider()):
                 result = agent.run(task)
 
             committed_paths = set(
@@ -2733,7 +2733,7 @@ class CoreTests(unittest.TestCase):
             agent._load_session("session_guidance_refresh", old_prompt)
             provider = FakeCodingProvider()
 
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 agent.run({"payload": {"session_id": "session_guidance_refresh", "prompt": "创建 hello.py"}})
 
             refreshed_prompt = provider.message_histories[0][0]["content"]
@@ -2751,8 +2751,8 @@ class CoreTests(unittest.TestCase):
             agent = CodingAgent(root, ledger, git, summary_settings=settings, require_verification=False)
             provider = RetryOncePerSummaryProvider()
             with (
-                patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
-                patch("scidev_core.time.sleep"),
+                patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider),
+                patch("scidev.agent.core.time.sleep"),
             ):
                 agent.run({"payload": {"session_id": "session_checkpoint", "prompt": "创建 hello.py"}})
             records = [json.loads(path.read_text(encoding="utf-8")) for path in (root / ".research" / "summaries").glob("*.json")]
@@ -2781,7 +2781,7 @@ class CoreTests(unittest.TestCase):
                 RetryableError("rate limited", retry_after_seconds=2),
                 planning_final_reply("已总结。"),
             )
-            with patch("scidev_core.time.sleep") as sleep:
+            with patch("scidev.agent.core.time.sleep") as sleep:
                 result = agent._summarize_session(provider, session)
 
             self.assertEqual(result, "已总结。")
@@ -2804,7 +2804,7 @@ class CoreTests(unittest.TestCase):
                 RetryableError("rate limited", retry_after_seconds=60),
                 planning_final_reply("这条响应不应立即发送。"),
             )
-            with patch("scidev_core.time.sleep") as sleep:
+            with patch("scidev.agent.core.time.sleep") as sleep:
                 result = agent._summarize_session(provider, session)
 
             self.assertEqual(result, "")
@@ -2831,7 +2831,7 @@ class CoreTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=True, retries=0, interval_turns=0),
                 require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 agent.run({
                     "task_id": "task_first_request_scope",
                     "payload": {"session_id": "shared_session", "prompt": "第一项工作"},
@@ -2864,7 +2864,7 @@ class CoreTests(unittest.TestCase):
                 "task_id": "task_stable_retry_scope",
                 "payload": {"session_id": "retry_session", "prompt": "暂时断网后恢复"},
             }
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaises(RetryableError):
                     agent.run(task)
                 agent.run(task)
@@ -3031,7 +3031,7 @@ class CoreTests(unittest.TestCase):
             )
             provider = ArtifactProvider()
             with patch.object(GitManager, "MAX_AUTO_COMMIT_FILE_BYTES", 16):
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                     result = agent.run({"payload": {"session_id": "large_artifact", "prompt": "创建代码"}})
 
             committed = set(filter(None, git._run(["show", "--pretty=format:", "--name-only", "HEAD"]).stdout.splitlines()))
@@ -3326,7 +3326,7 @@ class CoreTests(unittest.TestCase):
             root = Path(temp)
             ledger = EventLedger(root)
             toolbox = CodingToolbox(root, ledger)
-            with patch("scidev_core.subprocess.Popen") as process:
+            with patch("scidev.agent.toolbox.subprocess.Popen") as process:
                 with self.assertRaises(PermanentError):
                     toolbox.run_command("python -c \"print('must not run')\"")
             process.assert_not_called()
@@ -3340,7 +3340,7 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             toolbox = CodingToolbox(root, EventLedger(root))
-            with patch("scidev_core.subprocess.Popen") as process:
+            with patch("scidev.agent.toolbox.subprocess.Popen") as process:
                 with self.assertRaisesRegex(PermanentError, "command 必须是字符串"):
                     toolbox.run_command({"command": "echo hi"})  # type: ignore[arg-type]
                 with self.assertRaisesRegex(PermanentError, "超时参数无效"):
@@ -3360,7 +3360,7 @@ class CoreTests(unittest.TestCase):
                 command_approval=lambda command, timeout: approvals.append((command, timeout)) or True,
             )
             process_result = type("ProcessResult", (), {"returncode": 0, "communicate": lambda self, timeout: (b"ok", None)})()
-            with patch("scidev_core.subprocess.Popen", return_value=process_result) as process:
+            with patch("scidev.agent.toolbox.subprocess.Popen", return_value=process_result) as process:
                 result = toolbox.run_command("python -V", timeout_seconds=400)
             process.assert_called_once()
             self.assertEqual(approvals, [("python -V", 300)])
@@ -3389,13 +3389,13 @@ class CoreTests(unittest.TestCase):
             ledger = EventLedger(root)
             toolbox = CodingToolbox(root, ledger, command_approval=lambda _command, _timeout: True)
             timed_out = TimedOutProcess()
-            with patch("scidev_core.subprocess.Popen", return_value=timed_out):
+            with patch("scidev.agent.toolbox.subprocess.Popen", return_value=timed_out):
                 result = toolbox.run_command("pytest -q", timeout_seconds=1)
             self.assertIn("执行状态：timed_out", result)
             self.assertEqual(toolbox.last_command_execution["status"], "timed_out")
             self.assertEqual(toolbox.last_command_execution["exit_code"], -9)
 
-            with patch("scidev_core.subprocess.Popen", side_effect=OSError("executable unavailable")):
+            with patch("scidev.agent.toolbox.subprocess.Popen", side_effect=OSError("executable unavailable")):
                 with self.assertRaisesRegex(PermanentError, "命令启动失败"):
                     toolbox.run_command("pytest -q")
             self.assertEqual(toolbox.last_command_execution["status"], "start_failed")
@@ -3720,9 +3720,9 @@ class CoreTests(unittest.TestCase):
             error_stream,
         )
         with (
-            patch("scidev_core.urlopen", side_effect=error),
-            patch("scidev_core.getproxies") as proxy_settings,
-            patch("scidev_core.build_opener") as proxy_opener,
+            patch("scidev.integrations.model.urlopen", side_effect=error),
+            patch("scidev.integrations.model.getproxies") as proxy_settings,
+            patch("scidev.integrations.model.build_opener") as proxy_opener,
         ):
             with self.assertRaises(RetryableError) as caught:
                 provider.chat([{"role": "user", "content": "test"}], request_id="rate-limit")
@@ -3741,7 +3741,7 @@ class CoreTests(unittest.TestCase):
                 "http_proxy": "http://127.0.0.1:8123",
                 "https_proxy": "http://127.0.0.1:8123",
             }),
-            patch("scidev_core.build_opener") as build_opener_mock,
+            patch("scidev.integrations.model.build_opener") as build_opener_mock,
         ):
             build_opener_mock.return_value.open.return_value = BytesIO(response)
             message = provider.chat([{"role": "user", "content": "direct-first"}], request_id="direct-success")
@@ -3762,10 +3762,10 @@ class CoreTests(unittest.TestCase):
                 provider = OpenAICompatibleProvider("https://api.example.com/v1", "test-key", "model", streaming=False)
                 metrics = []
                 with (
-                    patch("scidev_core.urlopen", side_effect=direct_error) as direct,
-                    patch("scidev_core.getproxies", return_value=configured_proxies),
-                    patch("scidev_core.proxy_bypass", return_value=False),
-                    patch("scidev_core.build_opener") as build_opener_mock,
+                    patch("scidev.integrations.model.urlopen", side_effect=direct_error) as direct,
+                    patch("scidev.integrations.model.getproxies", return_value=configured_proxies),
+                    patch("scidev.integrations.model.proxy_bypass", return_value=False),
+                    patch("scidev.integrations.model.build_opener") as build_opener_mock,
                 ):
                     build_opener_mock.return_value.open.return_value = BytesIO(response)
                     message = provider.chat(
@@ -3791,9 +3791,9 @@ class CoreTests(unittest.TestCase):
         for index, (provider, direct_error) in enumerate(direct_failures):
             with (
                 self.subTest(index=index),
-                patch("scidev_core.urlopen", side_effect=direct_error),
-                patch("scidev_core.getproxies", return_value={"https": "http://127.0.0.1:8123"}) as proxies,
-                patch("scidev_core.build_opener") as build_opener_mock,
+                patch("scidev.integrations.model.urlopen", side_effect=direct_error),
+                patch("scidev.integrations.model.getproxies", return_value={"https": "http://127.0.0.1:8123"}) as proxies,
+                patch("scidev.integrations.model.build_opener") as build_opener_mock,
             ):
                 with self.assertRaises(RetryableError):
                     provider.chat([{"role": "user", "content": "no fallback"}])
@@ -3818,7 +3818,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(reviewer.model, "vision-model")
 
         response = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).encode()
-        with patch("scidev_core.urlopen", return_value=BytesIO(response)) as opener:
+        with patch("scidev.integrations.model.urlopen", return_value=BytesIO(response)) as opener:
             provider.chat([{"role": "user", "content": "test"}], max_tokens=12000, reasoning_effort="none")
         request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(request_body["max_tokens"], 12000)
@@ -3847,7 +3847,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(provider.with_model("summary-model").temperature, 0.0)
 
         response = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).encode()
-        with patch("scidev_core.urlopen", return_value=BytesIO(response)) as opener:
+        with patch("scidev.integrations.model.urlopen", return_value=BytesIO(response)) as opener:
             provider.chat([{"role": "user", "content": "test"}], max_tokens=12000)
         request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(request_body["temperature"], 0.0)
@@ -3870,7 +3870,7 @@ class CoreTests(unittest.TestCase):
             "usage": {"prompt_tokens": 19, "completion_tokens": 3, "total_tokens": 22},
         }).encode("utf-8")
         records = []
-        with patch("scidev_core.urlopen", return_value=BytesIO(body)) as opener:
+        with patch("scidev.integrations.model.urlopen", return_value=BytesIO(body)) as opener:
             message = provider.chat(
                 [{"role": "user", "content": "local-only-test"}],
                 request_id="telemetry-test",
@@ -3896,7 +3896,7 @@ class CoreTests(unittest.TestCase):
         response = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).encode()
         first_messages = [{"role": "user", "content": "first prompt"}]
         changed_messages = [{"role": "user", "content": "resumed prompt with tool result"}]
-        with patch("scidev_core.urlopen", side_effect=[BytesIO(response), BytesIO(response), BytesIO(response)]) as opener:
+        with patch("scidev.integrations.model.urlopen", side_effect=[BytesIO(response), BytesIO(response), BytesIO(response)]) as opener:
             provider.chat(first_messages, request_id="stable-logical-request")
             provider.chat(first_messages, request_id="stable-logical-request")
             provider.chat(changed_messages, request_id="stable-logical-request")
@@ -3918,7 +3918,7 @@ class CoreTests(unittest.TestCase):
         body = b"".join(b"data: " + json.dumps(chunk).encode("utf-8") + b"\n\n" for chunk in chunks)
         body += b"data: [DONE]\n\n"
         records = []
-        with patch("scidev_core.urlopen", return_value=BytesIO(body)):
+        with patch("scidev.integrations.model.urlopen", return_value=BytesIO(body)):
             message = provider.chat([{"role": "user", "content": "local-only"}], on_metrics=records.append)
         self.assertEqual(message["content"], "streamed")
         # The stream parser stops at the protocol's [DONE] line and does not
@@ -3928,7 +3928,7 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(records[0]["success"])
 
         failed_records = []
-        with patch("scidev_core.urlopen", side_effect=URLError("offline")):
+        with patch("scidev.integrations.model.urlopen", side_effect=URLError("offline")):
             with self.assertRaises(RetryableError):
                 provider.chat(
                     [{"role": "user", "content": "local-only"}],
@@ -3961,8 +3961,8 @@ class CoreTests(unittest.TestCase):
                 require_verification=False,
             )
             with (
-                patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider),
-                patch("scidev_core.urlopen", return_value=BytesIO(response_body)) as opener,
+                patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider),
+                patch("scidev.integrations.model.urlopen", return_value=BytesIO(response_body)) as opener,
             ):
                 agent.run({"payload": {"session_id": "usage_session", "prompt": "Inspect this local workspace"}})
 
@@ -4011,7 +4011,7 @@ class CoreTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=True, retries=0, interval_turns=1),
                 require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 agent.run({"payload": {"session_id": "compact_session", "prompt": "Find the calculate implementation"}})
 
             resumed_request = provider.message_histories[2]
@@ -4041,7 +4041,7 @@ class CoreTests(unittest.TestCase):
             }).encode("utf-8")
             request_metrics = []
             with patch(
-                "scidev_core.urlopen",
+                "scidev.integrations.model.urlopen",
                 side_effect=[BytesIO(response_body), BytesIO(response_body)],
             ) as opener:
                 wire_provider.chat(baseline_messages, max_tokens=12000, on_metrics=request_metrics.append)
@@ -4172,7 +4172,7 @@ class CoreTests(unittest.TestCase):
         enabled = OpenAICompatibleProvider(
             "http://localhost:11434/v1", "ollama", "qwen-test", text_tool_call_fallback=True
         )
-        with patch("scidev_core.urlopen", return_value=BytesIO(response_body)) as opener:
+        with patch("scidev.integrations.model.urlopen", return_value=BytesIO(response_body)) as opener:
             parsed = enabled.chat(messages, tools=tools, max_tokens=12000, tool_choice="required")
         self.assertEqual(parsed["tool_calls"][0]["function"]["name"], "write_file")
         request_body = json.loads(opener.call_args.args[0].data.decode("utf-8"))
@@ -4185,7 +4185,7 @@ class CoreTests(unittest.TestCase):
         non_stream_response = json.dumps(
             {"choices": [{"message": {"role": "assistant", "content": raw_call}}]},
         ).encode("utf-8")
-        with patch("scidev_core.urlopen", return_value=BytesIO(non_stream_response)):
+        with patch("scidev.integrations.model.urlopen", return_value=BytesIO(non_stream_response)):
             untouched = disabled.chat(messages, tools=tools, max_tokens=12000)
         self.assertEqual(untouched["content"], raw_call)
         self.assertNotIn("tool_calls", untouched)
@@ -4220,7 +4220,7 @@ class CoreTests(unittest.TestCase):
         ) + b"data: [DONE]\n\n"
         provider = OpenAICompatibleProvider("http://localhost:11434/v1", "ollama", "qwen-test")
         deltas: list[str] = []
-        with patch("scidev_core.urlopen", return_value=BytesIO(stream_body)) as opener:
+        with patch("scidev.integrations.model.urlopen", return_value=BytesIO(stream_body)) as opener:
             message = provider.chat([{"role": "user", "content": "create"}], on_delta=deltas.append)
 
         self.assertEqual(deltas, ["Working "])
@@ -4344,7 +4344,7 @@ class CoreTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(PermanentError, "文件名过长"):
                 reviewed.write_file("a" * 300, "x")
-            with patch("scidev_core.atomic_write_bytes", side_effect=OSError("disk full")):
+            with patch("scidev.agent.toolbox.atomic_write_bytes", side_effect=OSError("disk full")):
                 with self.assertRaisesRegex(PermanentError, "写入文件失败"):
                     toolbox.write_file("ok.txt", "x")
 
@@ -4364,7 +4364,7 @@ class CoreTests(unittest.TestCase):
     def test_git_probe_is_safe_when_git_cli_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             git = GitManager(Path(temp))
-            with patch("scidev_core.subprocess.run", side_effect=FileNotFoundError("git not found")):
+            with patch("scidev.agent.core.subprocess.run", side_effect=FileNotFoundError("git not found")):
                 self.assertFalse(git.is_repo())
                 self.assertEqual(git.status(), "Git 不可用：请安装 Git CLI")
 
@@ -4419,11 +4419,11 @@ class GitTimeoutAndParserTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="scidev-git-timeout-") as temp:
             manager = GitManager(Path(temp))
             expired = subprocess.TimeoutExpired(cmd=["git"], timeout=10)
-            with patch("scidev_core.subprocess.run", side_effect=expired) as run:
+            with patch("scidev.agent.core.subprocess.run", side_effect=expired) as run:
                 self.assertIn("超时", manager.status())
                 kwargs = run.call_args.kwargs
                 self.assertEqual(kwargs["timeout"], GitManager.COMMAND_TIMEOUT_SECONDS)
-            with patch("scidev_core.subprocess.run", side_effect=expired):
+            with patch("scidev.agent.core.subprocess.run", side_effect=expired):
                 with self.assertRaisesRegex(PermanentError, "超时"):
                     manager._run(["status"], check=True)
 
@@ -4449,7 +4449,7 @@ class GitTimeoutAndParserTests(unittest.TestCase):
                 commands.append(list(command))
                 return real_run(command, **kwargs)
 
-            with patch("scidev_core.subprocess.run", side_effect=counting):
+            with patch("scidev.agent.core.subprocess.run", side_effect=counting):
                 snapshot = manager.snapshot()
             status_calls = [
                 item for item in commands
@@ -4464,7 +4464,7 @@ class GitTimeoutAndParserTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="scidev-atomic-") as temp:
             target = Path(temp) / "app.py"
             target.write_text("old\n", encoding="utf-8")
-            with patch("scidev_core.os.replace", side_effect=OSError("disk full")):
+            with patch("scidev.agent.toolbox.os.replace", side_effect=OSError("disk full")):
                 with self.assertRaises(OSError):
                     atomic_write_bytes(target, b"new\n")
             self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
@@ -4526,8 +4526,8 @@ class SharedRepositoryLockTests(unittest.TestCase):
             )
             success = subprocess.CompletedProcess(["git", "status"], 0, "clean", "")
             with (
-                patch("scidev_core.subprocess.run", side_effect=[locked, success]) as run,
-                patch("scidev_core.time.sleep"),
+                patch("scidev.agent.core.subprocess.run", side_effect=[locked, success]) as run,
+                patch("scidev.agent.core.time.sleep"),
             ):
                 result = manager._run(["status"])
             self.assertEqual(result.returncode, 0)
@@ -4584,7 +4584,7 @@ class SharedRepositoryLockTests(unittest.TestCase):
             ledger = EventLedger(Path(temp))
             with (
                 patch.object(ledger, "_db", side_effect=sqlite3.OperationalError("database is locked")),
-                patch("scidev_core.time.sleep"),
+                patch("scidev.agent.core.time.sleep"),
             ):
                 event_id = ledger.append("probe", {"value": 1})
             self.assertEqual(event_id, 0)
@@ -4639,7 +4639,7 @@ class EmptyModelResponseTests(unittest.TestCase):
             ]
             agent = self._agent(root)
             task = {"payload": {"session_id": "empty-once", "prompt": "say done", "planning_mode": "off"}}
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run(task)
             self.assertEqual(result["text"], "done")
             self.assertEqual(provider.chat.call_count, 2)
@@ -4658,7 +4658,7 @@ class EmptyModelResponseTests(unittest.TestCase):
             ]
             agent = self._agent(root)
             task = {"payload": {"session_id": "empty-always", "prompt": "say done", "planning_mode": "off"}}
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "空回复"):
                     agent.run(task)
             self.assertEqual(provider.chat.call_count, CodingAgent.MAX_EMPTY_RESPONSE_RETRIES + 1)
@@ -4677,7 +4677,7 @@ class EmptyModelResponseTests(unittest.TestCase):
             provider.chat.side_effect = RuntimeError("provider down")
             agent = self._agent(root)
             task = {"payload": {"session_id": "provider-error", "prompt": "say hi", "planning_mode": "off"}}
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaises(RuntimeError):
                     agent.run(task)
             session = json.loads(
@@ -4721,7 +4721,7 @@ class ProjectTaskIsolationTests(unittest.TestCase):
 
             def run_first() -> None:
                 try:
-                    with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                    with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                         results.append(first_agent.run({"task_id": "first", "payload": {
                             "session_id": "first", "prompt": "say done", "planning_mode": "off",
                         }}))
@@ -4732,7 +4732,7 @@ class ProjectTaskIsolationTests(unittest.TestCase):
             worker.start()
             try:
                 self.assertTrue(started.wait(20))
-                with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=Mock()):
+                with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=Mock()):
                     with self.assertRaisesRegex(PermanentError, "同一项目已有编码任务"):
                         second_agent.run({"task_id": "second", "payload": {
                             "session_id": "second", "prompt": "say done", "planning_mode": "off",
@@ -4809,7 +4809,7 @@ class CancellationTests(unittest.TestCase):
 
             def execute() -> None:
                 try:
-                    with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+                    with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                         agent.run({"task_id": "sleep-task", "payload": {
                             "session_id": "sleep-session", "prompt": "run the sleep command",
                             "planning_mode": "off",
@@ -4846,6 +4846,69 @@ class CancellationTests(unittest.TestCase):
                 (root / ".research" / "events.jsonl").read_text(encoding="utf-8"),
             )
 
+    def test_cancelled_command_skips_post_command_snapshot_and_keeps_tool_result(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-cancel-snapshot-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            ledger = EventLedger(root)
+            agent = CodingAgent(root, ledger, GitManager(root),
+                                summary_settings=SummarySettings(enabled=False), require_verification=False)
+            provider = Mock()
+            provider.chat.return_value = {"content": "", "tool_calls": [{
+                "id": "cancelled-command", "function": {"name": "run_command", "arguments":
+                    json.dumps({"command": "python --version"})},
+            }]}
+            original_snapshot = agent._verification_snapshot
+
+            def snapshot(session):
+                if agent._cancel.is_set():
+                    self.fail("cancelled commands must not start another Git/fingerprint scan")
+                return original_snapshot(session)
+
+            def execute(name, arguments):
+                self.assertEqual(name, "run_command")
+                agent.toolbox.last_command_execution = {"status": "cancelled", "exit_code": -1}
+                agent.request_cancel()
+                return "command cancelled"
+
+            with patch.object(agent, "_verification_snapshot", side_effect=snapshot), \
+                 patch.object(agent.toolbox, "execute", side_effect=execute), \
+                 patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
+                with self.assertRaisesRegex(PermanentError, "任务已取消"):
+                    agent.run({"task_id": "cancel-snapshot", "payload": {
+                        "session_id": "cancel-snapshot", "prompt": "run python --version", "planning_mode": "off",
+                    }})
+            saved = json.loads(agent._session_path("cancel-snapshot").read_text(encoding="utf-8"))
+            self.assertEqual(saved["status"], "cancelled")
+            self.assertTrue(any(m.get("tool_call_id") == "cancelled-command" for m in saved["messages"]))
+            self.assertFalse(ledger.tool_calls_for_session("cancel-snapshot"))
+
+    def test_cancelling_a_different_queued_task_does_not_stop_the_active_task(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="scidev-cancel-task-id-") as temp:
+            root = Path(temp)
+            (root / ".gitignore").write_text(".research/\n", encoding="utf-8")
+            agent = CodingAgent(root, EventLedger(root), GitManager(root),
+                                summary_settings=SummarySettings(enabled=False), require_verification=False)
+            provider = FakeCodingProvider()
+            original_chat = provider.chat
+
+            def chat(*args, **kwargs):
+                agent.request_cancel("queued-later")
+                return original_chat(*args, **kwargs)
+
+            provider.chat = chat
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
+                agent.run({"task_id": "active-now", "payload": {
+                    "session_id": "active-now", "prompt": "create hello.py", "planning_mode": "off",
+                }})
+                self.assertTrue((root / "hello.py").is_file())
+                calls = provider.calls
+                with self.assertRaisesRegex(PermanentError, "任务已取消"):
+                    agent.run({"task_id": "queued-later", "payload": {
+                        "session_id": "queued-later", "prompt": "explain this project", "planning_mode": "off",
+                    }})
+                self.assertEqual(provider.calls, calls)
+
     def test_new_task_after_cancel_starts_from_a_clean_transcript(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-cancel-clean-") as temp:
             root = Path(temp)
@@ -4875,7 +4938,7 @@ class CancellationTests(unittest.TestCase):
                 return {"content": "done", "tool_calls": []}
 
             provider.chat.side_effect = chat
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaises(PermanentError):
                     agent.run({"task_id": "t1", "payload": {
                         "session_id": "clean-session", "prompt": "create first.py", "planning_mode": "off",
@@ -4923,7 +4986,7 @@ class CancellationTests(unittest.TestCase):
                 "session_id": "cancel-session", "prompt": "create late.py", "planning_mode": "off",
             }}
             baseline = git.head_sha()
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "任务已取消"):
                     agent.run(task)
             self.assertFalse((root / "late.py").exists())
@@ -4978,8 +5041,8 @@ class CancellationTests(unittest.TestCase):
             def execute() -> None:
                 try:
                     with patch(
-                        "scidev_core.OpenAICompatibleProvider.from_env", return_value=provider,
-                    ), patch("scidev_core.urlopen", return_value=SlowStream()):
+                        "scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider,
+                    ), patch("scidev.integrations.model.urlopen", return_value=SlowStream()):
                         agent.run({"task_id": "stream-cancel", "payload": {
                             "session_id": "stream-cancel",
                             "prompt": "详细解释 Python 的 GIL，越长越好。",
@@ -5113,7 +5176,7 @@ class ToolLoopGuardTests(unittest.TestCase):
             task = {"task_id": "loop", "payload": {
                 "session_id": "loop", "prompt": "read missing.txt", "planning_mode": "off",
             }}
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "重复同一工具调用"):
                     agent.run(task)
             self.assertEqual(provider.chat.call_count, CodingAgent.MAX_IDENTICAL_TOOL_RESULTS)
@@ -5136,7 +5199,7 @@ class NoChangesDetectionTests(unittest.TestCase):
         )
         provider = Mock()
         provider.chat.return_value = {"content": "done", "tool_calls": []}
-        with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+        with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
             result = agent.run({"task_id": "no-changes", "payload": {
                 "session_id": "no-changes", "prompt": prompt, "planning_mode": "off",
             }})
@@ -5280,7 +5343,7 @@ class GitCommitOwnershipTests(unittest.TestCase):
                 require_verification=False,
                 command_approval=lambda command, timeout: True,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run(
                     {"payload": {"session_id": "external-commit", "prompt": "创建 w.py", "planning_mode": "off"}}
                 )
@@ -5339,7 +5402,7 @@ class GitCommitOwnershipTests(unittest.TestCase):
                 require_verification=False,
                 command_approval=lambda command, timeout: True,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run(
                     {"payload": {"session_id": "noop-edit", "prompt": "把 VALUE 改成 2", "planning_mode": "off"}}
                 )
@@ -5387,7 +5450,7 @@ class GitCommitOwnershipTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
                 require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {
                     "session_id": "no-commit-request",
                     "prompt": "创建 no_commit.py，但先不要提交，改动保留在工作区。",
@@ -5435,7 +5498,7 @@ class MalformedToolCallTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
                 require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run(
                     {"payload": {"session_id": "malformed-args", "prompt": "创建 hello.py", "planning_mode": "off"}}
                 )
@@ -5495,7 +5558,7 @@ class MalformedToolCallTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
                 require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 agent.run({
                     "payload": {
                         "session_id": "tool-error-echo",
@@ -5556,7 +5619,7 @@ class MalformedToolCallTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
                 require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=AlwaysEchoProvider()):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=AlwaysEchoProvider()):
                 with self.assertRaises(PermanentError):
                     agent.run({
                         "payload": {
@@ -5651,8 +5714,8 @@ class MalformedToolCallTests(unittest.TestCase):
                 return BytesIO(first if calls["count"] == 1 else second)
 
             with patch(
-                "scidev_core.OpenAICompatibleProvider.from_env", return_value=provider,
-            ), patch("scidev_core.urlopen", side_effect=fake_urlopen):
+                "scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider,
+            ), patch("scidev.integrations.model.urlopen", side_effect=fake_urlopen):
                 result = agent.run({"payload": {
                     "session_id": "two-text-calls",
                     "prompt": "创建 a.py 和 b.py 两个文件。",
@@ -5696,7 +5759,7 @@ class MalformedToolCallTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
                 require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {
                     "session_id": "example-only",
                     "prompt": (
@@ -5758,7 +5821,7 @@ class MalformedToolCallTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
                 require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "用户明确要求"):
                     agent.run({"payload": {
                         "session_id": "example-repeat",
@@ -5789,7 +5852,7 @@ class MalformedToolCallTests(unittest.TestCase):
                 summary_settings=SummarySettings(enabled=False),
                 require_verification=False,
             )
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 with self.assertRaisesRegex(PermanentError, "复述"):
                     agent.run({"payload": {
                         "session_id": "echo-session",
@@ -5812,7 +5875,7 @@ class LocalModelContextTests(unittest.TestCase):
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.read.return_value = json.dumps({"parameters": "num_ctx 8192\n"}).encode("utf-8")
-        with patch("scidev_core.urlopen", return_value=response):
+        with patch("scidev.integrations.model.urlopen", return_value=response):
             provider._detect_local_context_limit()
         self.assertEqual(provider.local_context_limit, 8192)
         self.assertEqual(provider.local_context_source, "ollama_api")
@@ -5828,7 +5891,7 @@ class LocalModelContextTests(unittest.TestCase):
             payload = status if str(request.full_url).endswith("/api/ps") else show
             return BytesIO(json.dumps(payload).encode("utf-8"))
 
-        with patch("scidev_core.urlopen", side_effect=fake_urlopen):
+        with patch("scidev.integrations.model.urlopen", side_effect=fake_urlopen):
             provider._detect_local_context_limit()
         self.assertEqual(provider.local_context_limit, 4096)
         self.assertEqual(provider.local_context_source, "ollama_runtime")
@@ -5844,7 +5907,7 @@ class LocalModelContextTests(unittest.TestCase):
             payload = status if str(request.full_url).endswith("/api/ps") else show
             return BytesIO(json.dumps(payload).encode("utf-8"))
 
-        with patch("scidev_core.urlopen", side_effect=fake_urlopen):
+        with patch("scidev.integrations.model.urlopen", side_effect=fake_urlopen):
             provider._detect_local_context_limit()
         self.assertEqual(provider.local_context_limit, OLLAMA_DEFAULT_NUM_CTX)
         self.assertEqual(provider.local_context_source, "ollama_default")
@@ -5855,7 +5918,7 @@ class LocalModelContextTests(unittest.TestCase):
         )
         provider.local_context_limit = 32768
         response = json.dumps({"parameters": "num_ctx 8192\n"}).encode("utf-8")
-        with patch("scidev_core.urlopen", return_value=BytesIO(response)):
+        with patch("scidev.integrations.model.urlopen", return_value=BytesIO(response)):
             switched = provider.with_model("second-model")
         self.assertEqual(switched.local_context_limit, 8192)
 
@@ -5891,7 +5954,7 @@ class LocalModelContextTests(unittest.TestCase):
             }
             return BytesIO(json.dumps(body).encode("utf-8"))
 
-        with patch("scidev_core.urlopen", side_effect=fake_urlopen):
+        with patch("scidev.integrations.model.urlopen", side_effect=fake_urlopen):
             message = provider.chat([{"role": "user", "content": "hi"}], max_tokens=12000)
         self.assertEqual(message["content"], "ok")
         self.assertEqual(provider.last_output_token_clamp, (12000, int(4096 * 0.95) - 65))
@@ -5905,7 +5968,7 @@ class ObservabilityTests(unittest.TestCase):
             ledger = EventLedger(root)
             agent = CodingAgent(root, ledger, GitManager(root))
             session = {"session_id": "usage-failure", "messages": []}
-            with patch("scidev_core.ModelRequestUsage.record", side_effect=ValueError("bad usage")):
+            with patch("scidev.agent.core.ModelRequestUsage.record", side_effect=ValueError("bad usage")):
                 agent._record_model_request(
                     session, "logical-key", "coding", {"request_attempts": 1}
                 )
@@ -5924,7 +5987,7 @@ class ObservabilityTests(unittest.TestCase):
         def broken_metrics(_metrics: dict) -> None:
             raise RuntimeError("telemetry down")
 
-        with patch("scidev_core.urlopen", return_value=BytesIO(response)):
+        with patch("scidev.integrations.model.urlopen", return_value=BytesIO(response)):
             message = provider.chat(
                 [{"role": "user", "content": "hi"}], on_metrics=broken_metrics
             )

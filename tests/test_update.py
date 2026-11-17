@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from scidev_update import (
+from scidev.integrations.update import (
     APP_VERSION,
     DownloadedAsset,
     UpdateError,
@@ -207,7 +207,7 @@ class UpdateTests(unittest.TestCase):
         import json
         from unittest.mock import patch
 
-        import scidev_cli
+        import scidev.cli
 
         info = UpdateInfo(
             current="0.1.0", latest="0.2.0", url="https://example/release", published_at="", notes="",
@@ -217,13 +217,13 @@ class UpdateTests(unittest.TestCase):
         downloaded = DownloadedAsset(Path("setup.exe"), "a" * 64, 7)
         output = io.StringIO()
         with (
-            patch.object(scidev_cli, "check_for_update", return_value=info),
-            patch.object(scidev_cli, "download_asset", return_value=downloaded),
-            patch.object(scidev_cli, "launch_installer", return_value=4321) as launch,
+            patch.object(scidev.cli, "check_for_update", return_value=info),
+            patch.object(scidev.cli, "download_asset", return_value=downloaded),
+            patch.object(scidev.cli, "launch_installer", return_value=4321) as launch,
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(output),
         ):
-            code = scidev_cli.main([
+            code = scidev.cli.main([
                 "update", "--workspace", ".", "--json", "--download", "setup.exe", "--install",
             ])
         self.assertEqual(code, 0, output.getvalue())

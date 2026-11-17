@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from scidev_hooks import HookError, HookRunner
+from scidev.runtime.hooks import HookError, HookRunner
 
 
 class HookTests(unittest.TestCase):

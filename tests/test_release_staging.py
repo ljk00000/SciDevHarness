@@ -62,7 +62,7 @@ class ReleaseStagingTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, f"not ignored: {relative_path}")
 
-        for source_path in ("scidev_core.py", ".env.example"):
+        for source_path in ("scidev/agent/core.py", ".env.example"):
             with self.subTest(path=source_path):
                 result = subprocess.run(
                     ["git", "check-ignore", "--quiet", "--no-index", "--", source_path],
@@ -79,6 +79,9 @@ class ReleaseStagingTests(unittest.TestCase):
         expected_files = {
             "LICENSE",
             "README.md",
+            "docs/CURRENT_WORK.md",
+            "docs/HISTORY_RESULTS.md",
+            "docs/SCIDEV_HARNESS.md",
             "pyproject.toml",
             "pysidedeploy.spec",
             "requirements.txt",
@@ -95,6 +98,10 @@ class ReleaseStagingTests(unittest.TestCase):
         }
         expected_files.update(
             path.name for path in project_root.glob("scidev_*.py")
+        )
+        expected_files.update(
+            path.relative_to(project_root).as_posix()
+            for path in (project_root / "scidev").rglob("*.py")
         )
 
         with tempfile.TemporaryDirectory(prefix="scidev-release-test-") as temporary:

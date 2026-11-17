@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from scidev_crash import CrashReporter
+from scidev.runtime.crash import CrashReporter
 
 
 class CrashReporterTests(unittest.TestCase):

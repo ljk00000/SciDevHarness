@@ -7,8 +7,8 @@ import unittest
 
 from PySide6.QtWidgets import QApplication
 
-from scidev_client import ClientWindow
-from scidev_worktree import WorktreeManager
+from scidev.desktop.client import ClientWindow
+from scidev.workspace.worktree import WorktreeManager
 
 
 class WorktreeGuiTests(unittest.TestCase):

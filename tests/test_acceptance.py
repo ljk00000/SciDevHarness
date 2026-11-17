@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_acceptance import SemanticAcceptance
-from scidev_core import CodingAgent, EventLedger, GitManager, PermanentError, SummarySettings
+from scidev.agent.acceptance import SemanticAcceptance
+from scidev.agent.core import CodingAgent, EventLedger, GitManager, PermanentError, SummarySettings
 
 
 def review_response(verdict: str = "pass", criterion_status: str = "met") -> dict:
@@ -198,7 +198,7 @@ class SemanticAcceptanceAgentTests(unittest.TestCase):
         reviewer = ReviewerProvider([review_response()])
         temporary, root, source, git, ledger, agent, coding, task = self._run_agent("required", "review-v2", reviewer)
         try:
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=coding):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=coding):
                 result = agent.run(task)
             self.assertEqual(result["semantic_acceptance_report"]["status"], "passed")
             self.assertTrue(result["git_result_sha"])
@@ -217,7 +217,7 @@ class SemanticAcceptanceAgentTests(unittest.TestCase):
     def test_default_off_does_not_make_extra_model_call(self) -> None:
         temporary, _root, _source, git, _ledger, agent, coding, task = self._run_agent("off", "review-v2", None)
         try:
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=coding):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=coding):
                 result = agent.run(task)
             self.assertTrue(result["git_result_sha"])
             self.assertEqual(coding.reviewer_models, [])
@@ -228,7 +228,7 @@ class SemanticAcceptanceAgentTests(unittest.TestCase):
     def test_required_mode_fails_closed_when_reviewer_is_not_configured(self) -> None:
         temporary, _root, source, git, _ledger, agent, coding, task = self._run_agent("required", "", None)
         try:
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=coding):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=coding):
                 with self.assertRaises(PermanentError):
                     agent.run(task)
             session = json.loads((source.parent / ".research/sessions/acceptance-session.json").read_text(encoding="utf-8"))
@@ -243,7 +243,7 @@ class SemanticAcceptanceAgentTests(unittest.TestCase):
             "required", "", None,
         )
         try:
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=first_provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=first_provider):
                 with self.assertRaises(PermanentError):
                     agent.run(task)
 
@@ -256,7 +256,7 @@ class SemanticAcceptanceAgentTests(unittest.TestCase):
             retry_task = {"task_id": "acceptance-manual-retry", "payload": {
                 "session_id": "acceptance-session", "prompt": "Set value to 2", "planning_mode": "off",
             }}
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=retry_provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=retry_provider):
                 result = agent.run(retry_task)
 
             self.assertEqual(result["semantic_acceptance_report"]["status"], "passed")
@@ -270,7 +270,7 @@ class SemanticAcceptanceAgentTests(unittest.TestCase):
         reviewer = ReviewerProvider([{"role": "assistant", "content": "not json", "tool_calls": []}])
         temporary, _root, _source, _git, _ledger, agent, coding, task = self._run_agent("advisory", "review-v2", reviewer)
         try:
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=coding):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=coding):
                 result = agent.run(task)
             self.assertEqual(result["semantic_acceptance_report"]["status"], "unavailable")
             self.assertTrue(result["git_result_sha"])
@@ -284,7 +284,7 @@ class SemanticAcceptanceAgentTests(unittest.TestCase):
             "required", "coder-v1", reviewer,
         )
         try:
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=coding):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=coding):
                 with self.assertRaisesRegex(PermanentError, "不同的模型 ID"):
                     agent.run(task)
             self.assertEqual(reviewer.calls, [])
@@ -308,7 +308,7 @@ class SemanticAcceptanceAgentTests(unittest.TestCase):
             "required", "review-v2", reviewer, responses,
         )
         try:
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=coding):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=coding):
                 result = agent.run(task)
             self.assertEqual(source.read_text(encoding="utf-8"), "value = 3\n")
             self.assertEqual(result["semantic_acceptance_report"]["status"], "passed")
@@ -332,7 +332,7 @@ class SemanticAcceptanceAgentTests(unittest.TestCase):
         reviewer = ConcurrentEditReviewer([review_response()])
         coding.reviewer = reviewer
         try:
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=coding):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=coding):
                 with self.assertRaisesRegex(PermanentError, "变更证据不完整"):
                     agent.run(task)
             session = json.loads((source.parent / ".research/sessions/acceptance-session.json").read_text(encoding="utf-8"))

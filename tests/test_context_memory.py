@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_core import CodingAgent, EventLedger, GitManager, OpenAICompatibleProvider, RetryableError, SummarySettings
-from scidev_memory import ProjectMemory
+from scidev.agent.core import CodingAgent, EventLedger, GitManager, OpenAICompatibleProvider, RetryableError, SummarySettings
+from scidev.agent.memory import ProjectMemory
 
 
 def summary(session_id: str, summary_id: str, text: str, created_at: str = "2026-10-01T12:00:00+08:00") -> dict:

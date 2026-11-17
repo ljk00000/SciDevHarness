@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication
 
-from scidev_pr_ui import PullRequestDialog
+from scidev.desktop.pr_ui import PullRequestDialog
 
 
 class PullRequestDialogTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class PullRequestDialogTests(unittest.TestCase):
                     calls.append((args, kwargs))
                     return {"action": "comment", "url": "https://github.com/example/project/pull/7"}
 
-                with patch("scidev_pr_ui.review_pull_request", side_effect=fake_review):
+                with patch("scidev.desktop.pr_ui.review_pull_request", side_effect=fake_review):
                     dialog.review("comment")
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(calls[0][0][1], 7)

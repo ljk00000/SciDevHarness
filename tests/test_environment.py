@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from scidev_environment import (
+from scidev.workspace.environment import (
     DIAGNOSTIC_TIMEOUT_SECONDS,
     ProjectEnvironmentInspector,
     _DIAGNOSTIC_SCRIPT,

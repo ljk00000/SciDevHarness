@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from scidev_eval import EvalError, EvalRunner
+from scidev.evaluation.runner import EvalError, EvalRunner
 
 
 class EvalHarnessTests(unittest.TestCase):

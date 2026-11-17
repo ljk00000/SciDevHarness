@@ -9,7 +9,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from scidev_core import SvgArtifactAdapter
+from scidev.agent.core import SvgArtifactAdapter
 from scripts.smoke_pelican_svg import (
     PELICAN_PROMPT,
     _TimedResponse,

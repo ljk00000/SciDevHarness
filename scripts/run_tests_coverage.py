@@ -28,7 +28,7 @@ except ValueError:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scidev_process import terminate_process_tree
+from scidev.runtime.process import terminate_process_tree
 
 
 def _isolate_child_environment() -> None:
@@ -80,6 +80,25 @@ def _write_result(path: Path, *, complete: bool, result, last_test: str) -> None
     )
 
 
+def _dispose_closed_windows() -> None:
+    """Dispose closed workspaces between tests; leave live fixtures alone.
+
+    These tests pump events without QApplication.exec(), so deferred widget
+    deletion needs to be delivered explicitly instead of waiting for Python GC.
+    """
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    core = sys.modules.get("PySide6.QtCore")
+    if widgets is None or core is None:
+        return
+    app = widgets.QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        if getattr(widget, "_closing", False):
+            widget.deleteLater()
+    core.QCoreApplication.sendPostedEvents(None, core.QEvent.Type.DeferredDelete)
+
+
 def _run_child(target: str, result_path: Path) -> None:
     import unittest
 
@@ -101,6 +120,7 @@ def _run_child(target: str, result_path: Path) -> None:
 
         def stopTest(self, test) -> None:  # noqa: N802 - unittest API
             super().stopTest(test)
+            _dispose_closed_windows()
             _write_result(result_path, complete=False, result=self, last_test=self.last_test)
 
         def addFailure(self, test, err) -> None:  # noqa: N802 - unittest API
@@ -160,11 +180,18 @@ def _timeout_payload(part: Path) -> dict[str, object]:
             partial = json.loads(part.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             partial = {}
+        if not isinstance(partial, dict):
+            partial = {}
         payload["last_test"] = str(partial.get("last_test") or "")
+        for key in ("tests_run", "failures", "errors", "skipped", "failure_details"):
+            if key in partial:
+                payload[key] = partial[key]
     return payload
 
 
 def _run_target(target: str, part: Path) -> dict | None:
+    # A previous invocation's report must never stand in for this child.
+    part.unlink(missing_ok=True)
     process = subprocess.Popen(
         [sys.executable, str(Path(__file__).resolve()), CHILD_FLAG, target, str(part)],
         cwd=str(ROOT),
@@ -181,8 +208,20 @@ def _run_target(target: str, part: Path) -> dict | None:
         return _timeout_payload(part)
     if not part.exists():
         return {"success": False, "complete": False, "last_test": "", "exit": process.returncode}
-    payload = json.loads(part.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(part.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("result is not an object")
+    except (OSError, ValueError) as exc:
+        return {
+            "success": False, "complete": False, "last_test": "", "exit": process.returncode,
+            "process_error": f"invalid result file: {exc}",
+        }
     payload["exit"] = process.returncode
+    if process.returncode not in (0, 1) or (process.returncode != 0 and payload.get("success")):
+        payload["success"] = False
+        payload["complete"] = False
+        payload["process_error"] = f"child exited abnormally after reporting results (exit {process.returncode})"
     return payload
 
 
@@ -200,15 +239,22 @@ def _parent() -> int:
     details: list[dict[str, str]] = []
     crashed: list[str] = []
     retried: list[str] = []
+    retry_details: list[dict[str, object]] = []
     last_test = ""
     for index, target in enumerate(_targets()):
         part = PARTS / f"{index:03d}.json"
         payload = _run_target(target, part)
-        if payload is not None and not payload.get("complete"):
+        if (payload is not None and not payload.get("complete")
+                and not payload.get("failures") and not payload.get("errors")):
             # Offscreen Qt occasionally access-violates inside a fresh child.
             # A retry in another clean process is cheap and keeps one native
             # crash from destroying an otherwise green suite.
             retry_part = PARTS / f"{index:03d}_retry.json"
+            retry_details.append({
+                "target": target, "exit": payload.get("exit"),
+                "last_test": payload.get("last_test", ""),
+                "reason": payload.get("process_error") or ("timeout" if payload.get("timed_out") else "incomplete result"),
+            })
             payload = _run_target(target, retry_part)
             retried.append(target)
         if payload is None:
@@ -222,13 +268,14 @@ def _parent() -> int:
         if not payload.get("complete"):
             crashed.append(target)
             totals["success"] = False
+            details.extend(payload.get("failure_details") or [])
             if payload.get("timed_out"):
                 detail = (
                     f"timed out after {TARGET_TIMEOUT_SECONDS:.0f}s"
                     f" after {payload.get('last_test') or 'unknown test'}"
                 )
             else:
-                detail = f"aborted after {payload.get('last_test')} (exit {payload.get('exit')})"
+                detail = str(payload.get("process_error") or f"aborted after {payload.get('last_test')} (exit {payload.get('exit')})")
             details.append({"test": target, "detail": detail})
         elif not payload.get("success"):
             totals["success"] = False
@@ -241,6 +288,7 @@ def _parent() -> int:
         "targets": len(_targets()),
         "crashed_targets": crashed,
         "retried_targets": retried,
+        "retry_details": retry_details,
     }
     RESULT.parent.mkdir(parents=True, exist_ok=True)
     RESULT.write_text(json.dumps(aggregate, ensure_ascii=False), encoding="utf-8")

@@ -25,8 +25,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import scidev_core
-from scidev_core import CodingAgent, EventLedger, GitManager, SummarySettings
+import scidev.integrations.model
+from scidev.agent.core import CodingAgent, EventLedger, GitManager, SummarySettings
 
 
 DEFAULT_MODEL = "scidev-qwen2.5-coder-7b:q4_k_m"
@@ -361,7 +361,7 @@ def run_smoke(base_url: str, model: str, api_key: str) -> dict[str, Any]:
 
     wire_requests: list[dict[str, Any]] = []
     events: list[tuple[str, dict[str, Any]]] = []
-    real_urlopen = scidev_core.urlopen
+    real_urlopen = scidev.integrations.model.urlopen
 
     def observe_request(request: Request, timeout: float = 90.0):
         _record_local_request(request, model=model.strip(), requests=wire_requests)
@@ -409,7 +409,7 @@ def run_smoke(base_url: str, model: str, api_key: str) -> dict[str, Any]:
             patch_review=lambda preview: {int(hunk["id"]) for hunk in preview["hunks"]},
         )
         task = {"payload": {"session_id": "live_local_model_smoke", "prompt": TASK_PROMPT}}
-        with patch("scidev_core.urlopen", new=observe_request):
+        with patch("scidev.integrations.model.urlopen", new=observe_request):
             result = agent.run(task)
 
         target = root / "hello_qwen.py"
@@ -490,7 +490,7 @@ def run_smoke(base_url: str, model: str, api_key: str) -> dict[str, Any]:
                     "prompt": _coding_task_prompt(coding_task),
                 }
             }
-            with patch("scidev_core.urlopen", new=observe_request):
+            with patch("scidev.integrations.model.urlopen", new=observe_request):
                 task_output = task_agent.run(task_result)
 
             target = root / coding_task.filename

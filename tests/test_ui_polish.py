@@ -19,10 +19,10 @@ from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QTextDocument, QTextL
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from scidev_client import ClientWindow, ElidedLabel
-from scidev_highlighting import LanguageHighlighter
-from scidev_planning import TaskPlan
-from scidev_ui import (
+from scidev.desktop.client import ClientWindow, ElidedLabel
+from scidev.desktop.highlighting import LanguageHighlighter
+from scidev.agent.planning import TaskPlan
+from scidev.desktop.theme import (
     ACTIVITY_BUTTON_SIZE, ACTIVITY_ICON_SIZE, ACTIVITY_RAIL_WIDTH, UI_PROFILES,
     create_ui_font, ui_font_family,
 )
@@ -81,6 +81,38 @@ class HighlightingTests(unittest.TestCase):
 
 
 class DesktopPolishTests(unittest.TestCase):
+    def test_replaced_plan_rows_are_hidden_before_deferred_delete(self):
+        from PySide6.QtWidgets import QLabel
+
+        panel = self.window.task_plan_panel
+        panel.collapsed = False
+        panel._sync_controls()
+        plan = TaskPlan.update(None, [{"step": "obsolete-visible-plan", "status": "in_progress"}])
+        panel.set_plan(plan.to_record(), run_state="running")
+        self.settle()
+        obsolete = next(label for label in panel.body.findChildren(QLabel)
+                        if "obsolete-visible-plan" in label.text())
+        self.assertTrue(obsolete.isVisible())
+        panel.set_plan(None, run_state="idle")
+        self.assertFalse(obsolete.isVisible(), "replaced plan row remains visible until the next event loop")
+        old_hint = panel.body_layout.itemAt(0).widget()
+        panel.set_mode("off")
+        self.assertFalse(old_hint.isVisible(), "replaced empty-state hint remains visible")
+
+    def test_capture_disposes_obsolete_plan_rows_before_rendering(self):
+        from shiboken6 import isValid
+        from scripts.smoke_screenshot import capture
+        from PySide6.QtWidgets import QLabel
+
+        plan = TaskPlan.update(None, [{"step": "obsolete-screenshot-step", "status": "in_progress"}])
+        self.window.task_plan_panel.set_plan(plan.to_record(), run_state="running")
+        obsolete = next(label for label in self.window.task_plan_panel.body.findChildren(QLabel)
+                        if "obsolete-screenshot-step" in label.text())
+        self.window.task_plan_panel.set_plan(None, run_state="idle")
+        image = capture(self.window, self.app, self.root, "plan-cleared", (1280, 720))
+        self.assertFalse(image.isNull())
+        self.assertFalse(isValid(obsolete), "old plan text was still alive in the screenshot")
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -90,7 +122,7 @@ class DesktopPolishTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="scidev-ui-polish-test-")
         self.root = Path(self.temp.name)
         self.settings = QSettings(str(self.root / "ui.ini"), QSettings.Format.IniFormat)
-        self.settings_patch = patch("scidev_client.QSettings", return_value=self.settings)
+        self.settings_patch = patch("scidev.desktop.client.QSettings", return_value=self.settings)
         self.settings_patch.start()
         self.window = ClientWindow(self.root)
         self.window.show()

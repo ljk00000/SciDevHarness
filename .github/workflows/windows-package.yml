@@ -18,8 +18,8 @@ jobs:
         if: ${{ github.ref_type == 'tag' }}
         shell: pwsh
         run: |
-          $versionLine = Select-String -Path "scidev_update.py" -Pattern '^APP_VERSION = "([^"]+)"'
-          if (-not $versionLine) { throw "APP_VERSION was not found in scidev_update.py" }
+          $versionLine = Select-String -Path "scidev/integrations/update.py" -Pattern '^APP_VERSION = "([^"]+)"'
+          if (-not $versionLine) { throw "APP_VERSION was not found in scidev/integrations/update.py" }
           $version = $versionLine.Matches[0].Groups[1].Value
           $expected = "v$version"
           if ($env:GITHUB_REF_NAME -ne $expected) {
@@ -140,8 +140,8 @@ jobs:
           if (-not (Test-Path -LiteralPath $deployment -PathType Container)) {
             throw "Standalone deployment is missing: $deployment"
           }
-          $versionLine = Select-String -Path "$env:GITHUB_WORKSPACE\scidev_update.py" -Pattern '^APP_VERSION = "([^"]+)"'
-          if (-not $versionLine) { throw "APP_VERSION was not found in scidev_update.py" }
+          $versionLine = Select-String -Path "$env:GITHUB_WORKSPACE\scidev/integrations/update.py" -Pattern '^APP_VERSION = "([^"]+)"'
+          if (-not $versionLine) { throw "APP_VERSION was not found in scidev/integrations/update.py" }
           $version = $versionLine.Matches[0].Groups[1].Value
           $applicationDirectory = Join-Path $deployment "SciDevHarness.dist"
           $installerDir = Join-Path $env:RUNNER_TEMP "scidev-installer"
@@ -172,8 +172,8 @@ jobs:
       - name: Install and uninstall the per-user installer
         shell: pwsh
         run: |
-          $versionLine = Select-String -Path "$env:GITHUB_WORKSPACE\scidev_update.py" -Pattern '^APP_VERSION = "([^"]+)"'
-          if (-not $versionLine) { throw "APP_VERSION was not found in scidev_update.py" }
+          $versionLine = Select-String -Path "$env:GITHUB_WORKSPACE\scidev/integrations/update.py" -Pattern '^APP_VERSION = "([^"]+)"'
+          if (-not $versionLine) { throw "APP_VERSION was not found in scidev/integrations/update.py" }
           $version = $versionLine.Matches[0].Groups[1].Value
           $installer = Join-Path $env:RUNNER_TEMP "scidev-installer\SciDevHarness-Setup-$version.exe"
           if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {

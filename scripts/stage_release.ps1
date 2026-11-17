@@ -18,6 +18,9 @@ if (Test-Path -LiteralPath $stageRoot) {
 New-Item -ItemType Directory -Path $stageRoot | Out-Null
 $releaseFiles = @(
     "README.md",
+    "docs\CURRENT_WORK.md",
+    "docs\HISTORY_RESULTS.md",
+    "docs\SCIDEV_HARNESS.md",
     "LICENSE",
     "pyproject.toml",
     "pysidedeploy.spec",
@@ -33,6 +36,9 @@ $releaseFiles = @(
 ) + @(
     Get-ChildItem -LiteralPath $repoRoot -Filter "scidev_*.py" -File |
         ForEach-Object { $_.Name }
+) + @(
+    Get-ChildItem -LiteralPath (Join-Path $repoRoot "scidev") -Filter "*.py" -File -Recurse |
+        ForEach-Object { $_.FullName.Substring($repoPrefix.Length) }
 )
 
 foreach ($relativePath in $releaseFiles) {

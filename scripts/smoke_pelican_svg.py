@@ -36,8 +36,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-import scidev_core
-from scidev_core import CodingAgent, EventLedger, GitManager, SummarySettings
+import scidev.integrations.model
+from scidev.agent.core import CodingAgent, EventLedger, GitManager, SummarySettings
 from smoke_local_ollama import (
     DEFAULT_MODEL,
     _record_local_request,
@@ -1447,7 +1447,7 @@ def run_smoke(
 
     wire_requests: list[dict[str, Any]] = []
     events: list[tuple[str, dict[str, Any]]] = []
-    real_urlopen = scidev_core.urlopen
+    real_urlopen = scidev.integrations.model.urlopen
     request_phase = {"value": "initial"}
 
     def observe_request(request: Request, timeout: float = 90.0):
@@ -1536,7 +1536,7 @@ def run_smoke(
             request_phase["value"] = "initial"
             task = fixed_prompt_task(session_id)
             try:
-                with patch("scidev_core.urlopen", new=observe_request):
+                with patch("scidev.integrations.model.urlopen", new=observe_request):
                     return agent.run(task)
             except Exception as exc:
                 artifact_note = ""

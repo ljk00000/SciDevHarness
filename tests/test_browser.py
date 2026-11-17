@@ -13,14 +13,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_browser import (
+from scidev.integrations.browser import (
     BrowserAgent,
     BrowserApprovalDenied,
     BrowserError,
     DevToolsWebSocket,
     EdgeCdpRuntime,
 )
-from scidev_core import CodingAgent, EventLedger, GitManager, SummarySettings
+from scidev.agent.core import CodingAgent, EventLedger, GitManager, SummarySettings
 
 
 PNG = b"\x89PNG\r\n\x1a\nminimal-test-image"
@@ -253,7 +253,7 @@ class BrowserAgentTests(unittest.TestCase):
                 require_verification=False,
             )
             provider = Provider()
-            with patch("scidev_core.OpenAICompatibleProvider.from_env", return_value=provider):
+            with patch("scidev.agent.core.OpenAICompatibleProvider.from_env", return_value=provider):
                 result = agent.run({"payload": {"session_id": "browser_declined", "prompt": "网上搜索 research harness"}})
 
             self.assertEqual(result["text"], "网页操作未获批准，因此没有访问网站。")

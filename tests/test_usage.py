@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scidev_usage import ModelRequestUsage
+from scidev.agent.usage import ModelRequestUsage
 
 
 class ModelRequestUsageTests(unittest.TestCase):

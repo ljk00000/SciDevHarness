@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scidev_intel import PythonIntel
+from scidev.workspace.intel import PythonIntel
 
 
 class PythonIntelTests(unittest.TestCase):

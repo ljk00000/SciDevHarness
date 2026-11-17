@@ -11,11 +11,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import scidev_cli
-from scidev_core import PermanentError
-from scidev_provider import ProviderConfig, ProviderConfigError
-from scidev_sandbox import SandboxError
-from scidev_update import UpdateInfo
+import scidev.cli
+from scidev.agent.core import PermanentError
+from scidev.integrations.provider import ProviderConfig, ProviderConfigError
+from scidev.runtime.sandbox import SandboxError
+from scidev.integrations.update import UpdateInfo
 
 
 class _FakeAgent:
@@ -61,11 +61,11 @@ class CliTests(unittest.TestCase):
             root = Path(temp)
             argv = [item.replace("{root}", str(root)) for item in argv]
             with (
-                patch("scidev_cli.CodingAgent", fake),
+                patch("scidev.cli.CodingAgent", fake),
                 contextlib.redirect_stdout(output),
                 contextlib.redirect_stderr(output),
             ):
-                code = scidev_cli.main(argv)
+                code = scidev.cli.main(argv)
             return code, output.getvalue(), root
 
     def test_exec_writes_a_result_file_and_rejects_escaping_paths(self) -> None:
@@ -114,11 +114,11 @@ class CliTests(unittest.TestCase):
         output = io.StringIO()
         argv = [item.replace("{root}", str(root)) for item in argv]
         with (
-            patch("scidev_cli.CodingAgent", fake),
+            patch("scidev.cli.CodingAgent", fake),
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(output),
         ):
-            code = scidev_cli.main(argv)
+            code = scidev.cli.main(argv)
         return code, output.getvalue()
 
     def test_exec_json_uses_policy_and_reports_result(self) -> None:
@@ -179,7 +179,7 @@ class CliTests(unittest.TestCase):
             "truncated": False,
             "url": "https://github.com/example/project/pull/7",
         }
-        with patch("scidev_cli.pull_request_diff", return_value=fake) as diff:
+        with patch("scidev.cli.pull_request_diff", return_value=fake) as diff:
             code, output, _root = self._run([
                 "pr-diff", "--workspace", "{root}", "--number", "7", "--json",
             ])
@@ -187,7 +187,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(json.loads(output)["number"], 7)
         diff.assert_called_once()
 
-        with patch("scidev_cli.pull_request_diff", return_value=fake):
+        with patch("scidev.cli.pull_request_diff", return_value=fake):
             code, output, _root = self._run([
                 "pr-diff", "--workspace", "{root}", "--number", "7",
             ])
@@ -210,7 +210,7 @@ class CliTests(unittest.TestCase):
             )
             subprocess.run(["git", "checkout", "-q", "-b", "feature/task"], cwd=root, check=True)
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-                code = scidev_cli.main([
+                code = scidev.cli.main([
                     "pr", "--workspace", str(root), "--title", "Task", "--draft", "--dry-run", "--json",
                 ])
             self.assertEqual(code, 0, output.getvalue())
@@ -235,7 +235,7 @@ class CliTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-                code = scidev_cli.main(["mcp", "--workspace", str(root), "--json"])
+                code = scidev.cli.main(["mcp", "--workspace", str(root), "--json"])
             self.assertEqual(code, 0, output.getvalue())
             payload = json.loads(output.getvalue())
             self.assertEqual(payload["tools"][0]["name"], "mcp__demo__echo")
@@ -252,16 +252,16 @@ class CliTests(unittest.TestCase):
             asset_url="https://example/setup.exe",
         )
         output = io.StringIO()
-        with patch.object(scidev_cli, "check_for_update", return_value=info):
+        with patch.object(scidev.cli, "check_for_update", return_value=info):
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-                code = scidev_cli.main(["update", "--workspace", ".", "--json"])
+                code = scidev.cli.main(["update", "--workspace", ".", "--json"])
             self.assertEqual(code, 0, output.getvalue())
             payload = json.loads(output.getvalue())
             self.assertTrue(payload["available"])
             self.assertEqual(payload["latest"], "0.2.0")
             output = io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-                code = scidev_cli.main(["update", "--workspace", ".", "--fail-if-available"])
+                code = scidev.cli.main(["update", "--workspace", ".", "--fail-if-available"])
             self.assertEqual(code, 1)
 
     def test_exec_can_run_in_an_isolated_worktree(self) -> None:
@@ -276,11 +276,11 @@ class CliTests(unittest.TestCase):
             subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=root, check=True)
             _FakeAgent.instances.clear()
             with (
-                patch("scidev_cli.CodingAgent", _FakeAgent),
+                patch("scidev.cli.CodingAgent", _FakeAgent),
                 contextlib.redirect_stdout(output),
                 contextlib.redirect_stderr(output),
             ):
-                code = scidev_cli.main([
+                code = scidev.cli.main([
                     "exec", "--workspace", str(root), "--task", "fix it",
                     "--worktree", "--worktree-id", "review", "--json",
                 ])
@@ -345,7 +345,7 @@ class CliTests(unittest.TestCase):
     def test_missing_workspace_is_a_usage_error(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stderr(output):
-            code = scidev_cli.main([
+            code = scidev.cli.main([
                 "exec", "--workspace", "Z:\\definitely-not-a-workspace", "--task", "x",
             ])
         self.assertEqual(code, 2)
@@ -367,12 +367,12 @@ class CliTests(unittest.TestCase):
     def test_parser_help_without_command(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            code = scidev_cli.main([])
+            code = scidev.cli.main([])
         self.assertEqual(code, 2)
         self.assertIn("exec", output.getvalue())
 
     def test_sessions_json_lists_recent_sessions(self) -> None:
-        from scidev_core import EventLedger
+        from scidev.agent.core import EventLedger
 
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)
@@ -383,7 +383,7 @@ class CliTests(unittest.TestCase):
             )
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                code = scidev_cli.main([
+                code = scidev.cli.main([
                     "sessions", "--workspace", str(root), "--json", "--limit", "5",
                 ])
             self.assertEqual(code, 0)
@@ -395,7 +395,7 @@ class CliTests(unittest.TestCase):
     def test_sandbox_check_reports_local_boundary(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            code = scidev_cli.main(["sandbox-check", "--backend", "local", "--json"])
+            code = scidev.cli.main(["sandbox-check", "--backend", "local", "--json"])
         self.assertEqual(code, 0)
         payload = json.loads(output.getvalue())
         self.assertTrue(payload["ready"])
@@ -405,10 +405,10 @@ class CliTests(unittest.TestCase):
     def test_sandbox_check_fails_closed_for_unavailable_docker(self) -> None:
         output = io.StringIO()
         with patch(
-            "scidev_cli.DockerSandbox.ensure_available",
+            "scidev.cli.DockerSandbox.ensure_available",
             side_effect=SandboxError("daemon unavailable"),
         ), contextlib.redirect_stdout(output):
-            code = scidev_cli.main([
+            code = scidev.cli.main([
                 "sandbox-check", "--backend", "docker", "--image", "demo:latest", "--json",
             ])
         self.assertEqual(code, 1)
@@ -422,7 +422,7 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
             output = io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-                code = scidev_cli.main(["doctor", "--workspace", temp, "--json"])
+                code = scidev.cli.main(["doctor", "--workspace", temp, "--json"])
         self.assertEqual(code, 0, output.getvalue())
         payload = json.loads(output.getvalue())
         self.assertTrue(payload["ok"])
@@ -434,17 +434,17 @@ class CliTests(unittest.TestCase):
     def test_doctor_rejects_a_missing_workspace(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-            code = scidev_cli.main(["doctor", "--workspace", "definitely-missing-workspace"])
+            code = scidev.cli.main(["doctor", "--workspace", "definitely-missing-workspace"])
         self.assertEqual(code, 2)
 
     def test_doctor_treats_missing_pyside_as_a_warning(self) -> None:
         with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
             output = io.StringIO()
             with patch(
-                "scidev_cli.metadata.version",
-                side_effect=scidev_cli.metadata.PackageNotFoundError("PySide6"),
+                "scidev.cli.metadata.version",
+                side_effect=scidev.cli.metadata.PackageNotFoundError("PySide6"),
             ), contextlib.redirect_stdout(output):
-                code = scidev_cli.main(["doctor", "--workspace", temp, "--json"])
+                code = scidev.cli.main(["doctor", "--workspace", temp, "--json"])
         self.assertEqual(code, 0, output.getvalue())
         payload = json.loads(output.getvalue())
         pyside = next(item for item in payload["checks"] if item["name"] == "pyside6")
@@ -454,10 +454,10 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
             output = io.StringIO()
             with patch(
-                "scidev_cli.probe_capabilities",
+                "scidev.cli.probe_capabilities",
                 return_value={"tools_supported": True, "context_length": 8192, "vision": False, "detail": ""},
             ) as probe, contextlib.redirect_stdout(output):
-                code = scidev_cli.main(["doctor", "--workspace", temp, "--online", "--json"])
+                code = scidev.cli.main(["doctor", "--workspace", temp, "--online", "--json"])
         self.assertEqual(code, 0, output.getvalue())
         probe.assert_called_once()
         payload = json.loads(output.getvalue())
@@ -476,12 +476,12 @@ class CliTests(unittest.TestCase):
                 encoding="utf-8",
             )
             output = io.StringIO()
-            with patch("scidev_cli.ProjectContext") as context_type, contextlib.redirect_stdout(output):
+            with patch("scidev.cli.ProjectContext") as context_type, contextlib.redirect_stdout(output):
                 context_type.return_value.list_paths.return_value = {
                     "paths": ["tests/test_app.py"],
                     "complete": True,
                 }
-                code = scidev_cli.main(["doctor", "--workspace", temp, "--tests", "--json"])
+                code = scidev.cli.main(["doctor", "--workspace", temp, "--tests", "--json"])
         self.assertEqual(code, 0, output.getvalue())
         payload = json.loads(output.getvalue())
         check = next(item for item in payload["checks"] if item["name"] == "tests")
@@ -497,12 +497,12 @@ class CliTests(unittest.TestCase):
                 api_key="test",
             )
             with patch(
-                "scidev_cli.load_provider_config", return_value=config,
+                "scidev.cli.load_provider_config", return_value=config,
             ), patch(
-                "scidev_cli.probe_capabilities",
+                "scidev.cli.probe_capabilities",
                 return_value={"tools_supported": False, "context_length": None, "vision": None, "detail": ""},
             ), contextlib.redirect_stdout(output):
-                code = scidev_cli.main(["doctor", "--workspace", temp, "--online", "--json"])
+                code = scidev.cli.main(["doctor", "--workspace", temp, "--online", "--json"])
         self.assertEqual(code, 0, output.getvalue())
         payload = json.loads(output.getvalue())
         check = next(item for item in payload["checks"] if item["name"] == "provider-probe")
@@ -512,10 +512,10 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="scidev-doctor-") as temp:
             output = io.StringIO()
             with patch(
-                "scidev_cli.load_provider_config",
+                "scidev.cli.load_provider_config",
                 side_effect=ProviderConfigError("bad provider"),
             ), contextlib.redirect_stdout(output):
-                code = scidev_cli.main(["doctor", "--workspace", temp, "--json"])
+                code = scidev.cli.main(["doctor", "--workspace", temp, "--json"])
         self.assertEqual(code, 1, output.getvalue())
         payload = json.loads(output.getvalue())
         self.assertFalse(payload["ok"])

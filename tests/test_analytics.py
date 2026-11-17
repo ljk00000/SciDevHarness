@@ -6,9 +6,9 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-from scidev_analytics import collect_trends, format_sparkline
-from scidev_analytics_ui import ErrorTrendDialog
-from scidev_core import EventLedger
+from scidev.evaluation.analytics import collect_trends, format_sparkline
+from scidev.desktop.analytics_ui import ErrorTrendDialog
+from scidev.agent.core import EventLedger
 
 
 class AnalyticsTests(unittest.TestCase):

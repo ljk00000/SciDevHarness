@@ -4,8 +4,8 @@ import unittest
 
 from PySide6.QtWidgets import QApplication
 
-from scidev_mcp import MCPTool
-from scidev_mcp_ui import MCPBrowserDialog
+from scidev.integrations.mcp import MCPTool
+from scidev.desktop.mcp_ui import MCPBrowserDialog
 
 
 class _FakeManager:

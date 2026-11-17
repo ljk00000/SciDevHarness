@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scidev_errors import classify_exception, classify_message
+from scidev.runtime.errors import classify_exception, classify_message
 
 
 class ErrorClassificationTests(unittest.TestCase):

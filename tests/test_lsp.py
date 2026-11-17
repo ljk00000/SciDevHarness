@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_lsp import (
+from scidev.integrations.lsp import (
     LSPDiagnostic,
     LSPUnavailable,
     ResidentLSP,

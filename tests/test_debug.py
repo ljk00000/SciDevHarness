@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from scidev_debug import DebugError, breakpoint_commands, build_debug_argv, command_line
+from scidev.workspace.debug import DebugError, breakpoint_commands, build_debug_argv, command_line
 
 
 class DebugLauncherTests(unittest.TestCase):

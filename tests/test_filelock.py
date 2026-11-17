@@ -8,7 +8,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from scidev_filelock import FileLock, FileLockTimeout
+from scidev.runtime.filelock import FileLock, FileLockTimeout
 
 
 class FileLockTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class FileLockTests(unittest.TestCase):
             script = (
                 "import sys, time\n"
                 "from pathlib import Path\n"
-                "from scidev_filelock import FileLock\n"
+                "from scidev.runtime.filelock import FileLock\n"
                 "with FileLock(Path(sys.argv[1])):\n"
                 "    print('locked', flush=True)\n"
                 "    time.sleep(10)\n"
@@ -53,7 +53,7 @@ class FileLockTests(unittest.TestCase):
                     time.sleep(0.02)
 
     def test_mutating_git_commands_are_classified(self) -> None:
-        from scidev_core import GitManager
+        from scidev.agent.core import GitManager
 
         self.assertTrue(GitManager._is_mutating(["--literal-pathspecs", "add", "-A"]))
         self.assertTrue(GitManager._is_mutating(["commit", "-m", "x"]))
@@ -61,7 +61,7 @@ class FileLockTests(unittest.TestCase):
         self.assertFalse(GitManager._is_mutating([]))
 
     def test_mutation_session_is_reentrant(self) -> None:
-        from scidev_core import GitManager
+        from scidev.agent.core import GitManager
 
         with tempfile.TemporaryDirectory(prefix="scidev-lock-reentrant-") as temp:
             manager = GitManager(Path(temp))
@@ -72,7 +72,7 @@ class FileLockTests(unittest.TestCase):
             self.assertEqual(manager._mutation_depth(), 0)
 
     def test_coding_task_lock_path_is_shared_and_hidden(self) -> None:
-        from scidev_core import coding_task_lock_path
+        from scidev.agent.core import coding_task_lock_path
 
         with tempfile.TemporaryDirectory(prefix="scidev-task-lock-path-") as temp:
             root = Path(temp)
@@ -81,7 +81,7 @@ class FileLockTests(unittest.TestCase):
             self.assertEqual(coding_task_lock_path(root), root / ".git" / "scidev-task.lock")
 
     def test_agent_run_rejects_a_task_when_another_process_holds_the_lock(self) -> None:
-        from scidev_core import CodingAgent, PermanentError, coding_task_lock_path
+        from scidev.agent.core import CodingAgent, PermanentError, coding_task_lock_path
 
         with tempfile.TemporaryDirectory(prefix="scidev-task-lock-", ignore_cleanup_errors=True) as temp:
             root = Path(temp)
@@ -90,7 +90,7 @@ class FileLockTests(unittest.TestCase):
             script = (
                 "import sys, time\n"
                 "from pathlib import Path\n"
-                "from scidev_filelock import FileLock\n"
+                "from scidev.runtime.filelock import FileLock\n"
                 "with FileLock(Path(sys.argv[1])):\n"
                 "    print('locked', flush=True)\n"
                 "    time.sleep(10)\n"
@@ -118,7 +118,7 @@ class FileLockTests(unittest.TestCase):
                     holder.wait(timeout=5)
 
     def test_agent_run_releases_the_process_lock_after_success(self) -> None:
-        from scidev_core import CodingAgent, coding_task_lock_path
+        from scidev.agent.core import CodingAgent, coding_task_lock_path
 
         with tempfile.TemporaryDirectory(prefix="scidev-task-lock-") as temp:
             root = Path(temp)

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scidev_patching import PatchEngine, PatchError
+from scidev.workspace.patching import PatchEngine, PatchError
 
 
 class PatchEngineTests(unittest.TestCase):
@@ -205,9 +205,9 @@ class PatchEngineTests(unittest.TestCase):
 *** End Patch"""
             engine = self.engine(root)
             plan = engine.prepare(patch_text)
-            import scidev_patching
+            import scidev.workspace.patching
 
-            original_replace = scidev_patching.os.replace
+            original_replace = scidev.workspace.patching.os.replace
             replace_calls = 0
 
             def fail_second_replace(source, destination):
@@ -217,7 +217,7 @@ class PatchEngineTests(unittest.TestCase):
                     raise OSError("simulated replace failure")
                 return original_replace(source, destination)
 
-            with patch("scidev_patching.os.replace", side_effect=fail_second_replace):
+            with patch("scidev.workspace.patching.os.replace", side_effect=fail_second_replace):
                 with self.assertRaisesRegex(PatchError, "已尝试回滚"):
                     engine.apply(plan, {1, 2})
 
@@ -241,9 +241,9 @@ class PatchEngineTests(unittest.TestCase):
 *** End Patch"""
             engine = self.engine(root)
             plan = engine.prepare(patch_text)
-            import scidev_patching
+            import scidev.workspace.patching
 
-            original_replace = scidev_patching.os.replace
+            original_replace = scidev.workspace.patching.os.replace
             fail_once = True
 
             def fail_update(source, destination):
@@ -253,7 +253,7 @@ class PatchEngineTests(unittest.TestCase):
                     raise OSError("simulated replacement failure")
                 return original_replace(source, destination)
 
-            with patch("scidev_patching.os.replace", side_effect=fail_update):
+            with patch("scidev.workspace.patching.os.replace", side_effect=fail_update):
                 with self.assertRaisesRegex(PatchError, "已尝试回滚"):
                     engine.apply(plan, {1, 2})
 

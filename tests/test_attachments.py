@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-from scidev_attachments import (
+from scidev.agent.attachments import (
     AttachmentError,
     MAX_IMAGES,
     image_content_parts,
@@ -14,7 +14,7 @@ from scidev_attachments import (
     load_image_file,
     normalize_images,
 )
-from scidev_core import CodingAgent, EventLedger, SummarySettings
+from scidev.agent.core import CodingAgent, EventLedger, SummarySettings
 
 PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl9sAAAAASUVORK5CYII="

@@ -41,8 +41,9 @@ for entry in (PROJECT_ROOT, PROJECT_ROOT / "scripts"):
     if str(entry) not in sys.path:
         sys.path.insert(0, str(entry))
 
-import scidev_core
-from scidev_core import CodingAgent, EventLedger, GitManager, SummarySettings
+import scidev.agent.core
+import scidev.integrations.model
+from scidev.agent.core import CodingAgent, EventLedger, GitManager, SummarySettings
 from smoke_local_ollama import configure_local_environment, validate_local_base_url
 
 DEFAULT_MODEL = "scidev-qwen2.5-coder-7b:q4_k_m"
@@ -484,7 +485,7 @@ CONCURRENT_SECOND_PROMPT = "创建 beta.py，内容为 print('beta')。调用 wr
 
 
 def _observe_factory(wire: list[dict[str, Any]]):
-    real_urlopen = scidev_core.urlopen
+    real_urlopen = scidev.integrations.model.urlopen
 
     def observe(request: Any, timeout: float = 90.0):
         url = str(getattr(request, "full_url", ""))
@@ -734,7 +735,7 @@ def _run_scenario(scenario: Scenario, base: Path, model: str) -> dict[str, Any]:
     box: dict[str, Any] = {}
     observe = _observe_factory(wire)
     raw_rejections: list[str] = []
-    original_coerce = scidev_core.OpenAICompatibleProvider._coerce_text_tool_calls
+    original_coerce = scidev.agent.core.OpenAICompatibleProvider._coerce_text_tool_calls
 
     def capture_coerce(message, tools):  # noqa: ANN001, ANN202
         normalized = original_coerce(message, tools)
@@ -744,8 +745,8 @@ def _run_scenario(scenario: Scenario, base: Path, model: str) -> dict[str, Any]:
 
     def work() -> None:
         try:
-            with patch("scidev_core.urlopen", new=observe), patch.object(
-                scidev_core.OpenAICompatibleProvider,
+            with patch("scidev.integrations.model.urlopen", new=observe), patch.object(
+                scidev.agent.core.OpenAICompatibleProvider,
                 "_coerce_text_tool_calls",
                 staticmethod(capture_coerce),
             ):
@@ -1134,7 +1135,7 @@ def _run_concurrent(base: Path, model: str) -> dict[str, Any]:
 
     def first_work() -> None:
         try:
-            with patch("scidev_core.urlopen", new=observe):
+            with patch("scidev.integrations.model.urlopen", new=observe):
                 box["first"] = first.run(
                     {"payload": {"session_id": "probe-concurrent-a", "prompt": scenario.prompt, "planning_mode": "off"}}
                 )
@@ -1148,7 +1149,7 @@ def _run_concurrent(base: Path, model: str) -> dict[str, Any]:
     second_outcome: dict[str, Any] = {}
     second_started = time.monotonic()
     try:
-        with patch("scidev_core.urlopen", new=observe):
+        with patch("scidev.integrations.model.urlopen", new=observe):
             box["second"] = second.run(
                 {"payload": {"session_id": "probe-concurrent-b", "prompt": CONCURRENT_SECOND_PROMPT, "planning_mode": "off"}}
             )
@@ -1186,7 +1187,7 @@ def _run_concurrent(base: Path, model: str) -> dict[str, Any]:
     checks: dict[str, Any] = {}
     if "second_error" not in box:
         checks["second_task_not_rejected"] = "第二个任务没有被拒绝"
-    elif not isinstance(box.get("second_error"), scidev_core.PermanentError):
+    elif not isinstance(box.get("second_error"), scidev.agent.core.PermanentError):
         checks["second_task_wrong_error"] = type(box["second_error"]).__name__
     second_files = [
         file for commit in report["commits"] for file in commit["files"] if file.endswith(".py")
