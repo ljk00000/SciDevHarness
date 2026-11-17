@@ -82,6 +82,7 @@ class ReleaseStagingTests(unittest.TestCase):
             "docs/CURRENT_WORK.md",
             "docs/HISTORY_RESULTS.md",
             "docs/SCIDEV_HARNESS.md",
+            "docs/images/workbench.png",
             "pyproject.toml",
             "pysidedeploy.spec",
             "requirements.txt",

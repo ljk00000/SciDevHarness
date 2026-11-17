@@ -21,6 +21,7 @@ $releaseFiles = @(
     "docs\CURRENT_WORK.md",
     "docs\HISTORY_RESULTS.md",
     "docs\SCIDEV_HARNESS.md",
+    "docs\images\workbench.png",
     "LICENSE",
     "pyproject.toml",
     "pysidedeploy.spec",
