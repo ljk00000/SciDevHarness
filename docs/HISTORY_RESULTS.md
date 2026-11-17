@@ -1,5 +1,11 @@
 # 历史与结果
 
+## 2026-11-17 17:44（Asia/Shanghai）· GitHub 主仓库提交完成
+- 用户授权提交当前项目；主体提交 `cdf68e927df86c4ad4353c16a6203e9ed7f2b33e`（`refactor: organize application package and harden task lifecycle`）已推送到 `origin/master`，仓库为 `ljk00000/SciDevHarness`。包含模块拆分、缺陷修复、目录迁移、测试与维护文档，165 个文件变更。
+- 提交前源码指纹与最终验收一致；暂存检查发现 12 个新增模块末尾多余空行，清理后逐文件确认 AST 不变，`git diff --cached --check` 通过。沿用已通过的 837 项全量（823 通过/14 跳过、零重试、覆盖率 80%）及新增入口回归，不重复运行无变化的业务代码。
+- 网络按直连优先执行：22 端口被重置后改用官方 SSH 443；首次推送连接重置，有限重试后服务端确认 `778dbff..cdf68e9` 更新成功。未使用代理、强制推送、创建 Release 或上传构建产物。
+- 临时目录、缓存、本地配置及验证截图保留在本地忽略目录；本记录随收尾文档提交同步，最终远端分支指纹另行核对。
+
 ## 2026-11-17 17:22（Asia/Shanghai）· 项目目录整理完成
 - 根目录 Python 文件由 83 个减至 2 个兼容启动入口；81 个实现模块按 `agent`、`desktop`、`workspace`、`integrations`、`runtime`、`evaluation` 归入 `scidev/`。三份维护文档归入 `docs/`，两份冒烟脚本归入 `scripts/`，20 个遗留测试/缓存目录可逆归档到 `.tmp-tests/legacy-root-20261117`。
 - 16:57—17:05：保存完整迁移前快照并验证 156 个 Python 文件与上一轮验收指纹一致；前后同组 59 项基线（55 通过/4 跳过）一致，路径相关 14 项通过。同步导入、mock 注入、项目清单、覆盖率、CI、发布暂存及 README 导航；保持根目录批处理、Python 启动命令及 `scidev_client.exe` 文件名。Ruff/mypy/pytest 缓存定向至 `.tmp-tests/cache`。
