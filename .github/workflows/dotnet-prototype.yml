@@ -24,12 +24,11 @@ jobs:
         with:
           python-version: '3.14'
       - name: Build
+        id: build
         working-directory: dotnet
         run: dotnet build SciDevHarness.slnx
       - name: Check the default desktop launcher
         run: .\start_client.bat --capture-home "$env:RUNNER_TEMP\scidev-launcher"
-      - name: Check ConPTY and child process cleanup
-        run: dotnet dotnet/src/SciDev.Cli/bin/Debug/net10.0/SciDev.Cli.dll terminal-check
       - name: Install Python reference validator dependencies
         run: python -m pip install -r requirements.txt
       - name: Replay offline model and assert file boundaries
@@ -42,3 +41,6 @@ jobs:
           dotnet dotnet/tests/SciDev.Tests/bin/Debug/net10.0/SciDev.Tests.dll
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python dotnet/tests/smoke.py --oracle
+      - name: Check ConPTY and child process cleanup
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: dotnet dotnet/src/SciDev.Cli/bin/Debug/net10.0/SciDev.Cli.dll terminal-check

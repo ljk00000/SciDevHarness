@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 
@@ -7,29 +8,45 @@ namespace SciDev.Infrastructure;
 
 public static partial class TerminalProbe
 {
-    public sealed record Result(bool EchoedChinese, bool Resized, bool Cancelled, int ExitCode, bool ChildExited);
+    public sealed record Result(bool EchoedChinese, bool Resized, bool Cancelled, int ExitCode, bool ChildExited)
+    {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? TimedOutPhase { get; init; }
+    }
 
     public static async Task<Result> CheckAsync(CancellationToken token)
     {
         var workspace = Directory.GetCurrentDirectory();
         const string sample = "鹈鹕输入";
+        const string expected = "SCIDEV_ECHO:" + sample;
         var input = Channel.CreateUnbounded<TerminalSession.Input>();
         var output = new StringBuilder();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
         var sent = false;
-        var echo = await TerminalSession.RunCoreAsync(workspace, 80, 25, input.Reader, text =>
+        TerminalSession.Result echo;
+        try
         {
-            output.Append(text);
-            if (!sent && output.ToString().Contains("SCIDEV_READY", StringComparison.Ordinal))
+            echo = await TerminalSession.RunCoreAsync(workspace, 80, 25, input.Reader, text =>
             {
+                output.Append(text);
+                if (sent || !output.ToString().Contains("SCIDEV_READY", StringComparison.Ordinal))
+                    return;
                 sent = true;
                 input.Writer.TryWrite(new TerminalSession.Input.Resize(120, 35));
                 input.Writer.TryWrite(new TerminalSession.Input.Text(sample + "\r"));
-            }
-        }, deadline.Token, "Write-Host 'SCIDEV_READY'; $value=Read-Host; Write-Host ('SCIDEV_ECHO:'+ $value); exit 7");
+            }, deadline.Token, "$value=Read-Host -Prompt 'SCIDEV_READY'; Write-Host ('SCIDEV_ECHO:'+ $value); exit 7");
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !token.IsCancellationRequested)
+        {
+            var echoed = output.ToString().Contains(expected, StringComparison.Ordinal);
+            return new(echoed, false, false, -1, false)
+            {
+                TimedOutPhase = !sent ? "startup" : echoed ? "exit" : "input",
+            };
+        }
         var (cancelled, childExited) = await CheckCancellationAsync(workspace, token);
-        return new(output.ToString().Contains("SCIDEV_ECHO:" + sample, StringComparison.Ordinal),
+        return new(output.ToString().Contains(expected, StringComparison.Ordinal),
             echo.Resized, cancelled, echo.ExitCode, childExited);
     }
 
