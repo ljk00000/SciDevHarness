@@ -3,9 +3,9 @@ name: C# CI
 on:
   push:
     branches: ['**']
-    paths: ['dotnet/**', 'scidev/**', 'scripts/csharp_pelican_validator.py', 'scripts/export_qt_preferences.py', 'scripts/pelican_repair_guidance.py', 'scripts/smoke_pelican_svg.py', 'tests/test_pelican_svg.py', 'requirements.txt', 'start_client.bat', '.github/workflows/dotnet-prototype.yml']
+    paths: ['dotnet/**', 'scidev/**', 'evals/**', 'scripts/csharp_pelican_validator.py', 'scripts/export_qt_preferences.py', 'scripts/pelican_repair_guidance.py', 'scripts/smoke_pelican_svg.py', 'tests/test_pelican_svg.py', 'requirements.txt', 'start_client.bat', '.github/workflows/dotnet-prototype.yml']
   pull_request:
-    paths: ['dotnet/**', 'scidev/**', 'scripts/csharp_pelican_validator.py', 'scripts/export_qt_preferences.py', 'scripts/pelican_repair_guidance.py', 'scripts/smoke_pelican_svg.py', 'tests/test_pelican_svg.py', 'requirements.txt', 'start_client.bat', '.github/workflows/dotnet-prototype.yml']
+    paths: ['dotnet/**', 'scidev/**', 'evals/**', 'scripts/csharp_pelican_validator.py', 'scripts/export_qt_preferences.py', 'scripts/pelican_repair_guidance.py', 'scripts/smoke_pelican_svg.py', 'tests/test_pelican_svg.py', 'requirements.txt', 'start_client.bat', '.github/workflows/dotnet-prototype.yml']
   workflow_dispatch:
 
 permissions:

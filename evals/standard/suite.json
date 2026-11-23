@@ -123,9 +123,11 @@
       "prompt": "修复 test_users.py，使测试使用 fixture 返回 user，并让当前测试通过。",
       "setup": {
         "users.py": "def display(user):\n    return user['name']\n",
-        "test_users.py": "import pytest\nfrom users import display\n\n@pytest.fixture\ndef user():\n    return {}\n\ndef test_display(user):\n    assert display(user) == 'Ada'\n"
+        "test_users.py": "import pytest\nfrom users import display\n\n@pytest.fixture\ndef user():\n    return {}\n\ndef test_display(user):\n    assert display(user) == 'Ada'\n",
+        "test_fixture_contract.py": "from test_users import user, test_display as exercise_display\n\ndef test_fixture_contract(user):\n    assert user['name'] == 'Ada'\n    exercise_display(user)\n"
       },
-      "check": ["python", "-m", "pytest", "-q"]
+      "editable_tests": ["test_users.py"],
+      "check": ["python", "-m", "pytest", "-q", "test_fixture_contract.py"]
     },
     {
       "id": "async-gather",

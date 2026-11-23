@@ -16,8 +16,11 @@ class InstallerBuildTests(unittest.TestCase):
         self.assertIn("AppVersion={#AppVersion}", text)
         self.assertIn("Source: \"{#SourceDir}\\*\"", text)
         self.assertIn("recursesubdirs createallsubdirs", text)
-        self.assertIn("scidev_client.exe", text)
-        self.assertIn("OutputBaseFilename=SciDevHarness-Setup-{#AppVersion}", text)
+        self.assertIn('#define DesktopExe "scidev_client.exe"', text)
+        self.assertIn('#define DesktopExe "Workbench\\SciDev.Desktop.exe"', text)
+        self.assertIn('#define InstallerName "SciDevHarness-Setup"', text)
+        self.assertIn('#define InstallerName "SciDevHarness-CSharp-Preview-Setup"', text)
+        self.assertIn("OutputBaseFilename={#InstallerName}-{#AppVersion}", text)
 
     def test_build_script_validates_inputs_and_never_downloads_or_installs(self) -> None:
         text = SCRIPT.read_text(encoding="utf-8")
@@ -46,14 +49,17 @@ class InstallerBuildTests(unittest.TestCase):
 
     def test_release_workflow_is_tag_triggered_and_publishes_the_installer(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        package = (ROOT / ".github" / "workflows" / "windows-package.yml").read_text(encoding="utf-8")
+        package = (ROOT / ".github" / "workflows" / "csharp-preview-package.yml").read_text(encoding="utf-8")
         self.assertIn("tags:", workflow)
         self.assertIn("gh run download", workflow)
         self.assertIn("gh release create", workflow)
-        self.assertIn("secrets: inherit", workflow)
         self.assertIn("contents: write", workflow)
+        self.assertIn("uses: ./.github/workflows/csharp-preview-package.yml", workflow)
+        self.assertIn("scidevharness-csharp-installer", workflow)
+        self.assertIn("SHA256SUMS.txt", workflow)
         self.assertIn("workflow_call:", package)
-        self.assertIn("Validate release tag matches APP_VERSION", package)
+        self.assertIn("dotnet/Directory.Build.props", package)
+        self.assertIn("preview_install.py --candidate", package)
 
 
 if __name__ == "__main__":

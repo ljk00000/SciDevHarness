@@ -19,6 +19,16 @@ public static partial class TerminalProbe
         var workspace = Directory.GetCurrentDirectory();
         const string sample = "鹈鹕输入";
         const string expected = "SCIDEV_ECHO:" + sample;
+        const string script = """
+            [Console]::OutputEncoding = [Text.Encoding]::UTF8
+            [Console]::WriteLine('SCIDEV_READY')
+            $value = [Text.StringBuilder]::new()
+            while (($key = [Console]::ReadKey($true)).Key -ne [ConsoleKey]::Enter) {
+                [void]$value.Append($key.KeyChar)
+            }
+            [Console]::WriteLine('SCIDEV_ECHO:' + $value.ToString())
+            exit 7
+            """;
         var input = Channel.CreateUnbounded<TerminalSession.Input>();
         var output = new StringBuilder();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -35,7 +45,7 @@ public static partial class TerminalProbe
                 sent = true;
                 input.Writer.TryWrite(new TerminalSession.Input.Resize(120, 35));
                 input.Writer.TryWrite(new TerminalSession.Input.Text(sample + "\r"));
-            }, deadline.Token, "$value=Read-Host -Prompt 'SCIDEV_READY'; Write-Host ('SCIDEV_ECHO:'+ $value); exit 7");
+            }, deadline.Token, script);
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested && !token.IsCancellationRequested)
         {
