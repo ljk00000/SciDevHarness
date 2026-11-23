@@ -68,7 +68,13 @@ class BootstrapTests(unittest.TestCase):
     def test_github_actions_are_sha_pinned_and_dependabot_tracks_updates(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         workflows_dir = project_root / ".github" / "workflows"
-        expected_action_counts = {"ci.yml": 3, "windows-package.yml": 4, "release.yml": 1}
+        expected_action_counts = {
+            "ci.yml": 3,
+            "windows-package.yml": 4,
+            "release.yml": 1,
+            "dotnet-prototype.yml": 3,
+            "csharp-preview-package.yml": 5,
+        }
         self.assertEqual(
             {path.name for path in workflows_dir.glob("*.yml")},
             set(expected_action_counts),
@@ -77,7 +83,7 @@ class BootstrapTests(unittest.TestCase):
         for workflow_name, expected_count in expected_action_counts.items():
             workflow = (workflows_dir / workflow_name).read_text(encoding="utf-8")
             action_refs = re.findall(r"^\s*(?:-\s*)?uses:\s*(\S+)", workflow, flags=re.MULTILINE)
-            self.assertTrue(action_refs, f"{workflow_name} should use at least one external GitHub Action")
+            self.assertTrue(action_refs, f"{workflow_name} should use an action or a reusable workflow")
             self.assertEqual(len(action_refs), expected_count, "update action pin checks when changing a workflow")
             for reference in action_refs:
                 with self.subTest(workflow=workflow_name, reference=reference):

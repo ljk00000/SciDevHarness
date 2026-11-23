@@ -119,3 +119,5 @@ dotnet dotnet/tests/SciDev.Tests/bin/Debug/net10.0/SciDev.Tests.dll
 ## 许可证
 
 项目代码采用 [Apache-2.0](LICENSE)。第三方库和用户自行接入的模型沿用各自许可证。
+
+源码仓库不含 Qt/PySide6 运行时二进制。旧版 Python 使用的 Qt/PySide6 社区版组件涉及 LGPLv3、GPLv3 等许可证，详见[第三方组件说明](docs/SCIDEV_HARNESS.md#许可证与第三方组件)。

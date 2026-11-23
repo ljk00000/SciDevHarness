@@ -53,6 +53,8 @@ jobs:
 
       - name: Run tests with coverage
         id: tests
+        env:
+          PYTHONUTF8: "1"
         run: .\.venv\Scripts\python.exe scripts\run_tests_coverage.py
 
       - name: Report test failures as annotations
