@@ -63,9 +63,13 @@ public static partial class TerminalProbe
     private static async Task<(bool Cancelled, bool ChildExited)> CheckCancellationAsync(string workspace, CancellationToken token)
     {
         const string script = """
-            $child = Start-Process (Join-Path $PSHOME 'powershell.exe') -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile -Command Start-Sleep -Seconds 30'
-            Write-Host ('SCIDEV_CHILD:' + $child.Id + ':READY')
-            Start-Sleep -Seconds 30
+            $start = [Diagnostics.ProcessStartInfo]::new([IO.Path]::Combine($PSHOME, 'powershell.exe'))
+            $start.Arguments = '-NoLogo -NoProfile -Command "[Threading.Thread]::Sleep(30000)"'
+            $start.UseShellExecute = $false
+            $start.CreateNoWindow = $true
+            $child = [Diagnostics.Process]::Start($start)
+            [Console]::WriteLine('SCIDEV_CHILD:' + $child.Id + ':READY')
+            [Threading.Thread]::Sleep(30000)
             """;
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
         stop.CancelAfter(TimeSpan.FromSeconds(12));

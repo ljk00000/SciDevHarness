@@ -64,10 +64,14 @@ internal static class TerminalScreenChecks
     private static async Task ConPtyAsync(string workspace)
     {
         const string script = """
+            [Console]::OutputEncoding = [Text.Encoding]::UTF8
             $e=[char]27
             [Console]::Write("MAIN_READY"+[Environment]::NewLine+"$e[?1049h$e[2J$e[H$e[32mALT_READY$e[0m")
             $key=[Console]::ReadKey($true)
-            $value=[Console]::ReadLine()
+            $value=[Text.StringBuilder]::new()
+            while (($character=[Console]::ReadKey($true)).Key -ne [ConsoleKey]::Enter) {
+                [void]$value.Append($character.KeyChar)
+            }
             [Console]::WriteLine("$e[?1049lKEY_$($key.Key):$value")
             exit 7
             """;
