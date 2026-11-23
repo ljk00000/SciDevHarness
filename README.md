@@ -13,7 +13,7 @@
 
 *Paper 浅色主题下的演示工作区。点击 Agent 的产物卡即可在对话旁阅读 Markdown 报告。*
 
-[下载安装](https://github.com/ljk00000/SciDevHarness/releases/latest) · [快速开始](#快速开始) · [模型接入](#模型接入) · [CLI 与扩展](#cli-与扩展) · [问题反馈](https://github.com/ljk00000/SciDevHarness/issues)
+[快速开始](#快速开始) · [模型接入](#模型接入) · [CLI 与扩展](#cli-与扩展) · [文档](#文档与项目状态) · [问题反馈](https://github.com/ljk00000/SciDevHarness/issues)
 
 ## 核心能力
 
@@ -28,9 +28,7 @@
 
 ## 快速开始
 
-### 1. 安装或从源码启动
-
-在 [GitHub Releases](https://github.com/ljk00000/SciDevHarness/releases/latest) 下载 Windows x64 的 `SciDevHarness-CSharp-Preview-Setup-*.exe`。安装包内含 .NET 运行时，保留独立的 C# 安装标识，目前未签名。
+### 1. 获取源码并启动
 
 从源码运行需要 **Windows 和 .NET 10 SDK**：
 
@@ -76,12 +74,13 @@ cd SciDevHarness
 
 ## CLI 与扩展
 
-从仓库根目录运行：
+从仓库根目录运行。执行模型任务前，在当前 PowerShell 会话设置 `SCIDEV_API_KEY`，并填入服务地址和模型 ID：
 
 ```powershell
 dotnet run --project dotnet/src/SciDev.Cli -- doctor --workspace "D:\Projects\my-project"
 dotnet run --project dotnet/src/SciDev.Cli -- exec `
   --workspace "D:\Projects\my-project" `
+  --api-base "https://provider.example/v1" --model "your-model-id" `
   --task "找到入口并整理项目说明" `
   --execution-mode workspace-approval --json
 ```

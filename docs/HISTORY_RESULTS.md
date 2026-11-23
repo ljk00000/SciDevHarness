@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-23 17:23–17:42（Asia/Shanghai）· GitHub 切换 C# 主线
+- GitHub `master` 已切换至 C# 0.1.14。README 沿用原有结构，使用四档后台渲染中的 720p 浅色工作台截图。Python 用 `start_python_client.bat` 启动。[主线切换提交](https://github.com/ljk00000/SciDevHarness/commit/305e6281616a5417428f5f7ec8694c7c7fe85294)
+- 本地 .NET 构建和回归通过。101 项离线回放有 98 项通过、3 项跳过，最终自包含 CLI 的无 Docker 冒烟 4/4。安装器已构建，本机拒绝写入卸载注册项，安装测试已回滚。
+
 ## 2026-11-17 18:37（Asia/Shanghai）· README 与浅色截图的 GitHub 发布记录
 - 用户授权将已整理的 README、技术手册、Paper 浅色工作台图及配套资源清单提交到 `ljk00000/SciDevHarness` 的 `origin/master`。本记录与上述内容进入同一发布提交，最终提交及分支状态见 [GitHub master 提交记录](https://github.com/ljk00000/SciDevHarness/commits/master)。
 - 提交前重新核对 32 个本地链接/锚点、截图字节与 1366×768 尺寸，确认应用源码未改；暂存差异仅涉及文档、图片和图片资源清单。沿用已通过的 16 项文档相关检查（另 4 项因暂存目录限制跳过）、独立资源暂存及四档离线预览结果。
