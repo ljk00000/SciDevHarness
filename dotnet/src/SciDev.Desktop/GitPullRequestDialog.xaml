@@ -1,0 +1,56 @@
+<Window x:Class="SciDev.Desktop.GitPullRequestDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GitHub PR" Width="960" Height="620" MinWidth="520" MinHeight="420"
+        WindowStartupLocation="CenterOwner" WindowStyle="SingleBorderWindow" ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="False" FontSize="13"
+        Background="{DynamicResource WorkbenchPanel}" Foreground="{DynamicResource WorkbenchText}">
+    <Grid x:Name="Surface" Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*" MinHeight="84"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <WrapPanel x:Name="QueryFields" Margin="0,0,0,12">
+            <TextBlock Text="PR 编号" VerticalAlignment="Center" Margin="0,0,8,4"/>
+            <TextBox x:Name="NumberInput" Width="112" MaxLength="10" Margin="0,0,8,4"
+                     TextChanged="QueryChanged" AutomationProperties.Name="PR 编号"/>
+            <Button x:Name="LoadButton" Content="加载详情和差异" Click="LoadClicked" Margin="0,0,12,4"/>
+            <CheckBox x:Name="OverrideNetwork" Content="申请覆盖断网策略" Click="QueryChanged"
+                      VerticalAlignment="Center" Margin="0,0,8,4"/>
+        </WrapPanel>
+        <StackPanel Grid.Row="1" Margin="0,0,0,10">
+            <TextBlock x:Name="PullTitle" Text="输入 PR 编号" FontWeight="SemiBold" FontSize="16"
+                       TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="48"
+                       AutomationProperties.Name="PR 标题"/>
+            <TextBlock x:Name="PullDetails" Margin="0,4,0,0" TextWrapping="Wrap"
+                       TextTrimming="CharacterEllipsis" MaxHeight="48" AutomationProperties.Name="PR 详情"/>
+        </StackPanel>
+        <TextBox Grid.Row="2" x:Name="Patch" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+                 Margin="0" VerticalContentAlignment="Top" TextWrapping="NoWrap"
+                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="PR 差异"/>
+        <StackPanel Grid.Row="3" Margin="0,10,0,0">
+            <TextBlock Text="审阅备注" Margin="0,0,0,5"/>
+            <TextBox x:Name="ReviewBody" TextWrapping="Wrap" AcceptsReturn="True" Height="68" MaxLength="20000"
+                     VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" TextChanged="ReviewBodyChanged"
+                     AutomationProperties.Name="审阅备注"/>
+        </StackPanel>
+        <Grid Grid.Row="4" Margin="0,9,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="Notice" TextWrapping="Wrap" MaxHeight="54" TextTrimming="CharacterEllipsis"
+                       AutomationProperties.Name="PR 操作状态"/>
+            <WrapPanel Grid.Row="1" HorizontalAlignment="Right">
+                <Button x:Name="ApproveButton" Content="批准审阅" Tag="approve" Click="ReviewClicked" Margin="0,4,6,0"/>
+                <Button x:Name="CommentButton" Content="提交评论" Tag="comment" Click="ReviewClicked" Margin="0,4,6,0"/>
+                <Button x:Name="ChangesButton" Content="请求修改" Tag="request-changes" Click="ReviewClicked" Margin="0,4,6,0"/>
+                <Button x:Name="CancelButton" Content="取消操作" Click="CancelClicked" Margin="0,4,6,0"/>
+                <Button Content="关闭" Click="CloseClicked" Margin="0,4,0,0"/>
+            </WrapPanel>
+        </Grid>
+    </Grid>
+</Window>

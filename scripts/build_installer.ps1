@@ -9,7 +9,7 @@ deployment, invokes ISCC, optionally signs the setup executable with
 sign_release.ps1, and prints the installer path and SHA-256.
 
 .PARAMETER Deployment
-Directory produced by pyside6-deploy containing scidev_client.exe.
+The staged Python deployment, or the C# payload with -CSharpPreview.
 
 .PARAMETER Version
 Numeric version, e.g. 0.2.0. It becomes the installer filename.
@@ -24,6 +24,9 @@ are checked.
 .PARAMETER SignThumbprint
 Optional 40-hex Authenticode certificate thumbprint. Signing happens only after
 ISCC succeeds and uses scripts/sign_release.ps1.
+
+.PARAMETER CSharpPreview
+Build the separate C# preview installer from self-contained Workbench and Cli folders.
 #>
 [CmdletBinding()]
 param(
@@ -34,15 +37,26 @@ param(
     [string]$OutputDirectory = "",
     [string]$IsccPath = "",
     [string]$SignThumbprint = "",
-    [string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$TimestampUrl = "http://timestamp.digicert.com",
+    [switch]$CSharpPreview
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $deploymentPath = (Resolve-Path -LiteralPath $Deployment).Path
-$executable = Join-Path $deploymentPath "scidev_client.exe"
-if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
-    throw "deployment does not contain scidev_client.exe: $deploymentPath"
+$requiredFiles = @('scidev_client.exe')
+$baseName = 'SciDevHarness-Setup'
+if ($CSharpPreview) {
+    $baseName = 'SciDevHarness-CSharp-Preview-Setup'
+    $requiredFiles = @(
+        'Workbench\SciDev.Desktop.exe', 'Workbench\hostfxr.dll', 'Workbench\coreclr.dll',
+        'Cli\SciDev.Cli.exe', 'Cli\hostfxr.dll', 'Cli\coreclr.dll'
+    )
+}
+foreach ($file in $requiredFiles) {
+    if (-not (Test-Path -LiteralPath (Join-Path $deploymentPath $file) -PathType Leaf)) {
+        throw "deployment does not contain ${file}: $deploymentPath"
+    }
 }
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
     throw "Version must be numeric major.minor.patch, got: $Version"
@@ -85,12 +99,14 @@ if (-not (Test-Path -LiteralPath $iss -PathType Leaf)) {
     throw "installer script is missing: $iss"
 }
 
-& $IsccPath "/Qp" "/DAppVersion=$Version" "/DSourceDir=$deploymentPath" "/DOutputDir=$outputPath" $iss
+$installerArguments = @("/Qp", "/DAppVersion=$Version", "/DSourceDir=$deploymentPath", "/DOutputDir=$outputPath")
+if ($CSharpPreview) { $installerArguments += '/DCSharpPreview' }
+& $IsccPath @installerArguments $iss | Out-Host
 if ($LASTEXITCODE -ne 0) {
     throw "ISCC failed with exit code $LASTEXITCODE"
 }
 
-$installer = Join-Path $outputPath "SciDevHarness-Setup-$Version.exe"
+$installer = Join-Path $outputPath "$baseName-$Version.exe"
 if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
     throw "ISCC succeeded but the expected installer was not found: $installer"
 }

@@ -1,0 +1,56 @@
+name: C# Windows Package
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Build the self-contained installer
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content dotnet/Directory.Build.props -Raw)).Project.PropertyGroup.VersionPrefix
+          if ($version -notmatch '^\d+\.\d+\.\d+$' -or ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version")) {
+            throw 'The .NET version and release tag must agree.'
+          }
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed.' }
+          }
+          $output = Join-Path $env:RUNNER_TEMP 'scidev-csharp'
+          .\scripts\publish_csharp_preview.ps1 -Version $version -OutputDirectory $output -IsccPath $iscc -Restore
+      - name: Verify clean install and uninstall without Docker
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'scidev-csharp'
+          $candidate = Get-ChildItem -LiteralPath $output -Filter 'SciDevHarness-CSharp-Preview-Setup-*.exe' -File
+          if (@($candidate).Count -ne 1) { throw 'Expected exactly one C# installer.' }
+          python dotnet/tests/preview_install.py --candidate $candidate.FullName --evidence (Join-Path $output 'verification')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: scidevharness-csharp-verification
+          path: |
+            ${{ runner.temp }}/scidev-csharp/verification/*.log
+            ${{ runner.temp }}/scidev-csharp/verification/report.json
+            ${{ runner.temp }}/scidev-csharp/verification/captures/
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: scidevharness-csharp-installer
+          path: ${{ runner.temp }}/scidev-csharp/SciDevHarness-CSharp-Preview-Setup-*.exe
+          if-no-files-found: error

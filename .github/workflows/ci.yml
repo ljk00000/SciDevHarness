@@ -1,8 +1,11 @@
-name: Windows CI
+name: Legacy Python CI
 
 on:
   push:
+    branches: ['**']
+    paths: ['scidev/**', 'tests/**', 'ui/**', 'scripts/**', 'requirements*.txt', 'pyproject.toml', 'start_python_client.bat', '.github/workflows/ci.yml']
   pull_request:
+    paths: ['scidev/**', 'tests/**', 'ui/**', 'scripts/**', 'requirements*.txt', 'pyproject.toml', 'start_python_client.bat', '.github/workflows/ci.yml']
   workflow_dispatch:
   schedule:
     - cron: "17 2 * * 1"
@@ -46,7 +49,7 @@ jobs:
         run: .\.venv\Scripts\python.exe scripts\verify_minimal_qt.py
 
       - name: Verify the Windows launcher preflight
-        run: .\start_client.bat --check-runtime
+        run: .\start_python_client.bat --check-runtime
 
       - name: Run tests with coverage
         id: tests

@@ -27,7 +27,7 @@ $releaseFiles = @(
     "pysidedeploy.spec",
     "requirements.txt",
     "requirements-build.txt",
-    "start_client.bat",
+    "start_python_client.bat",
     "start_qwen_local.bat",
     "scripts\bootstrap.py",
     "scripts\smoke_local_ollama.py",

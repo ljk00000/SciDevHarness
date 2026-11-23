@@ -89,7 +89,7 @@ class ReleaseStagingTests(unittest.TestCase):
             "requirements-build.txt",
             "scripts/smoke_local_ollama.py",
             "scripts/bootstrap.py",
-            "start_client.bat",
+            "start_python_client.bat",
             "start_qwen_local.bat",
             "ui/qml/DevelopmentTree.qml",
             "ui/icons/chevron-down.svg",
@@ -215,8 +215,8 @@ class ReleaseStagingTests(unittest.TestCase):
         executable_name = "pyside6-deploy.exe" if os.name == "nt" else "pyside6-deploy"
         deployer = Path(sys.prefix) / scripts_dir / executable_name
         self.assertTrue(deployer.is_file(), "PySide6 deployment entry point is missing from the test environment")
-        readme = (project_root / "README.md").read_text(encoding="utf-8")
-        self.assertIn("--config-file pysidedeploy.spec --nuitka-version=4.1.1", readme)
+        manual = (project_root / "docs/SCIDEV_HARNESS.md").read_text(encoding="utf-8")
+        self.assertIn("--config-file pysidedeploy.spec --nuitka-version=4.1.1", manual)
 
         with tempfile.TemporaryDirectory(prefix="scidev-deploy-test-") as temporary:
             stage = Path(temporary) / "stage"

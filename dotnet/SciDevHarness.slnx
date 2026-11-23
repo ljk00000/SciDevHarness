@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SciDev.Cli/SciDev.Cli.csproj" />
+    <Project Path="src/SciDev.Core/SciDev.Core.csproj" />
+    <Project Path="src/SciDev.Desktop/SciDev.Desktop.csproj" />
+    <Project Path="src/SciDev.Infrastructure/SciDev.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SciDev.Tests/SciDev.Tests.csproj" />
+  </Folder>
+</Solution>

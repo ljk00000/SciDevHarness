@@ -13,7 +13,7 @@ if errorlevel 1 (
 ollama show "%SCIDEV_MODEL%" >nul 2>&1
 if errorlevel 1 (
     echo The local Ollama model was not found: %SCIDEV_MODEL%
-    echo See the Qwen2.5-Coder section in README.md.
+    echo See the Qwen2.5-Coder section in docs\SCIDEV_HARNESS.md.
     pause
     exit /b 1
 )
@@ -25,5 +25,5 @@ if not defined SCIDEV_TEMPERATURE set "SCIDEV_TEMPERATURE=0"
 if not defined SCIDEV_REQUEST_TIMEOUT_SECONDS set "SCIDEV_REQUEST_TIMEOUT_SECONDS=240"
 if not defined SCIDEV_STREAMING set "SCIDEV_STREAMING=1"
 
-call "%~dp0start_client.bat" %*
+call "%~dp0start_python_client.bat" %*
 exit /b %errorlevel%

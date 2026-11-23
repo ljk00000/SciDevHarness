@@ -1,6 +1,6 @@
-# SciDevHarness 技术手册
+# SciDevHarness Python 版技术手册
 
-本文收录配置、操作、CLI 与开发发布参考。首次使用请先阅读[项目首页](../README.md)；已完成改动与验证日期见[历史与结果](HISTORY_RESULTS.md)。
+本文收录旧版 Python 的配置、操作、CLI 与打包参考。[项目首页](../README.md)介绍默认 C# 版，旧版使用 `start_python_client.bat` 启动。GitHub 的 `v*` 标签发布 C# 包，Python 保留手动打包。
 
 [模型接入](#模型接入与网络配置) · [桌面与策略](#桌面功能与执行策略) · [CLI](#命令行参考) · [上下文与验收](#上下文规划与验收) · [开发与发布](#开发与发布) · [技术架构](#能力与技术架构)
 
@@ -16,7 +16,7 @@ Agent 设置里的“任务预算”可限制单次任务最多模型轮次（1�
 $env:SCIDEV_API_BASE="https://your-endpoint/v1"
 $env:SCIDEV_API_KEY="your-key"
 $env:SCIDEV_MODEL="your-model"
-.\start_client.bat
+.\start_python_client.bat
 ```
 
 也支持 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `OPENAI_MODEL`。如果只配置 `OPENAI_API_KEY`，地址默认使用 `https://api.openai.com/v1`，模型默认使用 `gpt-5`。
@@ -319,7 +319,7 @@ Agent 设置里另有“网络策略”，只对 `curl`/`wget`/`ssh`/`scp` 等�
 .\.venv\Scripts\python.exe -B scripts/run_tests_coverage.py
 .\.venv\Scripts\python.exe scripts/smoke_dependency.py
 .\.venv\Scripts\python.exe scripts/smoke_screenshot.py --output-dir "$env:TEMP\scidev-ui-shots"
-.\start_client.bat --check-runtime
+.\start_python_client.bat --check-runtime
 ```
 
 Windows CI 会验证 Qt 窗口与 QML 加载、资源管理器双击打开、Ctrl+S 保存、工作区选择/记忆、多窗口行为、shell 拒绝审批，以及版本树分支拖拽、画布平移、滚轮滚动/Ctrl+滚轮缩放；另在宽屏/窄屏渲染编辑器和版本树截图。每周和手动 CI 会保留一周的截图工件，供视觉复查；每次变更仍会跑单测、依赖/编译检查和 QML lint。
@@ -354,7 +354,7 @@ $exe = Get-ChildItem (Join-Path $stage "deployment") -Filter "scidev_client.exe"
 
 实际打包会按固定版本安装 Nuitka（已缓存时复用）；CI 的暂存和打包器 dry-run 不下载 Nuitka，也不编译 Windows 二进制。发布前仍需在具备 MSVC 的 Windows 环境中完成打包并审查 Qt 第三方许可声明。
 
-仓库 Actions 中的“Windows Package Verification”是手动触发的完整构建检查：它会在固定的 Windows Server 2022 runner 初始化 MSVC、构建 standalone 并实际启动 exe 验证 QML；随后安装 Inno Setup 6、构建 per-user 安装器并上传 installer 与 SHA-256 manifest。默认 unsigned；配置仓库 secrets `WINDOWS_SIGNING_PFX_BASE64` 和 `WINDOWS_SIGNING_PFX_PASSWORD` 后，workflow 会导入 PFX、调用 `build_installer.ps1 -SignThumbprint` 签名并在结束时删除证书，manifest 的 `signed` 随之为 true。不上传 standalone 二进制；手动 workflow 不创建 Release。推送 `v*` tag 会触发独立的 `Release` workflow：它通过 `workflow_call` 复用打包 job，再用 `gh run download` 取回本次 artifact，并用 `gh release create` 创建 GitHub Release，上传安装器与 SHA-256 manifest；配置 PFX secrets 时签名，未配置时仍是 unsigned，发布前需人工确认。需要在本机构建时，装 Inno Setup 6 后运行 `scripts/build_installer.ps1 -Deployment <staged deployment> -Version <x.y.z>`；它只构建安装器并可选调用签名脚本，不下载依赖、不执行安装器、不自动安装。清单明确标记需人工审核，并不代表许可证合规结论。构建固定使用 `requirements-build.txt` 中的 PySide6-Essentials 6.11.2，Dependabot 每周检查依赖更新，升级后需重新通过打包烟测。公开分发前仍要按实际打包组件补齐 Qt/PySide 第三方许可与声明；Nuitka 编译器受 AGPLv3 约束，其 [Runtime Library Exception](https://github.com/Nuitka/Nuitka/blob/develop/LICENSE-RUNTIME.txt) 对符合条件的编译输出另有许可，二者不能混为一谈。详见 [Qt 官方部署说明](https://doc.qt.io/qtforpython-6/deployment/deployment-pyside6-deploy.html) 与 [Nuitka 4.1.1 元数据](https://pypi.org/project/Nuitka/4.1.1/)。以上不是法律意见。
+仓库 Actions 中的“Legacy Python Package Verification”是手动触发的完整构建检查：它会在固定的 Windows Server 2022 runner 初始化 MSVC、构建 standalone 并实际启动 exe 验证 QML；随后安装 Inno Setup 6、构建 per-user 安装器并上传 installer 与 SHA-256 manifest。默认 unsigned；配置仓库 secrets `WINDOWS_SIGNING_PFX_BASE64` 和 `WINDOWS_SIGNING_PFX_PASSWORD` 后，workflow 会导入 PFX、调用 `build_installer.ps1 -SignThumbprint` 签名并在结束时删除证书，manifest 的 `signed` 随之为 true。不上传 standalone 二进制；手动 workflow 不创建 Release。GitHub 默认发行版现由 C# Release workflow 发布。需要在本机构建时，装 Inno Setup 6 后运行 `scripts/build_installer.ps1 -Deployment <staged deployment> -Version <x.y.z>`；它只构建安装器并可选调用签名脚本，不下载依赖、不执行安装器、不自动安装。清单明确标记需人工审核，并不代表许可证合规结论。构建固定使用 `requirements-build.txt` 中的 PySide6-Essentials 6.11.2，Dependabot 每周检查依赖更新，升级后需重新通过打包烟测。公开分发前仍要按实际打包组件补齐 Qt/PySide 第三方许可与声明；Nuitka 编译器受 AGPLv3 约束，其 [Runtime Library Exception](https://github.com/Nuitka/Nuitka/blob/develop/LICENSE-RUNTIME.txt) 对符合条件的编译输出另有许可，二者不能混为一谈。详见 [Qt 官方部署说明](https://doc.qt.io/qtforpython-6/deployment/deployment-pyside6-deploy.html) 与 [Nuitka 4.1.1 元数据](https://pypi.org/project/Nuitka/4.1.1/)。以上不是法律意见。
 
 ### 发布签名
 
@@ -439,7 +439,7 @@ packaging/         安装器配置
 | IDE 客户端 | 🟡 核心已实现 | 原生桌面文件树、代码编辑器、多标签、搜索、集成终端、问题面板、Git 视图和 Agent 对话 | 不是完整 VS Code：语言服务器级 IntelliSense 仍有限；不计划内置 DAP 调试器，调试仅保留 pdb 终端入口（Codex 同样依赖宿主 IDE 调试器） |
 | 无界面/CI | 🟡 基础已实现 | `scidev_cli.py exec` 复用 Agent、执行策略、Git 自动提交与审计；支持 JSON 输出、退出码、临时 provider 参数、`--no-verify`、`--restore-on-failure`、`--allow-no-changes`、`--worktree` 隔离运行、`--patch-approval auto|reject`、`--sandbox docker`、`--max-turns`/`--max-tokens` 本次任务预算和 `--result-file` 原子结果落盘；`sandbox-check` 报告后端是否就绪及是否 OS 沙箱；`doctor` 离线检查运行时/provider 密钥来源/Git/沙箱/LSP，`--online` 才做最小模型能力探针；默认应用已校验补丁块，无审核界面也能修改已有文件；默认“完成但无改动”按失败处理；自动读取桌面端保存的模型配置 | 无流式 UI/交互审批；手动审批模式在 CLI 中无法批准命令；worktree 只保证文件隔离，不限制网络/进程；Docker 后端依赖 daemon/镜像；worktree 默认保留，需要手动清理；结果文件限制在工作区内 |
 | GitHub PR | 🟡 CLI + GUI 已实现 | `scidev_cli.py pr` 从当前任务分支 push 并调用已登录的 `gh pr create`；`pr-view` 读取 PR 元数据；`pr-diff` 读取有界 diff（最多 100 万字符，默认 30 万）；`pr-review` 支持 approve/comment/request-changes；桌面 `> pr` 可加载元数据和 diff、查看 review 状态并提交 review；支持 base/title/body/draft、`--dry-run`、JSON 输出；网络 deny 项目需 `--allow-network` | 需要本机 `gh` 已认证且有推送/审查权限；不创建 GitHub App/OAuth；不自动修复 review finding；不管理团队权限；失败后不自动清理远端分支；diff 是纯文本，不支持逐行评论或本地 hunk 联动 |
-| 分发与签名 | 🟡 脚本已实现 | `scidev_cli.py update` 检查 GitHub latest Release，只报告 HTTPS 安装包地址、名称、大小和 `digest`；`--download PATH` 流式下载到同目录临时文件，强制 HTTPS/大小上限/Release 大小/SHA-256 校验后原子改名；`--install` 必须配合 `--download`，启动前再校验一次摘要并打开安装器 UI（不静默、不提权）；`scidev.integrations.update.verify_downloaded_asset()` 可校验已有文件；桌面端 `> update` 显示 Release 结果、可打开页面，或后台下载并校验（可取消），不执行；`scripts/sign_release.ps1` 用证书存储中的 SHA-1 thumbprint 对 .exe/.dll/.msi 做 SHA-256 Authenticode 签名 + RFC 3161 时间戳（默认 HTTP 端点，因部分 signtool 拒绝 HTTPS），随后 `/pa` 验证；`scripts/build_installer.ps1` + `packaging/windows/scidev.iss` 从 staged deployment 构建 per-user Inno Setup 安装器，可选签名并输出 SHA-256；手动 Windows Package Verification workflow 会安装 Inno Setup、构建并上传 installer/manifest；推送 `v*` tag 的 Release workflow 复用该 job 并创建 GitHub Release；配置 PFX secrets 时导入证书、签名并在结束时删除 | 仓库没有签名证书，默认 CI/Release 产物 unsigned；只有配置 `WINDOWS_SIGNING_PFX_BASE64`/`WINDOWS_SIGNING_PFX_PASSWORD` 才签名；未在真实证书/远端 runner 上验证签名；桌面端检查在后台 QThread 执行并显示可取消进度，取消只忽略结果、不中断阻塞中的 HTTP；没有下载安装器的自动执行；没有 MSIX/MSI 打包；没有跨平台；zip 内二进制未被单独签名 |
+| 分发与签名 | 🟡 脚本已实现 | `scidev_cli.py update` 检查 GitHub latest Release，只报告 HTTPS 安装包地址、名称、大小和 `digest`；`--download PATH` 流式下载到同目录临时文件，强制 HTTPS/大小上限/Release 大小/SHA-256 校验后原子改名；`--install` 必须配合 `--download`，启动前再校验一次摘要并打开安装器 UI（不静默、不提权）；`scidev.integrations.update.verify_downloaded_asset()` 可校验已有文件；桌面端 `> update` 显示 Release 结果、可打开页面，或后台下载并校验（可取消），不执行；`scripts/sign_release.ps1` 用证书存储中的 SHA-1 thumbprint 对 .exe/.dll/.msi 做 SHA-256 Authenticode 签名 + RFC 3161 时间戳（默认 HTTP 端点，因部分 signtool 拒绝 HTTPS），随后 `/pa` 验证；`scripts/build_installer.ps1` + `packaging/windows/scidev.iss` 从 staged deployment 构建 per-user Inno Setup 安装器，可选签名并输出 SHA-256；手动 Legacy Python Package Verification workflow 会安装 Inno Setup、构建并上传 installer/manifest；配置 PFX secrets 时导入证书、签名并在结束时删除 | 仓库没有签名证书，默认 CI/Release 产物 unsigned；只有配置 `WINDOWS_SIGNING_PFX_BASE64`/`WINDOWS_SIGNING_PFX_PASSWORD` 才签名；未在真实证书/远端 runner 上验证签名；桌面端检查在后台 QThread 执行并显示可取消进度，取消只忽略结果、不中断阻塞中的 HTTP；没有下载安装器的自动执行；没有 MSIX/MSI 打包；没有跨平台；zip 内二进制未被单独签名 |
 | 工程化迁移 | 🟡 已实现 | `scidev_cli.py migrate` 迁移 settings/session/事件库 schema；写入 `schema_version` 与 SQLite `user_version`；规范化执行/网络/白名单设置；修改前备份，幂等，坏 JSON 不覆盖；`scidev_cli.py update` 检查 GitHub latest Release 并给出安装包地址，不自动下载/安装；桌面端未捕获异常写本地脱敏崩溃报告 | 只迁移已知字段；不迁移旧二进制/数据库结构；备份保留 5 份；更新检查需要 GitHub API 可达且仓库有 Release；无自动下载、签名校验或自动安装；崩溃报告不压缩、不上传、不收集局部变量 |
 | 错误分类 | 🟡 已实现 | 工作线程 `task_failed`/`task_retry` 和 CLI 失败附带 `error_kind`（auth/rate_limit/timeout/network/approval/tool/verification/workspace/internal）、`user_message`、`retryable`、有界 `detail`；桌面失败气泡显示分类前缀；支持中英文关键词 | 基于异常类型和消息词法，可能误分类；分类不改写 provider 的原始错误；不自动修复/重试策略仍由队列统一决定；`detail` 仍可能含路径 |
 | 对话总结配置 | ✅ 已实现 | 可配置启用、模型、上下文长度、输出 token、重试次数、总结指令和每 N 轮频率；会话结束总结 | 总结质量依赖所选模型；只有成功保存的最终总结会进入项目记忆 |

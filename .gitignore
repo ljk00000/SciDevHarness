@@ -30,6 +30,8 @@ build/
 *.spec
 !pysidedeploy.spec
 deployment/
+dotnet/**/bin/
+dotnet/**/obj/
 
 # Local model weights and generated research data must not enter source releases.
 *.gguf

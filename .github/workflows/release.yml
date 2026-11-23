@@ -1,4 +1,4 @@
-name: Release
+name: C# Release
 
 on:
   push:
@@ -11,8 +11,7 @@ permissions:
 
 jobs:
   package:
-    uses: ./.github/workflows/windows-package.yml
-    secrets: inherit
+    uses: ./.github/workflows/csharp-preview-package.yml
 
   publish:
     needs: package
@@ -26,19 +25,21 @@ jobs:
           mkdir -p release-assets
           gh run download "$GITHUB_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
-            --name SciDevHarness-Windows-x64-installer \
+            --name scidevharness-csharp-installer \
             --dir release-assets
-          test -n "$(find release-assets -name 'SciDevHarness-Setup-*.exe' -print -quit)"
-          test -f release-assets/SciDevHarness-Windows-x64-installer.json
+          cd release-assets
+          sha256sum "SciDevHarness-CSharp-Preview-Setup-${GITHUB_REF_NAME#v}.exe" > SHA256SUMS.txt
 
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            release-assets/SciDevHarness-Setup-*.exe \
-            release-assets/SciDevHarness-Windows-x64-installer.json \
+            release-assets/SciDevHarness-CSharp-Preview-Setup-*.exe \
+            release-assets/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
-            --title "SciDevHarness $GITHUB_REF_NAME" \
+            --title "SciDevHarness $GITHUB_REF_NAME · C# for Windows" \
+            --notes "Default C# desktop and CLI for Windows x64. The self-contained installer is unsigned. Docker is optional and used for isolated command execution." \
             --generate-notes \
+            --latest \
             --verify-tag

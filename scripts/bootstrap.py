@@ -139,7 +139,7 @@ def ensure_runtime(
     if not install_dependencies:
         detail = f" (found {installed_version})" if installed_version else ""
         raise BootstrapError(
-            f"PySide6-Essentials >=6.11,<7 is required{detail}; run start_client.bat to prepare dependencies."
+            f"PySide6-Essentials >=6.11,<7 is required{detail}; run start_python_client.bat to prepare dependencies."
         )
 
     output("Installing or updating project dependencies in .venv...")

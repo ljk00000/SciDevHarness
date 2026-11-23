@@ -1,4 +1,4 @@
-name: Windows Package Verification
+name: Legacy Python Package Verification
 
 on:
   workflow_dispatch:

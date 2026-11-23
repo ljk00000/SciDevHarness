@@ -1,0 +1,44 @@
+name: C# CI
+
+on:
+  push:
+    branches: ['**']
+    paths: ['dotnet/**', 'scidev/**', 'scripts/csharp_pelican_validator.py', 'scripts/export_qt_preferences.py', 'scripts/pelican_repair_guidance.py', 'scripts/smoke_pelican_svg.py', 'tests/test_pelican_svg.py', 'requirements.txt', 'start_client.bat', '.github/workflows/dotnet-prototype.yml']
+  pull_request:
+    paths: ['dotnet/**', 'scidev/**', 'scripts/csharp_pelican_validator.py', 'scripts/export_qt_preferences.py', 'scripts/pelican_repair_guidance.py', 'scripts/smoke_pelican_svg.py', 'tests/test_pelican_svg.py', 'requirements.txt', 'start_client.bat', '.github/workflows/dotnet-prototype.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Build
+        working-directory: dotnet
+        run: dotnet build SciDevHarness.slnx
+      - name: Check the default desktop launcher
+        run: .\start_client.bat --capture-home "$env:RUNNER_TEMP\scidev-launcher"
+      - name: Check ConPTY and child process cleanup
+        run: dotnet dotnet/src/SciDev.Cli/bin/Debug/net10.0/SciDev.Cli.dll terminal-check
+      - name: Install Python reference validator dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Replay offline model and assert file boundaries
+        run: |
+          $python = (Get-Command python -CommandType Application | Select-Object -First 1).Source
+          if (-not $python) { throw 'Python interpreter missing.' }
+          $env:SCIDEV_TEST_JEDI_PYTHON = $python
+          $env:SCIDEV_TEST_PDB_PYTHON = $python
+          $env:SCIDEV_API_KEY = 'migration-ci-fixture-not-a-real-key'
+          dotnet dotnet/tests/SciDev.Tests/bin/Debug/net10.0/SciDev.Tests.dll
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python dotnet/tests/smoke.py --oracle

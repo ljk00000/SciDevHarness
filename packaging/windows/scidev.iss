@@ -13,24 +13,40 @@
   #define OutputDir "..\..\dist"
 #endif
 
+#ifdef CSharpPreview
+  #define AppIdentity "{{8163BF31-5F43-4B08-B545-E6DDB95DA965}"
+  #define ProductName "SciDevHarness C# Preview"
+  #define ProgramFolder "SciDevHarness-CSharp-Preview"
+  #define InstallerName "SciDevHarness-CSharp-Preview-Setup"
+  #define DesktopExe "Workbench\SciDev.Desktop.exe"
+  #define DesktopArgs ""
+#else
+  #define AppIdentity "{{8C6D7B1E-5A0F-4F9E-9F1A-6C2D8B7E4A31}"
+  #define ProductName "SciDevHarness"
+  #define ProgramFolder "SciDevHarness"
+  #define InstallerName "SciDevHarness-Setup"
+  #define DesktopExe "scidev_client.exe"
+  #define DesktopArgs ""
+#endif
+
 [Setup]
-AppId={{8C6D7B1E-5A0F-4F9E-9F1A-6C2D8B7E4A31}
-AppName=SciDevHarness
+AppId={#AppIdentity}
+AppName={#ProductName}
 AppVersion={#AppVersion}
-AppVerName=SciDevHarness {#AppVersion}
-DefaultDirName={localappdata}\Programs\SciDevHarness
-DefaultGroupName=SciDevHarness
+AppVerName={#ProductName} {#AppVersion}
+DefaultDirName={localappdata}\Programs\{#ProgramFolder}
+DefaultGroupName={#ProductName}
 DisableProgramGroupPage=yes
 OutputDir={#OutputDir}
-OutputBaseFilename=SciDevHarness-Setup-{#AppVersion}
+OutputBaseFilename={#InstallerName}-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayName=SciDevHarness {#AppVersion}
-UninstallDisplayIcon={app}\scidev_client.exe
+UninstallDisplayName={#ProductName} {#AppVersion}
+UninstallDisplayIcon={app}\{#DesktopExe}
 CloseApplications=yes
 RestartApplications=no
 SetupLogging=yes
@@ -42,8 +58,8 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{group}\SciDevHarness"; Filename: "{app}\scidev_client.exe"
-Name: "{autodesktop}\SciDevHarness"; Filename: "{app}\scidev_client.exe"; Tasks: desktopicon
+Name: "{group}\{#ProductName}"; Filename: "{app}\{#DesktopExe}"; Parameters: "{#DesktopArgs}"
+Name: "{autodesktop}\{#ProductName}"; Filename: "{app}\{#DesktopExe}"; Parameters: "{#DesktopArgs}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\scidev_client.exe"; Description: "启动 SciDevHarness"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#DesktopExe}"; Parameters: "{#DesktopArgs}"; Description: "启动 {#ProductName}"; Flags: nowait postinstall skipifsilent
