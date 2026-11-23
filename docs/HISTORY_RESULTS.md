@@ -1,5 +1,9 @@
 # 历史与结果
 
+## 2026-11-23 17:43–18:06（Asia/Shanghai）· C# 主线 CI 验收
+- 在切换后的仓库补齐独立 pytest 验收夹具，并更新安装测试。终端测试用显式 UTF-8 输出和 Unicode 按键读取覆盖 GitHub runner 的英文系统代码页。
+- GitHub 构建、默认启动器、.NET 回归、离线回放、ConPTY 中文输入和子进程回收均通过。主线 README 已核验远端实际渲染。[C# CI](https://github.com/ljk00000/SciDevHarness/actions/runs/45152246070)
+
 ## 2026-11-23 17:23–17:42（Asia/Shanghai）· GitHub 切换 C# 主线
 - GitHub `master` 已切换至 C# 0.1.14。README 沿用原有结构，使用四档后台渲染中的 720p 浅色工作台截图。Python 用 `start_python_client.bat` 启动。[主线切换提交](https://github.com/ljk00000/SciDevHarness/commit/305e6281616a5417428f5f7ec8694c7c7fe85294)
 - 本地 .NET 构建和回归通过。101 项离线回放有 98 项通过、3 项跳过，最终自包含 CLI 的无 Docker 冒烟 4/4。安装器已构建，本机拒绝写入卸载注册项，安装测试已回滚。

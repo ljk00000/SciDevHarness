@@ -1,7 +1,7 @@
 # 当前工作
 
-## 2026-11-23 17:32（Asia/Shanghai）· GitHub 默认版本切换
-- 主线默认入口已切换到 C# 0.1.14。跟踪 GitHub CI。公开安装包需单独确认，安装器的实际升级与回退仍待验收。
+## 2026-11-23 18:06（Asia/Shanghai）· GitHub 默认版本切换后的发布验收
+- C# 0.1.14 已成为 GitHub `master` 默认版本，源码回归已通过。公开安装包待确认，安装器的实际升级与回退仍待验收。
 
 ## 2026-11-17 18:37（Asia/Shanghai）· README 发布检查完成，后续准备
 - README 已按产品首页重写，并换用 Paper 浅色工作台截图，详细说明归入技术手册；结果见 [历史与结果](HISTORY_RESULTS.md)。本次提交用于同步 `origin/master`，最终版本见 [GitHub 主分支](https://github.com/ljk00000/SciDevHarness/tree/master)。
