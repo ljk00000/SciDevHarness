@@ -16,7 +16,7 @@
 <details>
 <summary>观看工作台动效（开发版）</summary>
 
-![SciDevHarness 工作台动图，展示执行步骤展开、文档切换和专注阅读](docs/images/workbench-motion.gif)
+![SciDevHarness 工作台动图，展示文件树展开、产物预览切换和 Markdown 目录跳转](docs/images/workbench-motion.gif)
 
 </details>
 
