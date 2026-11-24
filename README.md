@@ -13,6 +13,13 @@
 
 *Paper 浅色主题下的演示工作区。点击 Agent 的产物卡即可在对话旁阅读 Markdown 报告。*
 
+<details>
+<summary>观看工作台动效（开发版）</summary>
+
+![SciDevHarness 工作台动图，展示执行步骤展开、文档切换和专注阅读](docs/images/workbench-motion.gif)
+
+</details>
+
 [快速开始](#快速开始) · [模型接入](#模型接入) · [CLI 与扩展](#cli-与扩展) · [文档](#文档与项目状态) · [问题反馈](https://github.com/ljk00000/SciDevHarness/issues)
 
 ## 核心能力
